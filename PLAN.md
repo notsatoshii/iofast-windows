@@ -16,7 +16,7 @@ Decisions below were locked in an interview on 2026-08-11 (see Decision Log). Co
 ┌───────────────▼───────────── Python sidecar (PyInstaller) ───────────────┐
 │  Engine = Scrapling 0.4+                                                 │
 │  Tier 1: platform adapters (fingerprint → selectors/strategy)            │
-│  Tier 2: heuristics (sitemap.xml, llms.txt, nav parse, readability)      │
+│  Tier 2: heuristics (sitemap.xml, llms.txt, nav parse, trafilatura)      │
 │  Tier 3: LLM selector rescue (one call per domain, cached)               │
 │  Fetch escalation: Fetcher → DynamicFetcher → StealthyFetcher            │
 └───────────────┬──────────────────────────────────────────────────────────┘
