@@ -1,0 +1,350 @@
+//! Everything that outlives a run: the config file, the library on disk, and
+//! the keychain. Plus the two macOS shell-outs (folder picker, Trash) — see the
+//! comments at each call site for why they are not crates.
+//!
+//! The library has no index and no database. Plain markdown on disk is the
+//! product; `<library_root>/*/manifest.json` (schema 1, written by the engine)
+//! is the only metadata, re-scanned on window focus.
+
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use tauri::{AppHandle, Manager};
+
+/// `security -s` service name. Accounts are the env var names below.
+const KEYCHAIN_SERVICE: &str = "iofast";
+/// docs/RPC.md: the `env` allowlist the sidecar accepts, verbatim.
+pub const KEY_NAMES: [&str; 2] = ["OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL"];
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Config {
+    pub library_root: String,
+    pub large_crawl_threshold: u32,
+}
+
+fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("config.json"))
+}
+
+fn read_config(app: &AppHandle) -> Option<Config> {
+    let text = std::fs::read_to_string(config_path(app).ok()?).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// `null` config = first run; the main window shows the library-root chooser.
+#[tauri::command]
+pub fn config_get(app: AppHandle) -> Result<Value, String> {
+    let suggested = app
+        .path()
+        .document_dir()
+        .map_err(|e| e.to_string())?
+        .join("iofast");
+    Ok(serde_json::json!({
+        "config": read_config(&app),
+        "suggested_root": suggested.to_string_lossy(),
+    }))
+}
+
+#[tauri::command]
+pub fn config_set(app: AppHandle, config: Config) -> Result<(), String> {
+    if config.library_root.trim().is_empty() {
+        return Err("library root cannot be empty".into());
+    }
+    std::fs::create_dir_all(&config.library_root).map_err(|e| e.to_string())?;
+    let path = config_path(&app)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+fn library_root(app: &AppHandle) -> Result<PathBuf, String> {
+    read_config(app)
+        .map(|c| PathBuf::from(c.library_root))
+        .ok_or_else(|| "no library folder chosen yet".to_string())
+}
+
+/// One run directory per host+scope, hyphen-named so Spotlight and Alfred can
+/// read it: docs.example.com + /docs/ -> `docs-example-com-docs`.
+///
+/// ponytail: two scopes differing only by a literal hyphen (`/a-b/` vs `/a/b/`)
+/// collide into one directory. Add a short hash suffix if that ever bites.
+pub fn run_dir_name(host: &str, scope: &str) -> Result<String, String> {
+    let mut name = String::new();
+    let mut dash = true; // starts true so a leading separator is dropped
+    for c in host.chars().chain(scope.chars()) {
+        if c.is_alphanumeric() {
+            name.extend(c.to_lowercase());
+            dash = false;
+        } else if !dash {
+            name.push('-');
+            dash = true;
+        }
+    }
+    let name = name.trim_end_matches('-').to_string();
+    if name.is_empty() {
+        return Err(format!("no usable directory name in {host:?} {scope:?}"));
+    }
+    Ok(name)
+}
+
+/// Where a scrape of `host` under `scope` lands. The engine writes wherever we
+/// say, so this is the shell's one chance to keep the library tidy.
+#[tauri::command]
+pub fn library_dir(app: AppHandle, host: String, scope: String) -> Result<String, String> {
+    let dir = library_root(&app)?.join(run_dir_name(&host, &scope)?);
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// One library row. Every field comes from the run's own manifest.json.
+#[derive(Serialize)]
+pub struct Run {
+    dir: String,
+    host: String,
+    scope: String,
+    url: String,
+    pages: usize,
+    tokens: u64,
+    clean: bool,
+    cancelled: bool,
+    modified_ms: u64,
+}
+
+fn host_of(url: &str) -> String {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    rest.split(['/', '?', '#']).next().unwrap_or("").to_string()
+}
+
+fn read_run(dir: &Path) -> Option<Run> {
+    let manifest = dir.join("manifest.json");
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(&manifest).ok()?).ok()?;
+    let info = value.get("info")?;
+    let url = info.get("start url")?.as_str().unwrap_or_default().to_string();
+    let modified_ms = manifest
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Some(Run {
+        dir: dir.to_string_lossy().into_owned(),
+        host: host_of(&url),
+        scope: info.get("scope").and_then(Value::as_str).unwrap_or("/").to_string(),
+        url,
+        // Pages actually on disk, not enqueued: the row must match the folder.
+        pages: value
+            .get("pages")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter(|r| r.get("file").is_some_and(|f| !f.is_null())).count())
+            .unwrap_or(0),
+        tokens: value.get("token_estimate").and_then(Value::as_u64).unwrap_or(0),
+        clean: value
+            .get("clean")
+            .and_then(|c| c.get("clean"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        cancelled: info.get("cancelled").and_then(Value::as_bool).unwrap_or(false),
+        modified_ms,
+    })
+}
+
+/// Scans `<library_root>/*/manifest.json`. Cheap for a personal library; the
+/// window re-runs it on focus. TODO: cache an index once libraries get big.
+#[tauri::command]
+pub fn library_list(app: AppHandle) -> Result<Vec<Run>, String> {
+    let root = library_root(&app)?;
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        // A library root the user deleted or unplugged is an empty list, not an error.
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut runs: Vec<Run> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| read_run(&e.path()))
+        .collect();
+    runs.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    Ok(runs)
+}
+
+/// Move a run directory to the Trash — never `rm -rf`, and never anything the
+/// user did not put in their library: `path` arrives from the webview, so it is
+/// checked to be a direct child of the configured root before anything moves.
+#[tauri::command]
+pub fn library_delete(app: AppHandle, path: String) -> Result<(), String> {
+    let root = library_root(&app)?.canonicalize().map_err(|e| e.to_string())?;
+    let dir = PathBuf::from(&path).canonicalize().map_err(|e| e.to_string())?;
+    if dir.parent() != Some(root.as_path()) || !dir.is_dir() {
+        return Err(format!("{path} is not a run folder in the library"));
+    }
+    trash::delete(&dir).map_err(|e| e.to_string())
+}
+
+fn applescript_string(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Folder picker. `tauri-plugin-dialog` is the portable route, but it pulls
+/// `tauri-plugin-fs` -> `toml ^1.0` -> `toml_parser`, which requires edition2024
+/// and so cannot be parsed by cargo 1.78 (verified: no pin helps, the `^1.0`
+/// requirement is hard). Same failure class as `tauri-plugin-clipboard-manager`
+/// — see `clipboard_text` in main.rs. `choose folder` is a Standard Additions
+/// built-in: no crate, no automation (TCC) prompt, macOS-only like this app.
+#[tauri::command]
+pub fn pick_folder(start: Option<String>) -> Result<Option<String>, String> {
+    let prompt = "Choose the folder where iofast keeps your library";
+    let mut script = format!("POSIX path of (choose folder with prompt {}", applescript_string(prompt));
+    match start {
+        // `POSIX file` on a path that does not exist aborts the whole script.
+        Some(dir) if Path::new(&dir).is_dir() => {
+            script.push_str(&format!(" default location POSIX file {}", applescript_string(&dir)));
+        }
+        _ => {}
+    }
+    script.push(')');
+    let out = std::process::Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        // "User canceled." is the normal way out of a picker, not a failure.
+        let err = String::from_utf8_lossy(&out.stderr);
+        return if err.contains("-128") || err.contains("canceled") {
+            Ok(None)
+        } else {
+            Err(err.trim().to_string())
+        };
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // `choose folder` returns a trailing slash; the library root is joined onto.
+    Ok(Some(path.trim_end_matches('/').to_string()))
+}
+
+fn keychain_get(name: &str) -> Option<String> {
+    let out = std::process::Command::new("/usr/bin/security")
+        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name, "-w"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(out.stdout).ok()?.trim_end().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Which secrets exist — never their values. The settings pane shows a saved
+/// state and a Clear button; nothing reads a stored key back into the webview.
+#[tauri::command]
+pub fn keychain_status() -> Map<String, Value> {
+    KEY_NAMES
+        .iter()
+        .map(|name| ((*name).to_string(), Value::Bool(keychain_get(name).is_some())))
+        .collect()
+}
+
+/// `security add-generic-password`, with the value on **stdin** (typed twice,
+/// as the tool prompts) rather than `-w <value>` — argv is world-readable in
+/// `ps`. Same reason the sidecar gets keys in the request body, never on argv.
+#[tauri::command]
+pub fn keychain_set(name: String, value: String) -> Result<(), String> {
+    use std::io::Write;
+    if !KEY_NAMES.contains(&name.as_str()) {
+        return Err(format!("unknown key {name}"));
+    }
+    if value.is_empty() {
+        return Err("value cannot be empty".into());
+    }
+    if value.contains('\n') {
+        // The stdin prompt is line-based; a newline would silently truncate.
+        return Err("value cannot contain a line break".into());
+    }
+    let mut child = std::process::Command::new("/usr/bin/security")
+        .args(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", &name, "-w"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let written = child
+        .stdin
+        .take()
+        .expect("piped")
+        .write_all(format!("{value}\n{value}\n").as_bytes());
+    let status = child.wait().map_err(|e| e.to_string())?;
+    written.map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("keychain refused the item".into());
+    }
+    // The prompt path reports success even when the two entries disagree.
+    if keychain_get(&name).as_deref() != Some(value.as_str()) {
+        return Err("keychain did not store the value".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn keychain_clear(name: String) -> Result<(), String> {
+    if !KEY_NAMES.contains(&name.as_str()) {
+        return Err(format!("unknown key {name}"));
+    }
+    std::process::Command::new("/usr/bin/security")
+        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// docs/RPC.md `scrape.env`: request-scoped secrets, read fresh from the
+/// keychain per run and sent in the request body. Absent keys are simply
+/// omitted — an empty value would arm the rescue with a broken key.
+pub fn scrape_env() -> Map<String, Value> {
+    KEY_NAMES
+        .iter()
+        .filter_map(|name| keychain_get(name).map(|v| ((*name).to_string(), Value::String(v))))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_dir_name_flattens_host_and_scope() {
+        // The name in docs/RPC.md's example library.
+        assert_eq!(run_dir_name("docs.example.com", "/docs/").unwrap(), "docs-example-com-docs");
+        // Root scope adds nothing — the host alone is the whole name.
+        assert_eq!(run_dir_name("docs.example.com", "/").unwrap(), "docs-example-com");
+        // Nested scope, every segment kept in order.
+        assert_eq!(
+            run_dir_name("docs.example.com", "/docs/api/v2/").unwrap(),
+            "docs-example-com-docs-api-v2"
+        );
+        // A port is part of the host and must survive as a segment.
+        assert_eq!(run_dir_name("example.com:8080", "/docs/").unwrap(), "example-com-8080-docs");
+        // No trailing slash on the scope: same name, no dangling dash.
+        assert_eq!(run_dir_name("example.com", "/docs").unwrap(), "example-com-docs");
+        // Case folds; a mixed-case host must not make a second directory.
+        assert_eq!(run_dir_name("EXAMPLE.com", "/Docs/").unwrap(), "example-com-docs");
+        // Runs of separators collapse instead of emitting empty segments.
+        assert_eq!(run_dir_name("example.com", "//a__b//").unwrap(), "example-com-a-b");
+        // Nothing usable is an error, never a dotfile or an empty path segment.
+        assert!(run_dir_name("", "/").is_err());
+        assert!(run_dir_name("...", "/").is_err());
+    }
+
+    #[test]
+    fn host_of_takes_the_authority_only() {
+        assert_eq!(host_of("https://docs.example.com/docs/intro"), "docs.example.com");
+        assert_eq!(host_of("http://example.com:8080"), "example.com:8080");
+        assert_eq!(host_of(""), "");
+    }
+}

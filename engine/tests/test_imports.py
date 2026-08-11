@@ -10,7 +10,18 @@ import sys
 
 import pytest
 
-PURE = ["urls", "ledger", "extract", "writer", "manifest", "adapters.base", "adapters"]
+PURE = [
+    "urls",
+    "ledger",
+    "extract",
+    "writer",
+    "manifest",
+    "runner",
+    "rpc",
+    "estimate",
+    "adapters.base",
+    "adapters",
+]
 FORBIDDEN = ("scrapling", "playwright", "patchright")
 
 PROBE = """

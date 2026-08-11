@@ -1,0 +1,31 @@
+/* Tokens shared by both surfaces. macOS utility: system font, hairline rules,
+   one amber accent. Each surface owns only its own background and elevation
+   (translucent card in panel.css, opaque window in main/app.css). */
+
+.panel,
+.app {
+  --fg: #f3f3f5;
+  --dim: rgba(243, 243, 245, 0.52);
+  --dimmer: rgba(243, 243, 245, 0.3);
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --hover: rgba(255, 255, 255, 0.055);
+  --accent: #f0a55a;
+  --good: #62c07a;
+  --bad: #ff8577;
+}
+
+@media (prefers-color-scheme: light) {
+  .panel,
+  .app {
+    --fg: #17171a;
+    --dim: rgba(23, 23, 26, 0.56);
+    --dimmer: rgba(23, 23, 26, 0.34);
+    --hairline: rgba(0, 0, 0, 0.1);
+    --hairline-strong: rgba(0, 0, 0, 0.18);
+    --hover: rgba(0, 0, 0, 0.045);
+    --accent: #a4570e;
+    --good: #1f7a3d;
+    --bad: #b3271b;
+  }
+}

@@ -80,6 +80,8 @@ class Writer:
         escalated=False,
         status=None,
         elapsed_ms=None,
+        etag=None,
+        last_modified=None,
     ):
         name = unique_name(url, self.names)
         self.names[name] = url
@@ -97,6 +99,8 @@ class Writer:
             status=status,
             escalated=escalated,
             elapsed_ms=elapsed_ms,
+            etag=etag,
+            last_modified=last_modified,
         )
         self.emit(
             {

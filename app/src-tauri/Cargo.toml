@@ -1,0 +1,40 @@
+[package]
+name = "iofast"
+version = "0.1.0"
+description = "iofast desktop shell"
+edition = "2021"
+rust-version = "1.77.2"
+
+# Cargo.lock IS load-bearing here — commit it. cargo 1.78 has no MSRV-aware
+# resolver, so a fresh resolve grabs transitive crates that need rustc 1.81-1.85
+# (derive_more, litemap, unicode-segmentation, time/time-core, toml*, uuid,
+# getrandom, plist, serde_with, embed-resource, ...). Every one is pinned back in
+# the lockfile; none is a direct dependency, so there is nothing to pin here.
+# Re-run `cargo update` only on a newer toolchain.
+#
+# tauri-plugin-opener drags a Linux-only zbus/zvariant subtree that resolves to
+# edition2024 crates. They are never fetched or compiled for macOS/Windows, so
+# no pin is needed — but `cargo fetch` (which downloads EVERY target's graph)
+# fails on them, as it already did on this lock via tao -> dlopen2 0.8.2.
+# Use `cargo build`/`cargo test`; a Linux build needs a newer cargo.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2.11", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+# sync only: the oneshot that correlates a JSON-RPC reply to its request.
+tokio = { version = "1", features = ["sync"] }
+# Move-to-Trash for library deletes (NSFileManager trashItemAtURL — reversible,
+# no Finder automation prompt). Pinned to 3.x: trash 5 declares rust-version
+# 1.85. Never `rm -rf` a user's library.
+trash = "3"
+
+[profile.release]
+strip = true

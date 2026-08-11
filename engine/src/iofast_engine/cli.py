@@ -1,12 +1,12 @@
-"""CLI. The only module allowed to write to stdout/stderr."""
+"""CLI. The only module allowed to write to stdout/stderr (the RPC server
+front end hardens its own stdout — see rpc.py)."""
 
 import argparse
 import json
 import sys
-from urllib.parse import urlparse
 
 from . import __version__
-from .ledger import FAILURE_OUTCOMES
+from .runner import exit_code, run_map, run_scrape, validate  # noqa: F401 (exit_code re-exported)
 
 EPILOG = """\
 exit codes:
@@ -45,6 +45,11 @@ def main(argv=None):
     scrape.add_argument("--depth", type=int, default=3, help="max path depth beyond the scope")
     scrape.add_argument("--max-pages", type=int, default=200)
     scrape.add_argument("--out", default=None, help="output directory")
+    scrape.add_argument(
+        "--update",
+        action="store_true",
+        help="conditional re-scrape against the previous manifest in --out (304 = keep file)",
+    )
     scrape.add_argument("--json", action="store_true", help="NDJSON events on stdout")
 
     map_p = sub.add_parser("map", help="discovery only: print the section tree, scrape nothing")
@@ -52,27 +57,46 @@ def main(argv=None):
     map_p.add_argument("--scope", default=None, help="override the derived scope path prefix")
     map_p.add_argument("--json", action="store_true", help="map result as JSON on stdout")
 
+    est = sub.add_parser("estimate", help="fast static page-count estimate (hard sub-second budget)")
+    est.add_argument("url")
+    est.add_argument("--json", action="store_true", help="estimate result as JSON on stdout")
+
+    sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
+
     args = ap.parse_args(argv)
 
+    if args.command == "rpc":
+        from .rpc import serve_stdio
+
+        return serve_stdio()
+
     # Argument validation happens before any network call.
-    parsed = urlparse(args.url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        ap.error("url must be an absolute http(s) URL")
-    path = parsed.path or "/"
-    if args.scope and not path.startswith(args.scope):
-        ap.error(f"--scope {args.scope!r} is not a path prefix of {path!r}")
+    error = validate(args.url, args.scope)
+    if error:
+        ap.error(error)
+
+    if args.command == "estimate":
+        from .estimate import run_estimate
+
+        result = run_estimate(args.url)
+        if args.json:
+            print(json.dumps(result), flush=True)
+        elif result["source"]:
+            print(
+                f"≈{result['page_count']} pages via {result['source']} "
+                f"in {result['scope']} ({result['elapsed_ms']}ms)",
+                file=sys.stderr,
+            )
+        else:
+            print(f"no static estimate available ({result['elapsed_ms']}ms)", file=sys.stderr)
+        return 0 if result["source"] else 3
 
     emit = ndjson_emit if args.json else human_emit
-    # lazy imports: --version and argument errors stay offline
-    from .adapters.detection import preflight
-    from .adapters.run import harvest_run, known_fail_run
-
-    resolved, adapter = preflight(args.url, emit=emit)
 
     if args.command == "map":
-        from .mapping import map_run, render_tree
+        from .mapping import render_tree
 
-        result = map_run(resolved, args.scope, adapter=adapter, emit=emit)
+        result = run_map(args.url, scope=args.scope, emit=emit)
         if args.json:
             print(json.dumps(result), flush=True)
         else:
@@ -84,55 +108,16 @@ def main(argv=None):
             )
         return 0 if result["pages"] else 3
 
-    if adapter and adapter.known_fail:
-        ledger, written, out_dir, manifest = known_fail_run(adapter, resolved, args.out, emit)
-    elif adapter and adapter.fetch_mode == "api":
-        ledger, written, out_dir, manifest = harvest_run(
-            adapter, resolved, args.out, emit, max_pages=args.max_pages
-        )
-    else:
-        from .spider import DocSpider
-
-        spider = DocSpider(
-            start_url=resolved,
-            max_depth=args.depth,
-            max_pages=args.max_pages,
-            out_dir=args.out,
-            scope=args.scope,  # else derived from the resolved URL, which keeps the user's path
-            emit=emit,
-            adapter=adapter,
-            resolve=False,  # preflight already followed the redirect
-        )
-        spider.start()
-        ledger, written, out_dir, manifest = (
-            spider.ledger,
-            spider.written,
-            spider.out_dir,
-            spider.manifest,
-        )
-
-    code = exit_code(ledger, written)
-    emit(
-        {
-            "type": "result",
-            "written": written,
-            "out_dir": out_dir,
-            "exit_code": code,
-            "manifest": manifest,
-            "message": f"\n{'✅' if code == 0 else '⚠️ '} {written} pages -> {out_dir}",
-        }
+    result = run_scrape(
+        args.url,
+        out=args.out,
+        scope=args.scope,
+        depth=args.depth,
+        max_pages=args.max_pages,
+        emit=emit,
+        update=args.update,
     )
-    return code
-
-
-def exit_code(ledger, written):
-    """0 ok · 1 completed with failures / nothing written · 3 nothing in scope."""
-    counts = ledger.counts()
-    if not ledger.enqueued:
-        return 3
-    if sum(counts[outcome] for outcome in FAILURE_OUTCOMES) or not written:
-        return 1
-    return 0
+    return result["exit_code"]
 
 
 if __name__ == "__main__":

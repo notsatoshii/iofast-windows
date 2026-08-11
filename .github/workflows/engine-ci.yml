@@ -22,3 +22,19 @@ jobs:
           python-version: "3.13"
       - run: pip install -e "engine[dev]"
       - run: pytest engine/tests -q
+
+  # The frozen sidecar drifts silently (lazy imports, data files) — the RPC
+  # layer once shipped a method the bundle didn't have. verify_frozen drives
+  # the REAL frozen binary over stdio against a loopback fixture site only.
+  frozen-sidecar:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e "engine[dev,build]"
+      - run: pyinstaller --noconfirm packaging/iofast.spec
+        working-directory: engine
+      - run: python packaging/verify_frozen.py dist/iofast/iofast
+        working-directory: engine

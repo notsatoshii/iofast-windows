@@ -1,6 +1,14 @@
 """Outcome ledger: every enqueued URL ends in exactly one outcome class."""
 
-OUTCOMES = ("ok", "thin_escalated_ok", "skipped_no_content", "failed_fetch", "failed_exception")
+# "cancelled" is additive (schema 1 stays): user stopped the run, NOT a failure.
+OUTCOMES = (
+    "ok",
+    "thin_escalated_ok",
+    "skipped_no_content",
+    "failed_fetch",
+    "failed_exception",
+    "cancelled",
+)
 FAILURE_OUTCOMES = ("skipped_no_content", "failed_fetch", "failed_exception")
 
 
@@ -29,6 +37,8 @@ class Ledger:
         status=None,
         escalated=False,
         elapsed_ms=None,
+        etag=None,
+        last_modified=None,
     ):
         """Outcome is always supplied by the caller — never inferred from the tier."""
         if outcome not in OUTCOMES:
@@ -45,6 +55,10 @@ class Ledger:
             "file": file,
             "elapsed_ms": elapsed_ms,
             "platform": None,
+            # Response validators (additive, schema 1): re-scrape sends these as
+            # If-None-Match / If-Modified-Since so unchanged pages 304 out.
+            "etag": etag,
+            "last_modified": last_modified,
         }
 
     def reconcile(self):

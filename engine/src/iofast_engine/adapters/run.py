@@ -35,12 +35,15 @@ def _info(adapter, url, extra):
     }
 
 
-def harvest_run(adapter, start_url, out_dir=None, emit=None, max_pages=200):
+def harvest_run(adapter, start_url, out_dir=None, emit=None, max_pages=200, cancel=None):
     """Run an adapter's harvest(). The adapter yields Docs; the engine writes them.
 
     The adapter enqueues every URL before fetching it. Anything still enqueued when
     harvest raises is recorded as failed_exception — never dropped, so a failed run
     can never reconcile green by having enqueued nothing.
+
+    cancel: optional threading.Event, checked between docs; on cancel the
+    never-fetched remainder is recorded "cancelled", not as a failure.
     """
     emit = emit or (lambda event: None)
     out_dir = out_dir or default_out_dir(start_url)
@@ -57,9 +60,13 @@ def harvest_run(adapter, start_url, out_dir=None, emit=None, max_pages=200):
     )
 
     failure = None
+    cancelled = False
     try:
         for doc in adapter.harvest(ctx):
             writer.write(doc.url, doc.markdown, tier="api", how=f"api ({adapter.name})")
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+                break
             if writer.written >= max_pages:
                 break
     except Exception as error:
@@ -68,7 +75,14 @@ def harvest_run(adapter, start_url, out_dir=None, emit=None, max_pages=200):
             ledger.record(url, "failed_exception", failure, tier="api")
         emit({"type": "warning", "message": f"❌ harvest failed: {failure}"})
 
-    manifest = write_run(out_dir, ledger, _info(adapter, start_url, {"harvest error": failure or "none"}))
+    if cancelled:
+        for url in sorted(ledger.enqueued - set(ledger.records)):
+            ledger.record(url, "cancelled", "run cancelled before fetch", tier="api")
+
+    extra = {"harvest error": failure or "none"}
+    if cancelled:
+        extra["cancelled"] = True
+    manifest = write_run(out_dir, ledger, _info(adapter, start_url, extra))
     emit(
         {
             "type": "progress",

@@ -1,0 +1,52 @@
+[
+  {
+    "send": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize"
+    },
+    "expect": [
+      "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"protocol\": 1, \"engine\": \"{VERSION}\", \"manifest_schema\": 1}}"
+    ]
+  },
+  {
+    "send": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "map",
+      "params": {
+        "url": "https://docs.example.com/docs/"
+      }
+    },
+    "expect": [
+      "{\"jsonrpc\": \"2.0\", \"method\": \"event\", \"params\": {\"type\": \"progress\", \"message\": \"mapping\", \"rid\": 2}}",
+      "{\"jsonrpc\": \"2.0\", \"id\": 2, \"result\": {\"pages\": [\"https://docs.example.com/docs/a\"], \"tree\": {\"total\": 1}, \"scope\": \"/docs/\", \"discovery\": \"sitemap\", \"platform\": \"gitbook\"}}"
+    ]
+  },
+  {
+    "send": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "scrape",
+      "params": {
+        "url": "https://docs.example.com/docs/",
+        "out": "/tmp/iofast-rpc-test"
+      }
+    },
+    "expect": [
+      "{\"jsonrpc\": \"2.0\", \"method\": \"event\", \"params\": {\"type\": \"platform\", \"platform\": \"gitbook\", \"message\": \"detected gitbook\", \"rid\": 3}}",
+      "{\"jsonrpc\": \"2.0\", \"method\": \"event\", \"params\": {\"type\": \"page\", \"url\": \"https://docs.example.com/docs/a\", \"outcome\": \"ok\", \"rid\": 3}}",
+      "{\"jsonrpc\": \"2.0\", \"id\": 3, \"result\": {\"written\": 1, \"out_dir\": \"/tmp/iofast-rpc-test\", \"exit_code\": 0, \"cancelled\": false, \"manifest\": {\"schema\": 1}}}"
+    ]
+  },
+  {
+    "send": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "cancel"
+    },
+    "expect": [
+      "{\"jsonrpc\": \"2.0\", \"id\": 4, \"error\": {\"code\": -32001, \"message\": \"no matching scrape running\"}}"
+    ]
+  }
+]

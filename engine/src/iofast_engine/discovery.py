@@ -5,6 +5,7 @@ fetcher is imported lazily inside _get().
 """
 
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 import zlib
@@ -17,6 +18,9 @@ MAX_SITEMAP_URLS = 50_000
 
 MIN_INTERVAL = 0.5  # seconds between calls to the same host
 _last_call: dict[str, float] = {}
+# ponytail: one global lock held across the politeness sleep — a concurrent
+# map + scrape (RPC) stay spaced; per-host locks only if cross-host fan-out appears.
+_last_call_lock = threading.Lock()
 
 USER_AGENT = "iofast-docs-scraper"
 ROBOTS_POLICY = (
@@ -34,12 +38,13 @@ def _get(url: str, timeout: int = 20, headers: dict | None = None):
     from scrapling.fetchers import Fetcher  # lazy: keeps this module importable offline
 
     host = urlparse(url).netloc
-    last = _last_call.get(host)
-    if last is not None:
-        wait = MIN_INTERVAL - (time.monotonic() - last)
-        if wait > 0:
-            time.sleep(wait)
-    _last_call[host] = time.monotonic()
+    with _last_call_lock:  # held across the sleep so concurrent callers stay spaced
+        last = _last_call.get(host)
+        if last is not None:
+            wait = MIN_INTERVAL - (time.monotonic() - last)
+            if wait > 0:
+                time.sleep(wait)
+        _last_call[host] = time.monotonic()
     try:
         extra = {"headers": headers} if headers else {}
         return Fetcher.get(url, timeout=timeout, stealthy_headers=True, **extra)

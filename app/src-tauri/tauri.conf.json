@@ -1,0 +1,54 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "iofast",
+  "version": "0.1.0",
+  "identifier": "com.iofast.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "iofast",
+        "width": 900,
+        "height": 640,
+        "visible": false,
+        "titleBarStyle": "Visible"
+      },
+      {
+        "label": "panel",
+        "title": "iofast quick panel",
+        "width": 680,
+        "height": 320,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

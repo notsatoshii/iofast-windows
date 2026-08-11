@@ -70,4 +70,5 @@ def test_manifest_carries_new_fields():
     assert set(row) == {
         "url", "outcome", "reason", "tier", "escalated",
         "status", "chars", "file", "elapsed_ms", "platform",
+        "etag", "last_modified",  # additive (schema 1): re-scrape validators
     }

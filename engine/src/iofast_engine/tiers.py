@@ -37,6 +37,12 @@ def browsers_available() -> bool:
     Ask Playwright for the executable path it would use: a cache holding some other
     chromium revision is a false positive (`python -m playwright install chromium` fixes it).
     """
+    import sys
+
+    if getattr(sys, "frozen", False):
+        # Frozen sidecar ships static-only; don't spawn Playwright's node driver
+        # just to learn that. Flips when the dynamic-tier download lands (Phase 2+).
+        return False
     try:
         from playwright.sync_api import sync_playwright
 

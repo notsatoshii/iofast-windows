@@ -1,6 +1,7 @@
 """DocSpider — the only module that imports scrapling at module level."""
 
 import os
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -41,6 +42,13 @@ class DocSpider(Spider):
     concurrent_requests = 4
     concurrent_requests_per_domain = 2
 
+    # Class-level defaults so partially-constructed spiders (tests build via
+    # object.__new__) read as "no cancel requested, no previous run".
+    cancel_event = None
+    _pause_sent = False
+    previous: dict = {}  # read-only fallback; instances get their own in __init__
+    validators = None  # lazy: written only through _remember_validators
+
     def __init__(
         self,
         start_url,
@@ -51,9 +59,17 @@ class DocSpider(Spider):
         emit=None,
         adapter=None,
         resolve=True,
+        cancel_event=None,
+        previous=None,
+        resume=False,
         **kwargs,
     ):
         self.emit = emit or (lambda event: None)
+        # Cooperative cancel (RPC): the event is set by another thread; parse()
+        # checks it as a backstop for cancels that land before the engine exists.
+        self.cancel_event = cancel_event
+        self._pause_sent = False
+        self._cancel_lock = threading.Lock()
         # The CLI resolves and fingerprints the start URL once, then passes both in.
         resolved = resolve_start(start_url, emit=self.emit) if resolve else start_url
         parsed = urlparse(resolved)
@@ -85,6 +101,10 @@ class DocSpider(Spider):
         self.rescue_attempted = False
         self.rescued = None  # selectors adopted from the Tier 3 LLM rescue, if any
         self.last_status = {}  # url -> last HTTP status seen (for exhausted retries)
+        # Re-scrape support: previous manifest rows (url -> row) drive conditional
+        # GETs; validators captures this run's ETag/Last-Modified for the next one.
+        self.previous = previous or {}
+        self.validators = {}  # url -> (etag, last_modified)
         self.selectors = selectors_for(adapter, CONTENT_SELECTORS)
         self.browsers = browsers_available()
         # The adapter's fetch_strategy is the STARTING tier; the ladder still runs above it.
@@ -109,18 +129,31 @@ class DocSpider(Spider):
             )
         self.seeds, self.discovery = self._discover()
         self.start_urls = [self.start_url]
-        super().__init__(**kwargs)
+        # Pause saves a checkpoint under .crawl (Stop must never lose the run);
+        # a FRESH run clears any stale one — auto-resume would skip
+        # start_requests() and this Ledger is not part of the checkpoint.
+        crawl_dir = os.path.join(self.out_dir, ".crawl")
+        stale = os.path.join(crawl_dir, "checkpoint.pkl")
+        if not resume and os.path.exists(stale):
+            os.remove(stale)
+        super().__init__(crawldir=crawl_dir, **kwargs)
 
     @property
     def written(self):
         return self.writer.written
 
     def configure_sessions(self, manager):
-        """Static first; browser tiers are lazy so they only boot when escalated to."""
-        from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession, FetcherSession
+        """Static first; browser tiers are lazy so they only boot when escalated to.
+
+        The browser-session import stays behind the guard: importing it pulls in
+        playwright, which a frozen static-only sidecar deliberately excludes.
+        """
+        from scrapling.fetchers import FetcherSession
 
         manager.add("static", FetcherSession(timeout=30), default=True)
         if self.browsers:
+            from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
+
             manager.add(
                 "dynamic",
                 AsyncDynamicSession(headless=True, disable_resources=True, max_pages=2),
@@ -168,6 +201,24 @@ class DocSpider(Spider):
             dont_filter=True,
             meta={"depth": depth, "origin_url": url, "tier": tier, "escalated": True},
         )
+
+    def request_cancel(self):
+        """Idempotent graceful pause, safe from any thread and lifecycle stage.
+
+        pause() raises before the engine exists (RuntimeError) or before
+        Spider.__init__ ran (AttributeError); both are swallowed because the
+        parse-time backstop retries once the engine is live. _pause_sent is
+        only set on success so exactly ONE engine pause is ever sent — a
+        second request_pause() escalates to a force-stop mid-write.
+        """
+        with self._cancel_lock:
+            if self._pause_sent:
+                return
+            try:
+                self.pause()
+                self._pause_sent = True
+            except (RuntimeError, AttributeError):
+                pass
 
     def reject(self, url: str):
         return reject_url(url, self.host, self.scope, self.max_depth, self.keep_locales)
@@ -260,9 +311,23 @@ class DocSpider(Spider):
             yield Request(target, **self._request_kwargs({"depth": 0, "origin_url": url, "md_probe": from_llms}))
 
     def _request_kwargs(self, meta):
-        """Every page request starts at the adapter's tier (static unless it said otherwise)."""
+        """Every page request starts at the adapter's tier (static unless it said otherwise).
+
+        On a re-scrape (previous manifest supplied) the static tier sends the
+        stored validators, so an unchanged page answers 304 and is never re-fetched.
+        """
+        extra = {}
+        prev = self.previous.get(meta.get("origin_url", ""))
+        if prev and self.start_tier == "static":
+            headers = {}
+            if prev.get("etag"):
+                headers["If-None-Match"] = prev["etag"]
+            if prev.get("last_modified"):
+                headers["If-Modified-Since"] = prev["last_modified"]
+            if headers:
+                extra["headers"] = headers
         if self.start_tier == "static":
-            return {"meta": meta}
+            return {"meta": meta, **extra}
         return {"sid": self.start_tier, "meta": {**meta, "tier": self.start_tier}}
 
     async def on_error(self, request, error):
@@ -296,6 +361,8 @@ class DocSpider(Spider):
         self.emit({"type": "warning", "url": url, "message": f"❌ failed: {url} ({detail})"})
 
     async def parse(self, response: Response):
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            self.request_cancel()  # backstop: cancel landed before the engine existed
         meta = response.meta
         origin_url = meta.get("origin_url", clean_url(response.url))
 
@@ -315,6 +382,40 @@ class DocSpider(Spider):
                 return
             yield Request(origin_url, meta={**meta, "md_probe": False})
             return
+
+        if status == 304 and origin_url in self.previous:
+            # Unchanged since the previous run: the file on disk stays the truth.
+            prev = self.previous[origin_url]
+            self.ledger.record(
+                origin_url,
+                "ok",
+                "not modified (304)",
+                tier=tier,
+                chars=prev.get("chars", 0),
+                file=prev.get("file", ""),
+                status=304,
+                elapsed_ms=self._elapsed(origin_url),
+                etag=prev.get("etag"),
+                last_modified=prev.get("last_modified"),
+            )
+            self.writer.names[prev.get("file", "").removesuffix(".md")] = origin_url
+            self.emit(
+                {
+                    "type": "page",
+                    "url": origin_url,
+                    "file": prev.get("file", ""),
+                    "message": f"♻️  unchanged: {prev.get('file', origin_url)}",
+                }
+            )
+            return
+
+        if status == 200:
+            validators = (
+                header_lookup(headers, "etag") or None,
+                header_lookup(headers, "last-modified") or None,
+            )
+            if any(validators):
+                self._remember_validators(origin_url, validators)
 
         body_text = _body_text(response)
         challenged = is_challenge(status, headers, body_text)
@@ -442,8 +543,14 @@ class DocSpider(Spider):
         self._write(url, text, tier, how, escalated, status)
         return True
 
+    def _remember_validators(self, url, validators):
+        if self.validators is None:
+            self.validators = {}  # lazy so object.__new__ test spiders never share state
+        self.validators[url] = validators
+
     def _write(self, url, text, tier="static", how="", escalated=False, status=None):
         # Outcome comes from whether this page needed an escalation — never from the tier.
+        etag, last_modified = (self.validators or {}).get(url, (None, None))
         self.writer.write(
             url,
             text,
@@ -453,6 +560,8 @@ class DocSpider(Spider):
             escalated=escalated,
             status=status,
             elapsed_ms=self._elapsed(url),
+            etag=etag,
+            last_modified=last_modified,
         )
 
     async def on_close(self):
@@ -475,8 +584,12 @@ class DocSpider(Spider):
         if self.rescued:
             # Candidate permanent adapter: surfaced in the manifest, cached on disk.
             info["rescue"] = self.rescued
+        cancelled = self.cancel_event is not None and self.cancel_event.is_set()
+        if cancelled:
+            info["cancelled"] = True
         # Exhausted transient codes (429/503/... past upstream's retries) get their
-        # real status; only truly unexplained drops fall through to reconcile().
+        # real status; on a cancelled run the never-fetched remainder is "cancelled",
+        # not a failure; only truly unexplained drops fall through to reconcile().
         for url in self.ledger.enqueued - set(self.ledger.records):
             status = self.last_status.get(url)
             if status is not None:
@@ -485,6 +598,13 @@ class DocSpider(Spider):
                     "failed_fetch",
                     f"http {status} (retries exhausted)",
                     status=status,
+                    elapsed_ms=self._elapsed(url),
+                )
+            elif cancelled:
+                self.ledger.record(
+                    url,
+                    "cancelled",
+                    "run cancelled before fetch",
                     elapsed_ms=self._elapsed(url),
                 )
         self.manifest = write_run(self.out_dir, self.ledger, info)

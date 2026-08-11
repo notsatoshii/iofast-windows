@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+build = ["pyinstaller==6.16.0"]
 
 [project.scripts]
 iofast = "iofast_engine.cli:main"
