@@ -15,7 +15,7 @@ Step 0 (prior-art gate) and Phase 0 are both COMPLETE and verified.
   - Scrapegraph-ai rejected entirely: LLM mandatory in constructor, no crawl brain, deterministic crawl is their paid API, default telemetry POSTs scraped content off-box.
 - PLAN.md updated in the same commit: Phase 3 mode 2 rewritten, backlog chunking row marked covered, Phase 0 steps 1–3 annotated with harvested tricks (llms.txt `.md`-variant probe, redirect scope-anchor rule, default excludes, Cloudflare challenge markers).
 
-### Phase 0 — scripts fixed (separate repo: `~/code/scrapling`, now a git repo, branch main)
+### Phase 0 — scripts fixed (separate repo: `~/code/iofast-scraper`, now a git repo, branch main)
 
 All 8 PLAN.md steps landed, one commit each (`45f16e3`..`6cb2b93`; baseline `b128bed`). `doc_to_md.py` now has: sitemap/llms.txt discovery, docs-path scoping with segment depth, static→dynamic→stealth escalation (monotonic, thin-content threshold 200 chars — measured, see below), trafilatura extraction (raw body never dumped), enqueue-time link filtering/dedup, retry-on-exception, per-page ledger → `report.md` + `manifest.json`, politeness (delay 0.5s, per-domain 2) + robots.txt obedience, `--selftest`, `--max-pages`, `--out`. Wrapper race (`rm -rf docs-*`) is gone; run dir is created up front and passed via `--out`.
 
@@ -41,7 +41,7 @@ Each tree: exactly 40 `.md` + `report.md` + `manifest.json`, zero empty/junk fil
 
 ## Next actions
 
-1. Merge branch `jarvis/iofast-prior-art-gate-c14cd6` → main and push (user decision; nothing pushed yet). `~/code/scrapling` is a fresh local-only git repo — decide whether it gets a remote.
+1. ~~Merge the prior-art branch~~ DONE — PR #1 squash-merged, iofast main pushed. The engine repo is now `github.com/inputoutput9/iofast-scraper` (renamed from `scrapling`, which falsely implied a fork of the upstream library it merely imports); local path `~/code/iofast-scraper`. Deps pinned in its `requirements.txt`. One leftover: remove this session's worktree from a PRIMARY session — `git -C /Users/james/code/iofast worktree remove /Users/james/code/iofast/.claude/worktrees/iofast-prior-art-gate-c14cd6 --force && git -C /Users/james/code/iofast branch -D jarvis/iofast-prior-art-gate-c14cd6`.
 2. Phase 1 (PLAN.md): extract engine into `iofast-engine` package in this repo; platform adapters (7 HTML + SwaggerHub/Confluence API + Notion known-fail); map-then-scrape; Tier 3 LLM rescue; committed HTML fixtures + MUST-FAIL ledger fixtures; delete `gitbook_to_md.py` once GitBook adapter passes.
 3. Fold Phase 0's known gaps into Phase 1 adapter work (locale suffixes, status-code plumbing).
 

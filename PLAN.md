@@ -29,7 +29,7 @@ Decisions below were locked in an interview on 2026-08-11 (see Decision Log). Co
 
 ## Phase 0 — fix the current scripts (~3–4 sessions, nothing throwaway)
 
-Target: `~/code/scrapling/doc_to_md.py` + wrapper. The LOGIC carries into the sidecar engine later; the file-I/O layer is rewritten for JSON-RPC streaming. Maps to ANALYSIS.md findings (F#). Most steps are net-new code — upstream ships no sitemap template, no throttle, and no robots handling.
+Target: `~/code/iofast-scraper/doc_to_md.py` + wrapper. The LOGIC carries into the sidecar engine later; the file-I/O layer is rewritten for JSON-RPC streaming. Maps to ANALYSIS.md findings (F#). Most steps are net-new code — upstream ships no sitemap template, no throttle, and no robots handling.
 
 | Step | Fix | Finding |
 |------|-----|---------|

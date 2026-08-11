@@ -1,6 +1,6 @@
 # iofast — Analysis of Current Setup and Upstream Scrapling
 
-Date: 2026-08-11. Sources: line-by-line read of `~/code/scrapling/` (run-scrapling.sh, doc_to_md.py, gitbook_to_md.py, README.md); upstream capability check of https://github.com/D4Vinci/Scrapling (fetched 2026-08-11).
+Date: 2026-08-11. Sources: line-by-line read of `~/code/iofast-scraper/` (run-scrapling.sh, doc_to_md.py, gitbook_to_md.py, README.md); upstream capability check of https://github.com/D4Vinci/Scrapling (fetched 2026-08-11).
 
 ## 1. Current setup — what exists
 
@@ -53,7 +53,7 @@ It works on simple, server-rendered docs sites. It fails intermittently elsewher
 
 ## 3. Upstream Scrapling — what v0.4.2 actually ships
 
-Verified by running grep/python against the installed package at `~/code/scrapling/.venv/lib/python3.13/site-packages/scrapling/` (scrapling 0.4.2).
+Verified by running grep/python against the installed package at `~/code/iofast-scraper/.venv/lib/python3.13/site-packages/scrapling/` (scrapling 0.4.2).
 
 **Real and reusable:**
 
