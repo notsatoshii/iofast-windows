@@ -2,7 +2,7 @@
 
 "inputoutput fast": copy a docs URL → hotkey → intelligently scrape exactly the docs → ingest into the LLM tool of your choice. Deterministic first; LLM only when deterministic options are exhausted.
 
-Decisions below were locked in an interview on 2026-08-11 (see Decision Log). Companion doc: [ANALYSIS.md](ANALYSIS.md).
+Decisions below were locked in an interview on 2026-08-11 (see Decision Log). Companion docs: [ANALYSIS.md](ANALYSIS.md), [2-REPO-ANALYSIS.md](2-REPO-ANALYSIS.md) (prior-art gate, 2026-08-11: verdict HARVEST — keep the Scrapling crawl brain; reuse docs-mcp-server unforked as the serve layer; reject Scrapegraph-ai).
 
 ## Architecture (target)
 
@@ -33,9 +33,9 @@ Target: `~/code/scrapling/doc_to_md.py` + wrapper. The LOGIC carries into the si
 
 | Step | Fix | Finding |
 |------|-----|---------|
-| 1 | Sitemap/llms.txt fast path (NET-NEW — no `SitemapSpider` exists): parse `sitemap.xml`, recurse sitemap-index files, handle `.xml.gz`, read `<lastmod>`; parse `llms.txt`/`llms-full.txt`. Reconcile all discovered URLs against docs-path scope. Fall back to link crawl only if absent | F4 |
-| 2 | Docs-path scoping: derive prefix from start URL (e.g. `/docs/`); depth = URL path segments beyond the prefix (see Decision Log); skip locale duplicates | F3 |
-| 3 | Build the escalation ladder (static IS already the default): `configure_sessions()` with 3 sessions selected by `sid`; a calibrated thin-content threshold triggers escalation to `DynamicFetcher`; `StealthyFetcher` on 403/challenge; anti-ping-pong guard so a page cannot bounce tiers endlessly | F1 |
+| 1 | Sitemap/llms.txt fast path (NET-NEW — no `SitemapSpider` exists): parse `sitemap.xml`, recurse sitemap-index files, handle `.xml.gz`, read `<lastmod>`; parse `llms.txt`/`llms-full.txt` — and for each llms.txt link, probe the `.md`/`index.html.md` variant before fetching HTML (harvested: docs-mcp-server `WebScraperStrategy.ts:104-167`). Reconcile all discovered URLs against docs-path scope. Fall back to link crawl only if absent | F4 |
+| 2 | Docs-path scoping: derive prefix from start URL (e.g. `/docs/`); depth = URL path segments beyond the prefix (see Decision Log); skip locale duplicates; on a start-URL redirect, adopt protocol+host but keep the user's path as the scope anchor (harvested: `WebScraperStrategy.ts:273-291`); seed default exclude patterns from docs-mcp-server's list (changelogs, licenses, i18n locales — `defaultPatterns.ts:11-140`) | F3 |
+| 3 | Build the escalation ladder (static IS already the default): `configure_sessions()` with 3 sessions selected by `sid`; a calibrated thin-content threshold triggers escalation to `DynamicFetcher`; `StealthyFetcher` on 403/challenge — detect Cloudflare challenges via `cf-mitigated: challenge` header, `Just a moment...` / `cf_chl_opt` body markers (harvested: `HttpFetcher.ts:300-330`); anti-ping-pong guard so a page cannot bounce tiers endlessly | F1 |
 | 4 | Content cleanup: add **trafilatura** (or readability-lxml) as the extraction fallback instead of `response.body` — no readability lib is installed and upstream only strips script/style/noscript/svg; strip nav/breadcrumb/edit-links/cookie remnants pre-markdownify. New dependency | F5, F6 |
 | 5 | Link filtering: drop asset extensions, mailto/tel/js, offsite before enqueue; dedup before fetch | F7, F11 |
 | 6 | Retry on raised exception (upstream retries only the blocked-code set, never exceptions) + per-page outcome ledger → `report.md` (pages ok / thin / failed, with reasons). The ledger is the valuable half — it kills silent partial scrapes | F8 |
@@ -118,7 +118,7 @@ Browsers are downloaded on first use of the dynamic tier. They are NEVER bundled
 First-run chooser; remembered; changeable in settings (locked decision).
 
 1. **Open in coding agent**: detect installed CLIs (`claude`, `codex`, `cursor`, `gemini`); one click opens the chosen tool with the scrape folder as working context. No keys needed.
-2. **MCP server**: build our own MCP server with two tools, `search_library` and `read_doc`, over the local library. `mcp>=1.26.0` is already available via scrapling's `ai` extra, so FastMCP is a short file. (Do not wrap Scrapling's built-in server — it is fetch-the-web only; see ANALYSIS.md §3.)
+2. **MCP server**: default = run **docs-mcp-server unforked** over the library via `file://` ingest (`npx docs-mcp-server`, `scrape <lib> file:///path/to/library`) — gets MCP search (stdio+HTTP), heading-aware chunking, hybrid FTS/vector search that degrades to FTS-only without any API key, versioned index, job queue, and a web UI for free (see 2-REPO-ANALYSIS.md). Files on disk stay the source of truth; its SQLite is a derived index. Fallback = own FastMCP server with `search_library` and `read_doc` (`mcp>=1.26.0` ships via scrapling's `ai` extra) for no-Node environments, or if marking the corpus untrusted inside MCP tool descriptions becomes mandatory — docs-mcp-server's tool descriptions can't carry that warning unforked, so the per-file untrusted wrappers must suffice there. (Do not wrap Scrapling's built-in server — it is fetch-the-web only; see ANALYSIS.md §3.)
 3. **API push**: send corpus + prompt to chosen provider (OpenRouter gateway default; native Anthropic/OpenAI/Gemini/DeepSeek slots), digest rendered in-app. Keys in OS keychain, never plaintext; handed to the sidecar per the key-handoff rule (Phase 2).
 
 ## Phase 4 — hardening + distribution
@@ -134,7 +134,7 @@ First-run chooser; remembered; changeable in settings (locked decision).
 |------|------|
 | **Max evasion tier** — proxy rotation (Scrapling ProxyRotator), residential proxies, solver services | **NUDGE REQUIRED: user asked to be actively reminded to build this after stealth-tier ships.** Revisit at end of Phase 1 and Phase 4. |
 | Auth-walled docs (cookie/session import from user's browser) | Pairs with CAPTCHA handoff work. Confluence is NOT here — its Phase 1 adapter uses the REST API with a user token |
-| Corpus post-processing: chunking, embeddings, local semantic search | Only after MCP mode proves insufficient |
+| Corpus post-processing: chunking, embeddings, local semantic search | Covered by docs-mcp-server's splitter + hybrid search (2-REPO-ANALYSIS.md); own build only if that integration proves insufficient |
 | Non-docs targets (blogs, wikis) | Out of scope until the 10-platform matrix is green |
 
 ## Decision log (interview, 2026-08-11)
