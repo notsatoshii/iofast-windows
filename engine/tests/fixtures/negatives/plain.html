@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Widget API — Docs</title>
+</head>
+<body>
+  <nav><a href="/">Home</a> <a href="/docs">Docs</a></nav>
+  <main>
+    <h1>Getting started with the Widget API</h1>
+    <p>The Widget API is a small HTTP service for creating and listing widgets. Every
+    request needs an API key, passed in the <code>X-Api-Key</code> header. Keys are issued
+    per project and can be rotated at any time without downtime.</p>
+    <h2>Creating a widget</h2>
+    <p>Send a POST request to <code>/v1/widgets</code> with a JSON body containing a name
+    and an optional colour. The response carries the new widget id, which you will need
+    for every later call about that widget.</p>
+    <pre><code>curl -X POST https://api.example.com/v1/widgets \
+  -H "X-Api-Key: $KEY" -d '{"name": "left-handed sprocket"}'</code></pre>
+    <h2>Listing widgets</h2>
+    <p>A GET request to <code>/v1/widgets</code> returns your widgets, newest first, twenty
+    per page. Pass <code>?cursor=</code> with the cursor from the previous response to walk
+    the rest of the list. An empty list means you have reached the end.</p>
+    <h2>Errors</h2>
+    <p>Errors use standard status codes. A 401 means the key is missing or wrong, a 404
+    means the widget id does not exist, and a 429 means you are sending requests faster
+    than the plan allows. The body always contains a machine-readable code.</p>
+  </main>
+  <footer><p>&copy; Example Inc.</p></footer>
+</body>
+</html>

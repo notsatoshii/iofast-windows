@@ -1,0 +1,24 @@
+name: engine-ci
+
+# The suite is offline by design: committed fixtures stand in for the live web,
+# so CI installs no browsers and makes no network requests.
+on:
+  push:
+    paths:
+      - "engine/**"
+      - ".github/workflows/engine-ci.yml"
+  pull_request:
+    paths:
+      - "engine/**"
+      - ".github/workflows/engine-ci.yml"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e "engine[dev]"
+      - run: pytest engine/tests -q

@@ -1,0 +1,49 @@
+{
+  "platform": "swaggerhub",
+  "pages": [
+    {
+      "file": "static-registry-api-spa.html",
+      "url": "https://app.swaggerhub.com/apis-docs/swagger-hub/registry-api/1.3.0",
+      "captured": "2026-08-11",
+      "status": 302,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:23:29 GMT",
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": "74",
+        "connection": "close",
+        "server": "nginx",
+        "x-powered-by": "Express",
+        "location": "/apiproxy/sbid/login?silentLogin=true&isApiHub=false",
+        "vary": "Accept",
+        "set-cookie": "session=Qtd2w6-JC5cL696uuITOXg.azcVCkRd91dIF5gGPLjkco6Lt-6M0q2AC8ZcUHG3ZalXu6PISm5cO5v8EwmiCdR03-NPYsbRtJWkFIhuIj7sK6iLDx4930a9LyIk7ZRr0Hc.1786433009717.604800000.MeQPdMaI0DN_NXjm4uMFzaBzo730X5Eo5G4ntLrbfFw; path=/; expires=Tue, 18 Aug 2026 07:23:30 GMT; secure; httponly",
+        "strict-transport-security": "max-age=31536000; includeSubDomains"
+      },
+      "variant": "static",
+      "extracted_chars": 0,
+      "synthetic": false
+    },
+    {
+      "file": "spec.json",
+      "url": "https://api.swaggerhub.com/apis/swagger-hub/registry-api/1.3.0",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:23:30 GMT",
+        "content-type": "application/json",
+        "transfer-encoding": "chunked",
+        "connection": "close",
+        "vary": "Accept-Encoding",
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
+        "access-control-allow-headers": "Content-Type,Accept,Origin,Authorization",
+        "cache-control": "must-revalidate,no-cache,no-store",
+        "last-modified": "Fri, 03 Apr 2026 12:55:09 UTC",
+        "strict-transport-security": "max-age=31536000; includeSubDomains"
+      },
+      "variant": "api",
+      "extracted_chars": 0,
+      "synthetic": false
+    }
+  ],
+  "notes": "The apis-docs SPA page 302s to a silent-login proxy for a plain GET \u2014 that redirect body IS the static fixture, and it is why the OpenAPI spec JSON is the real content source."
+}

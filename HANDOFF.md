@@ -1,56 +1,55 @@
 # iofast — Session Handoff
 
-Date: 2026-08-11. Repo: https://github.com/inputoutput9/iofast (private). Local primary: `/Users/james/code/iofast` (main @ `33d7018`). This session's work sits on branch `jarvis/iofast-prior-art-gate-c14cd6` (worktree `.claude/worktrees/iofast-prior-art-gate-c14cd6`), NOT yet merged or pushed.
+Date: 2026-08-11. Repo: https://github.com/inputoutput9/iofast (private). Phase 1 work sits on branch `jarvis/iofast-phase-1-resume-6081a8` (worktree `.claude/worktrees/iofast-phase-1-resume-6081a8`); see the PR for merge state. Engine client repo: https://github.com/inputoutput9/iofast-scraper, main @ `e7985cb`, pushed.
 
-## State
+## State: Phase 1 COMPLETE — all 8 steps landed, DONE bar verified
 
-Step 0 (prior-art gate) and Phase 0 are both COMPLETE and verified.
+The engine now lives in this repo as an installable package: `engine/` (dist `iofast-engine`, import `iofast_engine`, CLI `iofast`). 171 offline tests green (`engine/.venv/bin/pytest engine/tests -q`); CI workflow at `.github/workflows/engine-ci.yml` gates merges on them.
 
-### Step 0 — prior-art gate (this repo, branch above)
+### DONE-bar verification (live, 2026-08-11)
 
-- Cloned and source-analyzed `~/code/docs-mcp-server` (@ 586b5fa, v3.0.0) and `~/code/Scrapegraph-ai` (@ 27d9d28, v2.1.6).
-- Verdict: **HARVEST** — full evidence in `2-REPO-ANALYSIS.md` (commit `c16dbd1`).
-  - Scrapling crawl brain stays as planned (neither repo ships a deterministic crawl brain).
-  - **docs-mcp-server adopted unforked as the default serve layer**: Phase 3 MCP mode now = point it at the library via `file://` ingest (MCP search + chunking + hybrid FTS/vector + versioned index + job queue + web UI, free; degrades to FTS-only without any API key). Own FastMCP server demoted to fallback.
-  - Scrapegraph-ai rejected entirely: LLM mandatory in constructor, no crawl brain, deterministic crawl is their paid API, default telemetry POSTs scraped content off-box.
-- PLAN.md updated in the same commit: Phase 3 mode 2 rewritten, backlog chunking row marked covered, Phase 0 steps 1–3 annotated with harvested tricks (llms.txt `.md`-variant probe, redirect scope-anchor rule, default excludes, Cloudflare challenge markers).
+Live matrix, 10 pages per platform, `iofast scrape <url> --max-pages 10`, zero manual intervention:
 
-### Phase 0 — scripts fixed (separate repo: `~/code/iofast-scraper`, now a git repo, branch main)
+| Platform | Result |
+|---|---|
+| gitbook, mintlify, docusaurus, readme, redocly, readthedocs, confluence | 10 ok, clean=True, reconciled |
+| document360 | 3 ok + 7 thin_escalated_ok (dynamic tier working), clean=True |
+| swaggerhub | 7 ok via OpenAPI-spec rendering (never scrapes the SPA), clean=True |
+| notion | documented known-fail: exit 1, report.md explains, ledger reconciles |
 
-All 8 PLAN.md steps landed, one commit each (`45f16e3`..`6cb2b93`; baseline `b128bed`). `doc_to_md.py` now has: sitemap/llms.txt discovery, docs-path scoping with segment depth, static→dynamic→stealth escalation (monotonic, thin-content threshold 200 chars — measured, see below), trafilatura extraction (raw body never dumped), enqueue-time link filtering/dedup, retry-on-exception, per-page ledger → `report.md` + `manifest.json`, politeness (delay 0.5s, per-domain 2) + robots.txt obedience, `--selftest`, `--max-pages`, `--out`. Wrapper race (`rm -rf docs-*`) is gone; run dir is created up front and passed via `--out`.
+9/10 clean; Notion is the designed 10th. `gitbook_to_md.py` and `doc_to_md.py` are deleted from iofast-scraper (`e7985cb`), whose `run-scrapling.sh` is now a client calling `$IOFAST_BIN scrape` (default `~/code/iofast/engine/.venv/bin/iofast`).
 
-Threshold 200 was measured: real-page extraction band starts ~224 chars (docs.xmarket.app sitemap sample, median 779); JS-shell band is 0–188 (uniswap 0, gitbook root 188, ant.design 42 static vs 4088 dynamic). Best-tier memory means a false escalation never loses content.
+### Engine architecture (engine/src/iofast_engine/)
 
-### Phase 0 verify — PASSED (independently spot-checked, not just agent-reported)
+- Pure modules (import no scrapling/playwright — fixture CI runs offline): `urls`, `ledger`, `extract`, `writer`, `manifest`, `clean`, `mapping`, `adapters/*`; `discovery` lazy-imports the fetcher. Only `spider.py` + `cli.py` touch scrapling. Enforced by `test_imports.py`.
+- Events: no module below `cli.py` prints; everything emits `{"type": ...}` events. `--json` = NDJSON on stdout, terminal `result` event carries the manifest (JSON-RPC precursor for Phase 2). Human output goes to stderr.
+- Exit codes: 0 ok · 1 completed-with-failures · 2 bad args · 3 nothing in scope.
+- Adapters: frozen dataclass instances (subclassing forbidden, test-enforced), fingerprints cite the fixture file they came from. 7 HTML + SwaggerHub/Confluence (`fetch_mode="api"`, harvest is ledger-contracted) + Notion known-fail. Detection: one static GET of the resolved start URL; re-detects per page if the sample missed.
+- `iofast map <url>`: discovery-only section tree (sitemap → llms.txt → nav parse). Scrape manifests carry `token_estimate` (chars/4) and a `clean` verdict block.
+- Tier 3 rescue (`rescue.py`): armed by `OPENROUTER_API_KEY` + `IOFAST_RESCUE_MODEL` (both env, no hardcoded model id), one call per domain, cached in `~/.iofast/adapters-cache.json`, logged in the manifest as a candidate adapter.
 
-| Run | Site | ok | thin_escalated_ok | failed | Reconciles |
-|---|---|---|---|---|---|
-| a | docs.xmarket.app (baseline, sitemap) | 40 | 0 | 0 | 40/40 |
-| b | ant.design/docs/react (JS-heavy, sitemap) | 0 | 40 | 0 | 40/40 |
-| c | docs.python.org/3/library (large, link crawl) | 40 | 0 | 0 | 40/40 |
+### Measured numbers (recorded in code comments, from the committed fixtures)
 
-Each tree: exactly 40 `.md` + `report.md` + `manifest.json`, zero empty/junk files, smallest file 229 B (real content). Run b proves the ladder: every page escalated static→dynamic, none needed stealth, smallest output 535 B of real rendered content. Run outputs (ephemeral): `/private/tmp/verify-a`, `/private/tmp/verify-b`, `/private/tmp/verify-c2`.
+- `THIN_CHARS = 250`: shell band reaches 218 (document360 static), real pages go down to 132 — bands overlap, so the trigger biases up; best-tier memory makes false escalations lossless.
+- Clean = coverage ≥ 0.95 · zero files under 100 chars (junk ≤ 89, smallest real 132) · corpus-wide link-to-text ratio ≤ 0.50 (content pages 0.04–0.37; TOC pages hit 0.88, hence corpus-level).
 
-## Known gaps (deliberate, from the build report)
+### Fixed this session beyond the plan
 
-- Locale twins caught as directories (`/fr/…`) only; suffix twins (`-cn`) pass through — run b has 20 Chinese duplicates. Belongs in the Phase 1 platform adapter, not a blanket suffix rule.
-- Start URL without trailing slash scopes to its parent directory (matches docs-mcp-server's rule; user adds the slash).
-- Exhausted transient codes (429/503 past upstream's 3 retries) surface as `failed_fetch` "no response recorded", without the status code.
-- When `--max-pages` truncates, the report shows in-scope total next to enqueued count rather than balancing them.
-- `doc_to_md.py` is 842 lines (target was ~450) — banner-separated; Phase 1 extracts it into a package anyway.
+- Cross-host redirects: final path wins when non-root (docs.readthedocs.io/en/stable/ → docs.readthedocs.com/platform/en/stable/; docs.gitbook.com → gitbook.com/docs/); user path restored only on a redirect-to-root.
+- Scope-root page (`/docs` with scope `/docs/`) is depth 0 — it used to be silently excluded.
+- Unparseable llms.txt URLs (gitbook's `https://[organization-name]...` placeholder) excluded instead of crashing the run.
+- Exhausted 429/503 now report `http NNN (retries exhausted)` with real status.
+- `-cn` locale twins drop only when the un-suffixed sibling exists (twin-based, not blanket).
 
-## Next actions
+## Known gaps / next session
 
-1. ~~Merge the prior-art branch~~ DONE — PR #1 squash-merged, iofast main pushed. The engine repo is now `github.com/inputoutput9/iofast-scraper` (renamed from `scrapling`, which falsely implied a fork of the upstream library it merely imports); local path `~/code/iofast-scraper`. Deps pinned in its `requirements.txt`. One leftover: remove this session's worktree from a PRIMARY session — `git -C /Users/james/code/iofast worktree remove /Users/james/code/iofast/.claude/worktrees/iofast-prior-art-gate-c14cd6 --force && git -C /Users/james/code/iofast branch -D jarvis/iofast-prior-art-gate-c14cd6`.
-2. Phase 1 (PLAN.md): extract engine into `iofast-engine` package in this repo; platform adapters (7 HTML + SwaggerHub/Confluence API + Notion known-fail); map-then-scrape; Tier 3 LLM rescue; committed HTML fixtures + MUST-FAIL ledger fixtures; delete `gitbook_to_md.py` once GitBook adapter passes.
-3. Fold Phase 0's known gaps into Phase 1 adapter work (locale suffixes, status-code plumbing).
+1. **Phase 2 (PLAN.md)**: Tauri shell + PyInstaller sidecar. The NDJSON event stream and manifest schema (v1) are the sidecar contract — do not change shapes without bumping `schema`.
+2. On a static-only run a real-but-tiny page (< 250 chars) still ships as `ok`; the clean verdict's 100-char floor is the backstop. Revisit if a real page under 100 chars ever appears.
+3. RTD adapter's `nav_selector` (`nav.wy-nav-side`) is sphinx-rtd-theme-specific; python.org's custom theme falls back to generic `<nav>` (map quality only, scrape unaffected).
+4. Scheduled live smoke run (PLAN's CI tier b, report-only) not set up yet — fixtures gate merges, nothing watches for live drift.
+5. docs-mcp-server `file://` ingest (Phase 3 serve layer) still unvalidated end-to-end.
+6. Primary-checkout setup after merge: `cd ~/code/iofast/engine && /opt/homebrew/bin/python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"` — the hotkey wrapper's default `IOFAST_BIN` expects this path.
 
 ## Standing nudge
 
-Remind the user to build the max-evasion tier (proxy rotation, solver services) at end of Phase 1 and Phase 4 — stealth tier now exists (Phase 0 step 3), so the trigger condition is armed.
-
-## Open assumptions to confirm during Phase 1
-
-- docs-mcp-server `file://` ingest as serve layer: validate end-to-end once a real library dir exists (its SQLite duplicates content; files stay source of truth; its MCP tool descriptions cannot carry the untrusted-corpus warning unforked — per-file wrappers must suffice).
-- The 200-char threshold held for 3 sites; re-calibrate against the Phase 1 fixture matrix.
-- "Clean" numeric definition (≥95% in-scope produce a file; zero under N chars; link-to-text cap) still needs N and cap set from fixtures.
+Build the max-evasion tier (proxy rotation, solver services) — trigger armed since the stealth tier shipped in Phase 0. **This is the end-of-Phase-1 reminder: raise it with the user now**, and again at end of Phase 4.

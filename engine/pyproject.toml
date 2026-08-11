@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "iofast-engine"
+version = "0.1.0"
+description = "Crawl a documentation site into hyphen-named markdown files."
+# 3.14 is untested by scrapling/playwright upstream — do not admit it.
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # [fetchers] is where Fetcher/Spider/AsyncDynamicSession live; the bare package is
+    # the parser core only and cannot import scrapling.spiders (needs anyio, curl_cffi).
+    "scrapling[fetchers]==0.4.2",
+    "trafilatura==2.2.0",
+    "markdownify==1.2.2",
+    "playwright==1.58.0",
+    "patchright==1.58.2",
+    "cssselect==1.4.0",
+    "lxml==6.1.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+iofast = "iofast_engine.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/iofast_engine"]

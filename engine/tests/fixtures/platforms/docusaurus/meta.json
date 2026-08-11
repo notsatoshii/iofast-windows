@@ -1,0 +1,58 @@
+{
+  "platform": "docusaurus",
+  "pages": [
+    {
+      "file": "static-landing.html",
+      "url": "https://docusaurus.io/docs",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:21:13 GMT",
+        "content-type": "text/html; charset=UTF-8",
+        "transfer-encoding": "chunked",
+        "connection": "close",
+        "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "age": "17328",
+        "cache-control": "public,max-age=0,must-revalidate",
+        "cache-status": "\"Netlify Edge\"; hit; ttl=31518673",
+        "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=wiH8%2B6ko%2BO9DlJ7dnUHxANlb21Gjv3foM5Zm3jiMtdtbdPPg93E3pwZRVzFotXPf25V03ADhEWxEiJyD2vbg9p%2BevTUNwGZ7sZQP8LAfGgupxtdXnNdj4QDcDK0M%2FLcZ\"}]}",
+        "server": "cloudflare",
+        "vary": "Accept-Encoding",
+        "x-nf-request-id": "01KZQV4SDJJSG0P07QJSWWQPHV",
+        "cf-cache-status": "DYNAMIC",
+        "cf-ray": "a2957b749d1baa7e-ICN",
+        "alt-svc": "h3=\":443\"; ma=86400"
+      },
+      "variant": "static",
+      "extracted_chars": 12382,
+      "synthetic": false
+    },
+    {
+      "file": "static-installation.html",
+      "url": "https://docusaurus.io/docs/installation",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:21:15 GMT",
+        "content-type": "text/html; charset=UTF-8",
+        "transfer-encoding": "chunked",
+        "connection": "close",
+        "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "age": "32566",
+        "cache-control": "public,max-age=0,must-revalidate",
+        "cache-status": "\"Netlify Edge\"; hit; ttl=31503434",
+        "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=obVXu4Lr8OAQH57gbf4uG3ZmOWu3ojaI%2BDC7Glsm6sOYsMKmfpJmUTcVNUOeWfc0a%2B%2FC9h25ry20htycd7ESsiPYSDc8uo9gZsEjJbxAulrYsv9PJDEHVRh1q8nsxIbM\"}]}",
+        "server": "cloudflare",
+        "vary": "Accept-Encoding",
+        "x-nf-request-id": "01KZQV4TFGAVV47WSW0ZTP9101",
+        "cf-cache-status": "DYNAMIC",
+        "cf-ray": "a2957b7ad93fa7b4-ICN",
+        "alt-svc": "h3=\":443\"; ma=86400"
+      },
+      "variant": "static",
+      "extracted_chars": 8888,
+      "synthetic": false
+    }
+  ],
+  "notes": "Static-site generator: server HTML is already complete, no rendered variant."
+}

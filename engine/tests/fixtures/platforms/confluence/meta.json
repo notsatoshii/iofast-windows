@@ -1,0 +1,57 @@
+{
+  "platform": "confluence",
+  "pages": [
+    {
+      "file": "static-kafka-index.html",
+      "url": "https://cwiki.apache.org/confluence/display/KAFKA/Index",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:22:34 GMT",
+        "server": "Apache",
+        "strict-transport-security": "max-age=31536000",
+        "x-xss-protection": "1; mode=block",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "SAMEORIGIN",
+        "content-security-policy": "frame-ancestors 'self' https://issues.apache.org/jira",
+        "x-confluence-request-time": "1786432954718",
+        "x-accel-buffering": "no",
+        "content-type": "text/html;charset=UTF-8",
+        "content-language": "en-US",
+        "set-cookie": "JSESSIONID=A6B9F730A3914130E382F5785C230DA7; Path=/confluence; Secure; HttpOnly",
+        "via": "1.1 cwiki.apache.org",
+        "vary": "Accept-Encoding",
+        "connection": "close",
+        "transfer-encoding": "chunked"
+      },
+      "variant": "static",
+      "extracted_chars": 1395,
+      "synthetic": false
+    },
+    {
+      "file": "api-content.json",
+      "url": "https://cwiki.apache.org/confluence/rest/api/content?limit=2&expand=body.storage",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:22:36 GMT",
+        "server": "Apache",
+        "strict-transport-security": "max-age=31536000",
+        "x-xss-protection": "1; mode=block",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "SAMEORIGIN",
+        "content-security-policy": "frame-ancestors 'self' https://issues.apache.org/jira",
+        "content-type": "application/json",
+        "content-length": "4944",
+        "set-cookie": "JSESSIONID=26122E304A646C9C20101782731A9CCF; Path=/confluence; Secure; HttpOnly",
+        "via": "1.1 cwiki.apache.org",
+        "vary": "Accept-Encoding",
+        "connection": "close"
+      },
+      "variant": "api",
+      "extracted_chars": 338,
+      "synthetic": false
+    }
+  ],
+  "notes": "Apache's public Confluence. The REST API returns storage-format body directly."
+}

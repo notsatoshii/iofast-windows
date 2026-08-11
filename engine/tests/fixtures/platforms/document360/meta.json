@@ -1,0 +1,90 @@
+{
+  "platform": "document360",
+  "pages": [
+    {
+      "file": "static-landing.html",
+      "url": "https://docs.document360.com/docs",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:21:18 GMT",
+        "content-type": "text/html; charset=utf-8",
+        "transfer-encoding": "chunked",
+        "connection": "close",
+        "cache-control": "public, max-age=0, stale-while-revalidate=0, stale-if-error=60",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "etag": "W/\"11029c-JhK/N1Bge5FqEHtMscJpX2qQy6c\"",
+        "request-context": "appId=cid-v1:",
+        "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+        "vary": "Accept-Encoding",
+        "x-frame-options": "SAMEORIGIN",
+        "set-cookie": "__cf_bm=5.tai1RxdnlmHKHdoUxJPAgeZlbftyOywye8gPArWfI-1786432878.4106734-1.0.1.1-KOX0S3PoJQlPtozJbsiVRmseS2OssWtfmhUZZi2IIOVe9HIOMKK6caQ8Kdgf_raQF41wpnvF33uVxmM8xViOSxveQbv6TjK9xytVI0xKytS5SKS3LVd0X1raNtBQZoa3; HttpOnly; SameSite=None; Secure; Path=/; Domain=docs.document360.com; Expires=Tue, 11 Aug 2026 07:51:18 GMT",
+        "x-content-type-options": "nosniff",
+        "permissions-policy": "accelerometer=(), ambient-light-sensor=(), autoplay=(*), camera=(*), clipboard-write=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(*), midi=(), payment=(), usb=(), fullscreen=(*)",
+        "cf-cache-status": "DYNAMIC",
+        "server": "cloudflare",
+        "cf-ray": "a2957b920c281fb3-ICN"
+      },
+      "variant": "static",
+      "extracted_chars": 218,
+      "synthetic": false
+    },
+    {
+      "file": "static-getting-started.html",
+      "url": "https://docs.document360.com/docs/document360-getting-started",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:21:20 GMT",
+        "content-type": "text/html; charset=utf-8",
+        "transfer-encoding": "chunked",
+        "connection": "close",
+        "cache-control": "public, max-age=0, stale-while-revalidate=0, stale-if-error=60",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "etag": "W/\"11497b-CKpbDceIXjvZlF2RubMk/SkLikE\"",
+        "request-context": "appId=cid-v1:",
+        "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+        "vary": "Accept-Encoding",
+        "x-frame-options": "SAMEORIGIN",
+        "set-cookie": "__cf_bm=YuQAVTAaSF.oLvwBjM3NHMc1KPzJA0FXvvRqgc68qYU-1786432879.8052459-1.0.1.1-aCboYPJJJnPtuROSM.top7Hy9GznrbygKbEAs6xYEUMXXRhg5iFaBTw4BDg82lMKFRahhHAUvzIpss6zXSZ494KEARiRRqlZWykviSoPpGVJHTwHLY.3SQSlzJjyJlIx; HttpOnly; SameSite=None; Secure; Path=/; Domain=docs.document360.com; Expires=Tue, 11 Aug 2026 07:51:20 GMT",
+        "x-content-type-options": "nosniff",
+        "permissions-policy": "accelerometer=(), ambient-light-sensor=(), autoplay=(*), camera=(*), clipboard-write=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(*), midi=(), payment=(), usb=(), fullscreen=(*)",
+        "cf-cache-status": "DYNAMIC",
+        "server": "cloudflare",
+        "cf-ray": "a2957b9acff730da-ICN"
+      },
+      "variant": "static",
+      "extracted_chars": 218,
+      "synthetic": false
+    },
+    {
+      "file": "rendered-getting-started.html",
+      "url": "https://docs.document360.com/docs/document360-getting-started",
+      "captured": "2026-08-11",
+      "status": 200,
+      "headers": {
+        "date": "Tue, 11 Aug 2026 07:21:20 GMT",
+        "content-type": "text/html; charset=utf-8",
+        "transfer-encoding": "chunked",
+        "connection": "close",
+        "cache-control": "public, max-age=0, stale-while-revalidate=0, stale-if-error=60",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "etag": "W/\"11497b-CKpbDceIXjvZlF2RubMk/SkLikE\"",
+        "request-context": "appId=cid-v1:",
+        "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+        "vary": "Accept-Encoding",
+        "x-frame-options": "SAMEORIGIN",
+        "set-cookie": "__cf_bm=YuQAVTAaSF.oLvwBjM3NHMc1KPzJA0FXvvRqgc68qYU-1786432879.8052459-1.0.1.1-aCboYPJJJnPtuROSM.top7Hy9GznrbygKbEAs6xYEUMXXRhg5iFaBTw4BDg82lMKFRahhHAUvzIpss6zXSZ494KEARiRRqlZWykviSoPpGVJHTwHLY.3SQSlzJjyJlIx; HttpOnly; SameSite=None; Secure; Path=/; Domain=docs.document360.com; Expires=Tue, 11 Aug 2026 07:51:20 GMT",
+        "x-content-type-options": "nosniff",
+        "permissions-policy": "accelerometer=(), ambient-light-sensor=(), autoplay=(*), camera=(*), clipboard-write=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(*), midi=(), payment=(), usb=(), fullscreen=(*)",
+        "cf-cache-status": "DYNAMIC",
+        "server": "cloudflare",
+        "cf-ray": "a2957b9acff730da-ICN"
+      },
+      "variant": "rendered",
+      "extracted_chars": 841,
+      "synthetic": false
+    }
+  ],
+  "notes": "Document360's own knowledge base."
+}
