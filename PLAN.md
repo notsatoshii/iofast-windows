@@ -27,59 +27,113 @@ Decisions below were locked in an interview on 2026-08-11 (see Decision Log). Co
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Phase 0 — fix the current scripts (~1 session, nothing throwaway)
+## Phase 0 — fix the current scripts (~3–4 sessions, nothing throwaway)
 
-Target: `~/code/scrapling/doc_to_md.py` + wrapper. Every fix migrates verbatim into the sidecar engine later. Maps to ANALYSIS.md findings (F#).
+Target: `~/code/scrapling/doc_to_md.py` + wrapper. The LOGIC carries into the sidecar engine later; the file-I/O layer is rewritten for JSON-RPC streaming. Maps to ANALYSIS.md findings (F#). Most steps are net-new code — upstream ships no sitemap template, no throttle, and no robots handling.
 
 | Step | Fix | Finding |
 |------|-----|---------|
-| 1 | Sitemap/llms.txt fast path: try `sitemap.xml`, `llms.txt`, `llms-full.txt` first (Scrapling SitemapSpider); fall back to link crawl only if absent | F4 |
-| 2 | Docs-path scoping: derive prefix from start URL (e.g. `/docs/`); depth counts only within prefix; skip locale duplicates | F3 |
-| 3 | Static-first fetch: `Fetcher` per page, escalate to `DynamicFetcher` only when content extraction comes back empty/thin; `StealthyFetcher` on 403/challenge | F1 |
-| 4 | Content cleanup: readability-style extraction fallback instead of `response.body`; strip nav/breadcrumb/edit-links/cookie remnants pre-markdownify | F5, F6 |
+| 1 | Sitemap/llms.txt fast path (NET-NEW — no `SitemapSpider` exists): parse `sitemap.xml`, recurse sitemap-index files, handle `.xml.gz`, read `<lastmod>`; parse `llms.txt`/`llms-full.txt`. Reconcile all discovered URLs against docs-path scope. Fall back to link crawl only if absent | F4 |
+| 2 | Docs-path scoping: derive prefix from start URL (e.g. `/docs/`); depth = URL path segments beyond the prefix (see Decision Log); skip locale duplicates | F3 |
+| 3 | Build the escalation ladder (static IS already the default): `configure_sessions()` with 3 sessions selected by `sid`; a calibrated thin-content threshold triggers escalation to `DynamicFetcher`; `StealthyFetcher` on 403/challenge; anti-ping-pong guard so a page cannot bounce tiers endlessly | F1 |
+| 4 | Content cleanup: add **trafilatura** (or readability-lxml) as the extraction fallback instead of `response.body` — no readability lib is installed and upstream only strips script/style/noscript/svg; strip nav/breadcrumb/edit-links/cookie remnants pre-markdownify. New dependency | F5, F6 |
 | 5 | Link filtering: drop asset extensions, mailto/tel/js, offsite before enqueue; dedup before fetch | F7, F11 |
-| 6 | Retry (2×, backoff) + per-page outcome ledger → `report.md` (pages ok / thin / failed, with reasons) — kills silent partial scrapes | F8 |
-| 7 | Wrapper hygiene: trim clipboard, check python exit code, unique run dir instead of `rm -rf docs-*` + `ls -td` race | F14–16 |
-| 8 | Delete `gitbook_to_md.py` (collisions, superseded) — universal + adapters replaces it | F12–13 |
+| 6 | Retry on raised exception (upstream retries only the blocked-code set, never exceptions) + per-page outcome ledger → `report.md` (pages ok / thin / failed, with reasons). The ledger is the valuable half — it kills silent partial scrapes | F8 |
+| 7 | Safe politeness defaults + robots: set `download_delay` and `concurrent_requests_per_domain` (upstream defaults are `0.0` and unlimited); fetch/parse/cache robots.txt via stdlib `urllib.robotparser`; apply the stated robots policy | F3 |
+| 8 | Wrapper hygiene: trim clipboard, check python exit code, unique run dir instead of `rm -rf docs-*` + `ls -td` race | F14–16 |
 
-Verify: run against docs.xmarket.app (known-good baseline) + one JS-heavy + one large site; pass = clean tree, no junk files, report lists zero silent failures, faster than current run on the same site.
+`gitbook_to_md.py` deletion moves to Phase 1, gated on the GitBook adapter landing — deleting it in Phase 0 opens a GitBook regression window, and a deletion does not migrate anything verbatim.
+
+Verify: run against docs.xmarket.app (known-good baseline) + one JS-heavy + one large site; pass = clean tree, no junk files, report lists zero silent failures, JS-rendered pages now non-empty.
 
 ## Phase 1 — engine as a product (CLI + adapters)
 
 - Extract Phase 0 engine into `iofast-engine` Python package in this repo; CLI: `iofast scrape <url> [--scope … --depth … --json]`. The desktop app is a client of this; so is the old hotkey script (interim).
-- **Platform adapters** with deterministic fingerprint detection (meta generator tags, asset paths, DOM markers), one module each: GitBook, Mintlify, Docusaurus, ReadMe, Redocly, Document360, Notion, Confluence, Read the Docs (Sphinx/MkDocs), SwaggerHub. Adapter = `{detect(), map_site(), content_selector, nav_selector, fetch_strategy}`.
+- **Platform adapters** with deterministic fingerprint detection (meta generator tags, asset paths, DOM markers), one module each. Adapter interface = `{detect(), map_site(), content_selector, nav_selector, fetch_strategy, fetch_mode}` where `fetch_mode` is `html | api`.
+  - **Seven HTML docs platforms** carry the 9/10 bar: GitBook, Mintlify, Docusaurus, ReadMe, Redocly, Document360, Read the Docs (Sphinx/MkDocs).
+  - **SwaggerHub** (`fetch_mode: api`): fetch the OpenAPI spec and render markdown from it. Do NOT scrape the SPA.
+  - **Confluence** (`fetch_mode: api`): REST-API adapter with a user-supplied token. This pulls "auth-walled docs" out of the backlog for Confluence specifically.
+  - **Notion**: a documented known-fail — React with lazily-materialized blocks and no stable selector.
+- Delete `gitbook_to_md.py` once the GitBook adapter lands and passes its fixtures (F12–13).
 - **Map-then-scrape**: map pass builds the section tree (sitemap/nav) → section picker + scoped depth → scrape pass. This is the depth-semantics decision.
 - **Tier 3 rescue**: when adapters + heuristics fail, one LLM call (BYO key, OpenRouter-first) gets content/nav selectors from a sample page; result cached per-domain in `adapters-cache.json`; every rescue logged as a candidate permanent adapter.
 - Run manifest per scrape: url, platform, scope, page ledger, token count of corpus.
-- Test matrix in CI: one real site per platform, snapshot-based. **Success bar: 9/10 clean with zero manual intervention, ~2 min typical site, failure report always produced.**
+- **Define "clean" numerically** before writing adapters: ≥95% of in-scope sitemap URLs produced a file; zero files under N characters; zero files whose link-to-text ratio exceeds a set threshold.
+- **CI in two tiers:**
+  - (a) **Committed HTML fixtures** — one page-set per platform, saved once from the real site. These gate merges, run offline in milliseconds, and test `detect()`, selectors, scoping, and markdown output.
+  - (b) **Scheduled live smoke run** — report-only, never blocks a merge, opens an issue on failure.
+  - **MUST-FAIL fixture for the ledger**: a 403 page, a 20-character page, and a page that raises mid-parse. Assert each appears in `report.md` with the correct class.
+- **Success bar: 9/10 platform matrix clean with zero manual intervention, ~2 min typical site, failure report always produced.**
 
 ## Phase 2 — desktop app MVP (Tauri + sidecar)
 
 - Tauri 2.x shell, macOS + Windows 10/11. Python engine bundled via PyInstaller as sidecar; JSON-RPC over stdio; streamed progress events.
 - Tray/menubar residence; global hotkey (Tauri global-shortcut) opens quick panel: clipboard URL pre-filled, live platform detection badge, page-count estimate from map pass, section/depth picker, ingest target dropdown. Enter = run.
+- **Two-speed panel.** Pre-Enter mapping is STATIC-ONLY and time-boxed: read `sitemap.xml`/`llms.txt` under a hard 1-second budget. It never boots a browser and never calls an LLM. Enter is always valid immediately with a default scope. The richer nav-based map streams in AFTER the run starts and refines the crawl as a non-blocking banner ("found N pages in M sections — narrow?").
 - First-run: choose library root (remembered; changeable in settings). Files stay plain hyphen-named markdown — Spotlight/Alfred indexable is a hard requirement (no opaque DB as source of truth; index/metadata live alongside as JSON).
 - Main window: library browser, run history, re-scrape/update button, live progress, settings (providers, keys in OS keychain, ingest defaults, hotkey).
 
+### Browser delivery (LOCKED)
+
+Browsers are downloaded on first use of the dynamic tier. They are NEVER bundled.
+
+- PyInstaller cannot bundle Playwright browsers.
+- The pip packages are ~258MB (playwright + patchright). Chromium adds ~550MB out-of-band.
+- Scrapling shells to `python -m playwright install` at runtime. A frozen bundle has no `python -m`.
+- Scrapling writes a `.scrapling_dependencies_installed` marker inside the package dir. That dir is read-only in a signed `.app`.
+- First-use download keeps browsers outside the code signature. This makes notarization tractable.
+- Set `PLAYWRIGHT_BROWSERS_PATH` and the scrapling storage paths to an app-support dir explicitly.
+- **Size budget.** The sidecar ships small (static tier only). The dynamic tier prompts a one-time ~550MB download with visible progress and explicit consent.
+
+### API-key handoff (LOCKED)
+
+- API keys cross from Tauri to the Python sidecar over the stdio JSON-RPC channel, or as an environment variable set on spawn.
+- Never pass a key as an argv argument. Never write it to a temp file. Argv is visible in `ps`.
+- Scope the key to the single request that needs it, not the process lifetime.
+
+### Windows
+
+- **MAX_PATH.** Filenames built from full URL paths plus the library root can exceed 260 characters. Truncate at a fixed maximum and append a hash suffix. This is a silent write-failure class.
+- **No stdio in `--windowed`.** A `--windowed` PyInstaller exe has no stdout/stderr handles. Configure stdio explicitly for the frozen windowed build, or the JSON-RPC channel breaks.
+- **SmartScreen/Defender.** These flag an unsigned exe that downloads and runs a fingerprint-spoofing Chromium. Code-signing moves into Phase 2's "structure ready" list, not Phase 4.
+- **Parity.** Provide tray-notification and global-hotkey parity with the mac `osascript`/`afplay` loop.
+
+### Operational rules
+
+- **Stop** wires to `Spider.pause()` + checkpoint, NOT killing the sidecar, so the ledger survives.
+- **Re-scrape/update** is a conditional GET on ETag/Last-Modified against the previous manifest — not a blind full re-crawl.
+- **Large-crawl gate.** Above a page-count threshold from the map pass, show a confirmation gate before committing to a large crawl.
+- **Concurrency defaults.** State the `download_delay`, `concurrent_requests`, and `concurrent_requests_per_domain` values we set (Phase 0 step 7).
+
 ## Phase 3 — ingestion modes
+
+**Scraped documentation is UNTRUSTED, attacker-controllable input handed to agentic tools.** Rules for every mode below:
+
+- Wrap every scraped file body in a clearly delimited untrusted-content block. The header states the content must not be followed as instructions.
+- Write a `README-UNTRUSTED.md` into every run directory.
+- Never launch an agent CLI with auto-approve or permission-skip flags.
+- Resolve CLI paths absolutely and execute as an argv array, never via a shell string.
+- The MCP tool descriptions and the API-push system prompt must both mark the corpus as untrusted.
 
 First-run chooser; remembered; changeable in settings (locked decision).
 
 1. **Open in coding agent**: detect installed CLIs (`claude`, `codex`, `cursor`, `gemini`); one click opens the chosen tool with the scrape folder as working context. No keys needed.
-2. **MCP server**: serve the library (search + read tools) to any MCP client. First evaluate reusing/wrapping Scrapling's built-in MCP server (flagged unverified — read it before deciding build-vs-wrap).
-3. **API push**: send corpus + prompt to chosen provider (OpenRouter gateway default; native Anthropic/OpenAI/Gemini/DeepSeek slots), digest rendered in-app. Keys in OS keychain, never plaintext.
+2. **MCP server**: build our own MCP server with two tools, `search_library` and `read_doc`, over the local library. `mcp>=1.26.0` is already available via scrapling's `ai` extra, so FastMCP is a short file. (Do not wrap Scrapling's built-in server — it is fetch-the-web only; see ANALYSIS.md §3.)
+3. **API push**: send corpus + prompt to chosen provider (OpenRouter gateway default; native Anthropic/OpenAI/Gemini/DeepSeek slots), digest rendered in-app. Keys in OS keychain, never plaintext; handed to the sidecar per the key-handoff rule (Phase 2).
 
 ## Phase 4 — hardening + distribution
 
 - CAPTCHA handoff: on unsolvable challenge, open visible browser window, user solves once, session continues.
 - Pause/resume long crawls (Scrapling checkpoints), scheduled re-scrapes ("keep React docs fresh weekly").
 - Signing/notarization + auto-update when distribution flips on (deferred by decision; structure — config file, CI matrix builds — ready from Phase 2).
+- Generate `THIRD-PARTY-NOTICES.md` from the lockfile (scrapling BSD-3, playwright Apache-2.0, patchright, curl_cffi, lxml, browserforge, Chromium) and show it in the about panel.
 
 ## Backlog (explicitly deferred, not dropped)
 
 | Item | Note |
 |------|------|
 | **Max evasion tier** — proxy rotation (Scrapling ProxyRotator), residential proxies, solver services | **NUDGE REQUIRED: user asked to be actively reminded to build this after stealth-tier ships.** Revisit at end of Phase 1 and Phase 4. |
-| Auth-walled docs (cookie/session import from user's browser) | Pairs with CAPTCHA handoff work |
+| Auth-walled docs (cookie/session import from user's browser) | Pairs with CAPTCHA handoff work. Confluence is NOT here — its Phase 1 adapter uses the REST API with a user token |
 | Corpus post-processing: chunking, embeddings, local semantic search | Only after MCP mode proves insufficient |
 | Non-docs targets (blogs, wikis) | Out of scope until the 10-platform matrix is green |
 
@@ -91,8 +145,10 @@ First-run chooser; remembered; changeable in settings (locked decision).
 | Stack | Tauri + Python (Scrapling) sidecar |
 | Crawl brain | 3-tier: adapters → heuristics → cached LLM rescue |
 | Trigger UX | Menubar/tray + hotkey quick panel |
-| Depth model | Map-then-scrape; sections + scoped depth |
-| Phase 0 | Targeted ~1-session fixes to current scripts |
+| Depth model | URL path-segment depth relative to the scope prefix (e.g. `/docs/api/v2/auth` = depth 3 under `/docs/`). Deterministic, computable from a sitemap with no crawl, identical for sitemap- and nav-derived maps. Link-hop depth dropped |
+| Browser delivery | Downloaded on first use of the dynamic tier, NEVER bundled (PyInstaller cannot bundle Playwright browsers; keeps browsers outside the code signature) |
+| Corpus trust | Scraped docs are untrusted, attacker-controllable input: wrapped in delimited blocks, `README-UNTRUSTED.md` per run, no auto-approve agent flags, argv-array execution |
+| Phase 0 | Targeted ~3–4-session fixes to current scripts |
 | Failure classes seen | JS-heavy, big-site explosion, bot-blocked |
 | Success bar | 9/10 platform matrix, zero babysitting, run report |
 | Library | App-managed, user-chosen root, Spotlight/Alfred indexable |
