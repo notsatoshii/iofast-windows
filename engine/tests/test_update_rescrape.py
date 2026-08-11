@@ -123,7 +123,8 @@ def test_update_304_keeps_files_and_validators_round_trip(tmp_path):
         files_before = {
             name: os.path.getmtime(tmp_path / name)
             for name in os.listdir(tmp_path)
-            if name.endswith(".md") and name != "report.md"  # report regenerates every run
+            # report.md + README-UNTRUSTED.md are run metadata, regenerated every run
+            if name.endswith(".md") and name not in ("report.md", "README-UNTRUSTED.md")
         }
 
         site.hits.clear()

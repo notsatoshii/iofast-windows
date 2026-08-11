@@ -252,6 +252,8 @@ fn main() {
             store::library_dir,
             store::library_list,
             store::library_delete,
+            store::detect_agents,
+            store::open_in_agent,
             store::keychain_status,
             store::keychain_set,
             store::keychain_clear

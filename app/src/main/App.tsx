@@ -22,6 +22,8 @@ type ScrapeResult = { written: number; out_dir: string; exit_code: number; cance
 type ScrapeDone = { rid: number; result?: ScrapeResult; error?: string };
 type Started = { rid: number; url: string; out: string; update: boolean };
 type EstimateResult = { page_count: number | null };
+/** A coding-agent CLI detected on this machine (store.rs `detect_agents`). */
+type Agent = { id: string; path: string; terminal: boolean };
 
 /** The run whose events the progress strip is showing — panel-started too. */
 type Active = { rid: number; label: string; update: boolean };
@@ -46,6 +48,8 @@ const labelOf = (href: string) => {
   return target ? `${target.host}${scopePrefix(target)}` : href;
 };
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export default function App() {
   const [boot, setBoot] = useState<Boot | null>(null);
   const [tab, setTab] = useState<"library" | "settings">("library");
@@ -58,6 +62,8 @@ export default function App() {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [doomed, setDoomed] = useState<string | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   const activeRef = useRef<Active | null>(null);
   const estSeq = useRef(0);
@@ -82,6 +88,12 @@ export default function App() {
   }, [refresh]);
 
   useEffect(reboot, [reboot]);
+
+  // Which coding-agent CLIs are installed — read once; the row's "Open in…"
+  // action offers only the ones actually present.
+  useEffect(() => {
+    invoke<Agent[]>("detect_agents").then(setAgents).catch(() => undefined);
+  }, []);
 
   // No index file to keep in sync: the library IS the folders, so re-read them
   // whenever the window comes forward.
@@ -208,6 +220,16 @@ export default function App() {
       setError(reason(e));
     }
     refresh();
+  };
+
+  const openIn = async (agentId: string, dir: string) => {
+    setOpening(null);
+    setError("");
+    try {
+      await invoke("open_in_agent", { agent: agentId, dir });
+    } catch (e) {
+      setError(reason(e));
+    }
   };
 
   if (!boot) return <div className="app" />;
@@ -356,6 +378,23 @@ export default function App() {
                         Keep
                       </button>
                     </span>
+                  ) : opening === run.dir ? (
+                    <span className="run-acts asking">
+                      <span className="ask">Open in:</span>
+                      {agents.map((agent) => (
+                        <button
+                          key={agent.id}
+                          type="button"
+                          className="link"
+                          onClick={() => void openIn(agent.id, run.dir)}
+                        >
+                          {cap(agent.id)}
+                        </button>
+                      ))}
+                      <button type="button" className="link" onClick={() => setOpening(null)}>
+                        Cancel
+                      </button>
+                    </span>
                   ) : (
                     <span className="run-acts">
                       <button
@@ -365,6 +404,15 @@ export default function App() {
                       >
                         Open folder
                       </button>
+                      {agents.length > 0 && (
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={() => setOpening(run.dir)}
+                        >
+                          Open in…
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="link"

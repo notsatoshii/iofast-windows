@@ -313,9 +313,169 @@ pub fn scrape_env() -> Map<String, Value> {
         .collect()
 }
 
+// ---- ingest mode 1: open a run folder in a coding-agent CLI (PLAN Phase 3) ----
+
+/// A coding agent we know how to launch. The webview sends only an `id` from
+/// this table; the binary is resolved to an absolute path here, so the webview
+/// can never ask us to spawn an arbitrary program. `terminal` agents are TUIs
+/// opened in a Terminal window `cd`'d to the folder; the rest are GUI editors
+/// opened with the folder as an argument. No auto-approve / permission-skip flag
+/// is ever added — scraped docs are untrusted input.
+struct Agent {
+    id: &'static str,
+    bin: &'static str,
+    terminal: bool,
+}
+
+const AGENTS: [Agent; 4] = [
+    Agent { id: "claude", bin: "claude", terminal: true },
+    Agent { id: "codex", bin: "codex", terminal: true },
+    Agent { id: "gemini", bin: "gemini", terminal: true },
+    Agent { id: "cursor", bin: "cursor", terminal: false },
+];
+
+fn agent_by_id(id: &str) -> Option<&'static Agent> {
+    AGENTS.iter().find(|a| a.id == id)
+}
+
+/// Directories a CLI from Homebrew, npm/pnpm/bun, or a native installer lands in.
+/// A GUI app launched from Finder inherits a bare PATH, so the inherited PATH
+/// alone misses most of these — search a curated set alongside it.
+///
+/// ponytail: a CLI installed only on a PATH entry set in an interactive-shell rc
+/// we never source won't be found; the user can symlink it into ~/.local/bin.
+/// Widen this list if that bites.
+fn candidate_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    for fixed in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+        dirs.push(PathBuf::from(fixed));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        for rel in [".local/bin", ".bun/bin", ".deno/bin", ".claude/local", ".npm-global/bin"] {
+            dirs.push(home.join(rel));
+        }
+    }
+    // Cursor's "Install command" shim and the copy inside the app bundle.
+    dirs.push(PathBuf::from("/Applications/Cursor.app/Contents/Resources/app/bin"));
+    dirs
+}
+
+/// First directory in the search path holding an executable named `bin`.
+fn resolve_bin(bin: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut seen = std::collections::HashSet::new();
+    for dir in candidate_dirs() {
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        let path = dir.join(bin);
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+#[derive(Serialize)]
+pub struct DetectedAgent {
+    id: &'static str,
+    path: String,
+    terminal: bool,
+}
+
+/// Which coding-agent CLIs are installed, for the library's "Open in…" action.
+#[tauri::command]
+pub fn detect_agents() -> Vec<DetectedAgent> {
+    AGENTS
+        .iter()
+        .filter_map(|a| {
+            resolve_bin(a.bin).map(|p| DetectedAgent {
+                id: a.id,
+                path: p.to_string_lossy().into_owned(),
+                terminal: a.terminal,
+            })
+        })
+        .collect()
+}
+
+/// A library run directory, validated exactly like `library_delete`: `path`
+/// arrives from the webview, so it must be a direct child of the configured root.
+fn checked_run_dir(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+    let root = library_root(app)?.canonicalize().map_err(|e| e.to_string())?;
+    let dir = PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
+    if dir.parent() != Some(root.as_path()) || !dir.is_dir() {
+        return Err(format!("{path} is not a run folder in the library"));
+    }
+    Ok(dir)
+}
+
+/// Open a scraped run folder in a coding agent. The webview passes an agent `id`
+/// (resolved to a binary here — never a path from the webview) and a run dir
+/// (checked to sit inside the library). The untrusted folder path is never
+/// spliced into a shell string: a GUI agent gets it as an argv element, and a
+/// terminal agent gets it through `osascript` run-arguments where `quoted form
+/// of` shell-quotes it. Only the fixed `cd … && exec …` template is literal.
+#[tauri::command]
+pub fn open_in_agent(app: AppHandle, agent: String, dir: String) -> Result<(), String> {
+    let spec = agent_by_id(&agent).ok_or_else(|| format!("unknown agent {agent}"))?;
+    let bin = resolve_bin(spec.bin).ok_or_else(|| format!("{} is not installed", spec.id))?;
+    let dir = checked_run_dir(&app, &dir)?;
+    let dir = dir.to_string_lossy();
+    if spec.terminal {
+        // ponytail: Terminal.app only. Add iTerm detection if that's ever wanted.
+        let script = "on run argv\n\
+             set d to quoted form of (item 1 of argv)\n\
+             set a to quoted form of (item 2 of argv)\n\
+             tell application \"Terminal\"\n\
+             do script \"cd \" & d & \" && exec \" & a\n\
+             activate\n\
+             end tell\n\
+             end run";
+        let out = std::process::Command::new("/usr/bin/osascript")
+            .args(["-e", script])
+            .arg(dir.as_ref())
+            .arg(&*bin)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    } else {
+        std::process::Command::new(&bin)
+            .arg(dir.as_ref())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_ids_are_unique_and_looked_up_by_id() {
+        let ids: Vec<_> = AGENTS.iter().map(|a| a.id).collect();
+        let uniq: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(ids.len(), uniq.len(), "duplicate agent id");
+        assert!(agent_by_id("claude").is_some_and(|a| a.terminal));
+        assert!(agent_by_id("cursor").is_some_and(|a| !a.terminal));
+        assert!(agent_by_id("nope").is_none());
+    }
+
+    #[test]
+    fn resolve_bin_finds_a_known_tool_and_rejects_nonsense() {
+        // `sh` is in /bin on every macOS; a random name never resolves.
+        assert!(resolve_bin("sh").is_some());
+        assert!(resolve_bin("iofast-not-a-real-binary-xyz").is_none());
+    }
 
     #[test]
     fn run_dir_name_flattens_host_and_scope() {

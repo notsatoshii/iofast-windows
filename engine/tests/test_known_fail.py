@@ -24,7 +24,11 @@ def test_engine_refuses_and_the_ledger_stays_honest(tmp_path):
 
     assert written == 0
     assert exit_code(ledger, written) == 1
-    assert [p.name for p in sorted(tmp_path.iterdir())] == ["manifest.json", "report.md"]
+    assert [p.name for p in sorted(tmp_path.iterdir())] == [
+        "README-UNTRUSTED.md",
+        "manifest.json",
+        "report.md",
+    ]
 
     assert ADAPTER.known_fail in report
     assert "| failed_fetch | 1 |" in report
