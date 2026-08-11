@@ -254,6 +254,8 @@ fn main() {
             store::library_delete,
             store::detect_agents,
             store::open_in_agent,
+            store::detect_node,
+            store::mcp_index,
             store::keychain_status,
             store::keychain_set,
             store::keychain_clear

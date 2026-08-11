@@ -456,9 +456,149 @@ pub fn open_in_agent(app: AppHandle, agent: String, dir: String) -> Result<(), S
     }
 }
 
+// ---- ingest mode 2: index a run folder for MCP search (docs-mcp-server) ----
+
+/// Pinned to the version validated in the Phase 3 Mode 2 spike: `file://` ingest
+/// works, search degrades cleanly to FTS-only with no API key, and the per-file
+/// UNTRUSTED banner survives ingestion into every returned chunk (docs-mcp-server
+/// can't carry that warning in its own tool descriptions, so the wrapper must).
+/// It is a Node package run through `npx`; without Node the FastMCP fallback
+/// (PLAN Phase 3 mode 2) applies — not built.
+const DOCS_MCP_PKG: &str = "@arabold/docs-mcp-server@3.0.0";
+
+/// Whether the MCP runtime is present, for the library's "MCP search" action.
+/// Only `npx` is needed — it fetches and runs docs-mcp-server on demand.
+#[tauri::command]
+pub fn detect_node() -> Option<String> {
+    resolve_bin("npx").map(|p| p.to_string_lossy().into_owned())
+}
+
+/// One shared docs-mcp index for the whole library: each indexed run becomes a
+/// named library inside it, so the user pastes a single config that searches all
+/// of them. The engine's markdown on disk stays the source of truth; this SQLite
+/// is a derived, rebuildable index.
+fn docs_mcp_store(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("docs-mcp-store");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// docs-mcp-server v3 gates `file://` ingest behind an allowed-roots policy
+/// (default `$DOCUMENTS`). The library can live wherever the user chose, so pin
+/// the real library root as an allowed root — the spike proved the default alone
+/// rejects a library outside ~/Documents.
+fn write_docs_mcp_config(app: &AppHandle, root: &Path) -> Result<PathBuf, String> {
+    let cfg = serde_json::json!({
+        "scraper": { "security": { "fileAccess": {
+            "mode": "allowedRoots",
+            "allowedRoots": [root.to_string_lossy()],
+        }}}
+    });
+    let path = config_path(app)?.with_file_name("docs-mcp-config.json");
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// The MCP client config the user pastes into Claude Desktop / Cursor. The server
+/// it launches runs `--read-only`: search only, never a scrape triggered by the
+/// agent over untrusted docs, against the shared store this app indexes into.
+fn stdio_config_json(npx: &Path, store: &Path) -> String {
+    let cfg = serde_json::json!({
+        "mcpServers": {
+            "iofast-docs": {
+                "command": npx.to_string_lossy(),
+                "args": [
+                    "-y", DOCS_MCP_PKG,
+                    "--protocol", "stdio",
+                    "--read-only",
+                    "--telemetry", "false",
+                    "--store-path", store.to_string_lossy(),
+                    "mcp",
+                ],
+            }
+        }
+    });
+    serde_json::to_string_pretty(&cfg).expect("json")
+}
+
+/// npx runs node through its `#!/usr/bin/env node` shebang. A Finder-launched app
+/// inherits a bare PATH that usually lacks node's dir (nvm/bun/volta), so prepend
+/// npx's own directory — node lives beside it — to the child PATH.
+///
+/// ponytail: an nvm `npx` is version-pinned in its path, so the pasted config
+/// breaks if the user later removes that node version. Re-index to refresh it.
+fn npx_command(npx: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(npx);
+    if let Some(parent) = npx.parent() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{}", parent.display(), path));
+    }
+    cmd
+}
+
+#[derive(Serialize)]
+pub struct McpIndexed {
+    library: String,
+    config_json: String,
+}
+
+/// Index one run folder into the shared docs-mcp store, then hand back the paste
+/// config. `dir` arrives from the webview, so it is checked to be a library child
+/// (like `open_in_agent`); the folder name is the docs-mcp library id and reaches
+/// npx as an argv element, and the run path as a `file://` argv element — never a
+/// shell string. Blocks until indexing finishes — seconds for a personal library.
+///
+/// ponytail: a huge run (thousands of pages) blocks this command for its whole
+/// index. Tauri runs it off the UI thread so the window stays live, but there is
+/// no progress bar; wire the engine's event stream in if that ever bites.
+#[tauri::command]
+pub fn mcp_index(app: AppHandle, dir: String) -> Result<McpIndexed, String> {
+    let npx = resolve_bin("npx").ok_or_else(|| "Node.js (npx) is not installed".to_string())?;
+    let run_dir = checked_run_dir(&app, &dir)?;
+    let library = run_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "run folder has no name".to_string())?
+        .to_string();
+    let store = docs_mcp_store(&app)?;
+    let cfg = write_docs_mcp_config(&app, &library_root(&app)?)?;
+    let out = npx_command(&npx)
+        .args(["-y", DOCS_MCP_PKG, "--quiet", "--telemetry", "false", "--config"])
+        .arg(&cfg)
+        .arg("--store-path")
+        .arg(&store)
+        .args(["scrape", &library])
+        .arg(format!("file://{}", run_dir.to_string_lossy()))
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(err.trim().lines().last().unwrap_or("indexing failed").to_string());
+    }
+    Ok(McpIndexed { library, config_json: stdio_config_json(&npx, &store) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stdio_config_is_valid_json_and_read_only() {
+        let json = stdio_config_json(Path::new("/usr/local/bin/npx"), Path::new("/data/store"));
+        let v: Value = serde_json::from_str(&json).expect("valid json");
+        let srv = &v["mcpServers"]["iofast-docs"];
+        assert_eq!(srv["command"], "/usr/local/bin/npx");
+        let args: Vec<&str> = srv["args"].as_array().unwrap().iter().map(|a| a.as_str().unwrap()).collect();
+        // Search only over untrusted docs — never a write/scrape tool for the agent.
+        assert!(args.contains(&"--read-only"), "MCP server must be read-only");
+        // The exact version the spike validated, and the store the app indexed into.
+        assert!(args.contains(&DOCS_MCP_PKG));
+        assert!(args.contains(&"/data/store"), "store path must reach npx");
+    }
 
     #[test]
     fn agent_ids_are_unique_and_looked_up_by_id() {

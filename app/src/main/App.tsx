@@ -24,6 +24,8 @@ type Started = { rid: number; url: string; out: string; update: boolean };
 type EstimateResult = { page_count: number | null };
 /** A coding-agent CLI detected on this machine (store.rs `detect_agents`). */
 type Agent = { id: string; path: string; terminal: boolean };
+/** Result of indexing a run into docs-mcp (store.rs `mcp_index`). */
+type McpIndexed = { library: string; config_json: string };
 
 /** The run whose events the progress strip is showing — panel-started too. */
 type Active = { rid: number; label: string; update: boolean };
@@ -64,6 +66,10 @@ export default function App() {
   const [doomed, setDoomed] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [node, setNode] = useState<string | null>(null);
+  const [mcpBusy, setMcpBusy] = useState<string | null>(null);
+  const [mcpConfig, setMcpConfig] = useState<McpIndexed | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const activeRef = useRef<Active | null>(null);
   const estSeq = useRef(0);
@@ -93,6 +99,12 @@ export default function App() {
   // action offers only the ones actually present.
   useEffect(() => {
     invoke<Agent[]>("detect_agents").then(setAgents).catch(() => undefined);
+  }, []);
+
+  // Whether Node is present, for the row's "MCP search" action. Absent = hide it
+  // (the FastMCP no-Node fallback is not built yet).
+  useEffect(() => {
+    invoke<string | null>("detect_node").then(setNode).catch(() => undefined);
   }, []);
 
   // No index file to keep in sync: the library IS the folders, so re-read them
@@ -232,6 +244,33 @@ export default function App() {
     }
   };
 
+  // Index a run into the shared docs-mcp store, then reveal the paste config.
+  const indexMcp = async (dir: string) => {
+    setError("");
+    setMcpConfig(null);
+    setMcpBusy(dir);
+    try {
+      setMcpConfig(await invoke<McpIndexed>("mcp_index", { dir }));
+    } catch (e) {
+      setError(reason(e));
+    } finally {
+      setMcpBusy(null);
+    }
+  };
+
+  const copyMcp = (text: string) => {
+    // No clipboard-write command in the shell (see main.rs clipboard_text); the
+    // webview API works from this click, and the config stays visible to select
+    // by hand if a wkwebview build ever blocks it.
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  };
+
   if (!boot) return <div className="app" />;
   if (!config) {
     return (
@@ -346,6 +385,25 @@ export default function App() {
 
           {error && <div className="alert">{error}</div>}
 
+          {mcpConfig && (
+            <div className="gate mcp">
+              <span>
+                Indexed <strong>{mcpConfig.library}</strong> for MCP search. Add this to your
+                MCP client (Claude Desktop, Cursor), then restart it. The server runs
+                read-only — search only, over untrusted docs.
+              </span>
+              <pre className="mcp-config">{mcpConfig.config_json}</pre>
+              <div className="acts">
+                <button type="button" className="btn go" onClick={() => copyMcp(mcpConfig.config_json)}>
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <button type="button" className="btn" onClick={() => setMcpConfig(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+
           {runs.length === 0 ? (
             <p className="empty">
               Nothing here yet. Paste a URL above, or press <kbd className="key">⌘</kbd>
@@ -411,6 +469,16 @@ export default function App() {
                           onClick={() => setOpening(run.dir)}
                         >
                           Open in…
+                        </button>
+                      )}
+                      {node && (
+                        <button
+                          type="button"
+                          className="link"
+                          disabled={mcpBusy === run.dir}
+                          onClick={() => void indexMcp(run.dir)}
+                        >
+                          {mcpBusy === run.dir ? "Indexing…" : "MCP search"}
                         </button>
                       )}
                       <button
