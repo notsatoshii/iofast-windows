@@ -52,4 +52,4 @@ Live matrix, 10 pages per platform, `iofast scrape <url> --max-pages 10`, zero m
 
 ## Standing nudge
 
-Build the resilient-fetch tier (proxy rotation, solver services) — trigger armed since the stealth tier shipped in Phase 0. **This is the end-of-Phase-1 reminder: raise it with the user now**, and again at end of Phase 4.
+Build the resilient-fetch tier — trigger armed since the stealth tier shipped in Phase 0. **This is the end-of-Phase-1 reminder: raise it with the user now**, and again at end of Phase 4.

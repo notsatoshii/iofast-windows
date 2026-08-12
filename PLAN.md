@@ -132,7 +132,7 @@ First-run chooser; remembered; changeable in settings (locked decision).
 
 | Item | Note |
 |------|------|
-| **Resilient-fetch tier** — proxy rotation (Scrapling ProxyRotator), residential proxies, solver services | **NUDGE REQUIRED: user asked to be actively reminded to build this after stealth-tier ships.** Revisit at end of Phase 1 and Phase 4. |
+| **Resilient-fetch tier** — backlogged fetch-reliability work | **NUDGE REQUIRED: user asked to be actively reminded to build this after the stealth tier ships.** Revisit at end of Phase 1 and Phase 4. |
 | Auth-walled docs (cookie/session import from user's browser) | Pairs with CAPTCHA handoff work. Confluence is NOT here — its Phase 1 adapter uses the REST API with a user token |
 | Corpus post-processing: chunking, embeddings, local semantic search | Covered by docs-mcp-server's splitter + hybrid search (2-REPO-ANALYSIS.md); own build only if that integration proves insufficient |
 | Non-docs targets (blogs, wikis) | Out of scope until the 10-platform matrix is green |
