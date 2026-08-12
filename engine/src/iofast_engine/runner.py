@@ -18,7 +18,11 @@ def validate(url, scope=None):
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return "url must be an absolute http(s) URL"
     path = parsed.path or "/"
-    if scope and not path.startswith(scope):
+    # The scope-root page itself is in scope: /docs == /docs/ (clean_url strips
+    # the trailing slash, so manifests store the root URL without it — resume,
+    # re-scrape, and the scheduler all replay that stored form). Same rule as
+    # urls.path_depth.
+    if scope and not path.startswith(scope) and path.rstrip("/") != scope.rstrip("/"):
         return f"--scope {scope!r} is not a path prefix of {path!r}"
     return None
 

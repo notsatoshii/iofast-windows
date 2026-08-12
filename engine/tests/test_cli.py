@@ -32,3 +32,14 @@ def test_scope_not_prefixing_url_path_exits_2():
 
 def test_non_http_url_exits_2():
     assert run("scrape", "ftp://x.com/docs").returncode == 2
+
+
+def test_scope_root_without_trailing_slash_is_in_scope():
+    # clean_url strips trailing slashes, so manifests store a scope-root start
+    # URL as "https://x.com/docs" beside scope "/docs/". Resume, re-scrape, and
+    # the scheduler replay that stored pair; validate must accept it.
+    from iofast_engine.runner import validate
+
+    assert validate("https://docs.x.com/docs", scope="/docs/") is None
+    assert validate("https://docs.x.com/docs/intro", scope="/docs/") is None
+    assert validate("https://docs.x.com/api", scope="/docs/") is not None
