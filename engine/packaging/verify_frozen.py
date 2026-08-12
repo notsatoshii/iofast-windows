@@ -10,12 +10,22 @@ Drives the REAL frozen binary over stdio:
 4. map + scrape of a local fixture docs site (http.server on 127.0.0.1) —
    exercises curl_cffi/scrapling static fetch, lxml, trafilatura, the writer.
    This is the check that catches missing lazy imports in the bundle.
+5. cancel mid-crawl of a delayed, link-chained fixture (each page is only
+   discoverable from the previous one, so the crawl is sequential and
+   genuinely interruptible) -> cancelled run + checkpoint.pkl on disk.
+6. scrape resume=true    -> replays the checkpoint frontier to completion.
+7. scrape update=true    -> every page answers 304 off the stored validators;
+   the files on disk are byte- and mtime-identical afterwards.
+8. push                  -> streamed digest from a local OpenRouter stand-in
+   (via the IOFAST_OPENROUTER_URL test seam), Authorization header carries
+   the request-scoped key.
 Every stdout line must parse as JSON: any dependency print() that leaked onto
 fd 1 fails the run (the RPC server redirects fd 1 to stderr — proven here).
 """
 
 import http.server
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -36,32 +46,98 @@ threshold so the static tier finishes the job on its own, which is exactly
 the property this script exists to prove about the bundle.</p>
 </main></body></html>"""
 
+CHAIN_PAGE = """<!doctype html><html><head><title>{title}</title></head><body>
+<nav>{next_link}</nav>
+<main><h1>{title}</h1>
+<p>This chain fixture page exists so the crawl is sequential: the only route
+to the next page is the single link above, which means the spider cannot see
+page N+1 before it has fetched and parsed page N. That property is what makes
+the cancel test deterministic — a cancel sent after the first page event is
+guaranteed to leave undiscovered frontier behind for resume to replay.</p>
+<p>Like the docs fixture, this paragraph and the next keep the character
+count safely above the thin-page escalation band so the static tier handles
+everything and the frozen bundle needs no browser to pass this gate.</p>
+<p>A third paragraph of plain declarative filler, present for length alone,
+closing out a believable documentation-shaped page in clean HTML.</p>
+</main></body></html>"""
+
 DOCS = {
     "/docs/": PAGE.format(title="Fixture Docs Home"),
     "/docs/guide": PAGE.format(title="Fixture Guide"),
 }
 
+CHAIN_LEN = 8  # /chain/ index + p1..p7
+CHAIN_LAST_MODIFIED = "Wed, 01 Jan 2025 00:00:00 GMT"
+
+
+def chain_paths():
+    return ["/chain/"] + [f"/chain/p{i}" for i in range(1, CHAIN_LEN)]
+
+
+def chain_page(index):
+    paths = chain_paths()
+    if index + 1 < CHAIN_LEN:
+        next_link = f'<a href="{paths[index + 1]}">Next</a>'
+    else:
+        next_link = ""
+    return CHAIN_PAGE.format(title=f"Chain {index}", next_link=next_link)
+
+
+CHAIN = {path: chain_page(i) for i, path in enumerate(chain_paths())}
+
+# Two SSE deltas + [DONE]: the shape push.py streams from OpenRouter.
+SSE_BODY = (
+    'data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n'
+    'data: {"choices":[{"delta":{"content":"world"}}]}\n\n'
+    "data: [DONE]\n\n"
+)
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/sitemap.xml":
+            # Only the /docs/ pages: /chain/ stays sitemap-invisible so a
+            # scrape scoped there falls back to the sequential link crawl.
             urls = "".join(
                 f"<url><loc>http://{self.headers['Host']}{path}</loc></url>" for path in DOCS
             )
             body = f'<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
             self._send(200, body, "application/xml")
-        elif self.path.rstrip("/") + "/" in DOCS or self.path in DOCS:
+            return
+        key = self.path if self.path in DOCS or self.path in CHAIN else self.path.rstrip("/") + "/"
+        if key in CHAIN:
             # The engine normalizes trailing slashes; serve both spellings.
-            key = self.path if self.path in DOCS else self.path.rstrip("/") + "/"
+            time.sleep(self.server.delay)
+            if self.headers.get("If-Modified-Since"):
+                self.send_response(304)
+                self.end_headers()
+                return
+            self._send(200, CHAIN[key], "text/html", last_modified=CHAIN_LAST_MODIFIED)
+        elif key in DOCS:
             self._send(200, DOCS[key], "text/html")
         else:
             self._send(404, "not found", "text/plain")
 
-    def _send(self, status, body, ctype):
+    def do_POST(self):
+        if self.path == "/api/chat":
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.server.push_auth_headers.append(self.headers.get("Authorization"))
+            data = SSE_BODY.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        else:
+            self._send(404, "not found", "text/plain")
+
+    def _send(self, status, body, ctype, last_modified=None):
         data = body.encode()
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        if last_modified:
+            self.send_header("Last-Modified", last_modified)
         self.end_headers()
         self.wfile.write(data)
 
@@ -69,24 +145,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+def page_files(out_dir):
+    """The run's scraped pages: every .md except the generated pair."""
+    skip = {"report.md", "README-UNTRUSTED.md"}
+    return sorted(
+        name
+        for name in os.listdir(out_dir)
+        if name.endswith(".md") and name not in skip
+    )
+
+
+def file_stats(out_dir):
+    """(bytes, mtime_ns) per page file — the 'update kept the file' evidence."""
+    stats = {}
+    for name in page_files(out_dir):
+        path = os.path.join(out_dir, name)
+        info = os.stat(path)
+        with open(path, "rb") as fh:
+            stats[name] = (fh.read(), info.st_mtime_ns)
+    return stats
+
+
 def main(binary):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.delay = 0.0
+    server.push_auth_headers = []
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
-    out_dir = tempfile.mkdtemp(prefix="iofast-frozen-")
+    out_docs = tempfile.mkdtemp(prefix="iofast-frozen-docs-")
+    out_chain = tempfile.mkdtemp(prefix="iofast-frozen-chain-")
 
-    requests = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
-        {"jsonrpc": "2.0", "id": 2, "method": "scrape", "params": {"url": "nope", "out": out_dir}},
-        "garbage not json",
-        {"jsonrpc": "2.0", "id": 3, "method": "map", "params": {"url": f"{base}/docs/"}},
-        {
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "scrape",
-            "params": {"url": f"{base}/docs/", "out": out_dir, "max_pages": 10},
-        },
-    ]
     # stdin must stay OPEN until the last response: EOF is the shutdown signal
     # (parent gone -> sink silenced), so closing early swallows in-flight replies.
     proc = subprocess.Popen(
@@ -95,6 +183,7 @@ def main(binary):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env={**os.environ, "IOFAST_OPENROUTER_URL": f"{base}/api/chat"},
     )
     failures = []
     messages = []
@@ -109,35 +198,55 @@ def main(binary):
                 failures.append(f"non-JSON line on protocol stdout: {line!r}")
 
     threading.Thread(target=reader, daemon=True).start()
-    for request in requests:
-        proc.stdin.write((request if isinstance(request, str) else json.dumps(request)) + "\n")
-    proc.stdin.flush()
 
-    deadline = time.monotonic() + 150
-    while time.monotonic() < deadline:
-        if any(m.get("id") == requests[-1]["id"] for m in messages):
-            break
-        time.sleep(0.2)
-    else:
-        failures.append("timed out waiting for the final scrape response")
-    proc.stdin.close()  # EOF -> clean shutdown
-    proc.wait(timeout=30)
-    stderr_text = proc.stderr.read()
+    def send(request):
+        proc.stdin.write(
+            (request if isinstance(request, str) else json.dumps(request)) + "\n"
+        )
+        proc.stdin.flush()
 
-    by_id = {m["id"]: m for m in messages if "id" in m and m["id"] is not None}
+    def wait_for(predicate, label, timeout=150):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for message in list(messages):
+                if predicate(message):
+                    return message
+            time.sleep(0.05)
+        failures.append(f"timed out waiting for: {label}")
+        return None
+
+    def reply(rid):
+        return wait_for(lambda m: m.get("id") == rid, f"response id {rid}")
 
     def expect(cond, label):
         (failures.append if not cond else (lambda _: None))(label)
         print(("ok  " if cond else "FAIL") + f"  {label}")
 
-    expect(by_id.get(1, {}).get("result", {}).get("protocol") == 1, "initialize -> protocol 1")
-    expect(by_id.get(2, {}).get("error", {}).get("code") == -32602, "bad url -> -32602")
+    # --- 1-4: framing, validation, map, plain scrape (the original gate) ---
+    for request in [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        {"jsonrpc": "2.0", "id": 2, "method": "scrape", "params": {"url": "nope", "out": out_docs}},
+        "garbage not json",
+        {"jsonrpc": "2.0", "id": 3, "method": "map", "params": {"url": f"{base}/docs/"}},
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "scrape",
+            "params": {"url": f"{base}/docs/", "out": out_docs, "max_pages": 10},
+        },
+    ]:
+        send(request)
+
+    r1, r2, r4 = reply(1), reply(2), reply(4)
+    expect((r1 or {}).get("result", {}).get("protocol") == 1, "initialize -> protocol 1")
+    expect((r2 or {}).get("error", {}).get("code") == -32602, "bad url -> -32602")
     expect(
         any(m.get("error", {}).get("code") == -32700 for m in messages if m.get("id") is None),
         "garbage line -> -32700",
     )
-    expect(by_id.get(3, {}).get("result", {}).get("pages") is not None, "map returns pages")
-    scrape = by_id.get(4, {}).get("result", {})
+    r3 = reply(3)
+    expect((r3 or {}).get("result", {}).get("pages") is not None, "map returns pages")
+    scrape = (r4 or {}).get("result", {})
     expect(scrape.get("exit_code") == 0, f"scrape exit_code 0 (got {scrape.get('exit_code')})")
     expect(scrape.get("written") == 2, f"scrape wrote 2 pages (got {scrape.get('written')})")
     expect(scrape.get("manifest", {}).get("schema") == 1, "manifest schema 1")
@@ -146,12 +255,140 @@ def main(binary):
         "scrape events carry rid",
     )
 
+    # --- 5: cancel mid-crawl. The chain is sequential (page N+1 is only
+    # discoverable from page N) and each chain response sleeps, so a cancel
+    # sent after the first page event always lands with frontier remaining. ---
+    server.delay = 0.4
+    send(
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "scrape",
+            "params": {"url": f"{base}/chain/", "out": out_chain, "max_pages": 20},
+        }
+    )
+    wait_for(
+        lambda m: m.get("method") == "event"
+        and m["params"].get("rid") == 5
+        and m["params"].get("type") == "page",
+        "first page event of the chain scrape",
+    )
+    send({"jsonrpc": "2.0", "id": 6, "method": "cancel", "params": {"rid": 5}})
+    r6 = reply(6)
+    expect(
+        (r6 or {}).get("result", {}).get("cancelling") is True,
+        "cancel -> cancelling: true",
+    )
+    r5 = reply(5)
+    cancelled = (r5 or {}).get("result", {})
+    expect(cancelled.get("cancelled") is True, "cancelled scrape reports cancelled: true")
+    first_written = cancelled.get("written")
+    expect(
+        isinstance(first_written, int) and 1 <= first_written < CHAIN_LEN,
+        f"cancel left pages unwritten ({first_written} of {CHAIN_LEN})",
+    )
+    checkpoint = os.path.join(out_chain, ".crawl", "checkpoint.pkl")
+    expect(os.path.exists(checkpoint), "cancel saved .crawl/checkpoint.pkl")
+
+    # --- 6: resume replays the checkpoint frontier to completion. ---
+    server.delay = 0.0
+    send(
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "scrape",
+            "params": {"url": f"{base}/chain/", "out": out_chain, "resume": True},
+        }
+    )
+    r7 = reply(7)
+    resumed = (r7 or {}).get("result", {})
+    expect(resumed.get("exit_code") == 0, f"resume exit_code 0 (got {resumed.get('exit_code')})")
+    expect(resumed.get("cancelled") is not True, "resume run is not cancelled")
+    on_disk = page_files(out_chain)
+    expect(
+        len(on_disk) == CHAIN_LEN,
+        f"resume completed the chain ({len(on_disk)} of {CHAIN_LEN} pages on disk)",
+    )
+    resumed_pages = resumed.get("manifest", {}).get("pages", [])
+    expect(
+        len([p for p in resumed_pages if p.get("file")]) == CHAIN_LEN,
+        "resumed manifest carries all chain pages (no undercount)",
+    )
+
+    # --- 7: update answers 304 everywhere and keeps every file untouched. ---
+    before = file_stats(out_chain)
+    send(
+        {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "scrape",
+            "params": {"url": f"{base}/chain/", "out": out_chain, "update": True},
+        }
+    )
+    r8 = reply(8)
+    updated = (r8 or {}).get("result", {})
+    expect(updated.get("exit_code") == 0, f"update exit_code 0 (got {updated.get('exit_code')})")
+    expect(
+        updated.get("written") == 0,
+        f"update rewrote nothing (written {updated.get('written')})",
+    )
+    updated_pages = updated.get("manifest", {}).get("pages", [])
+    all_304 = [p for p in updated_pages if p.get("status") == 304]
+    expect(
+        len(all_304) == CHAIN_LEN,
+        f"update: every page answered 304 ({len(all_304)} of {CHAIN_LEN})",
+    )
+    after = file_stats(out_chain)
+    expect(
+        before == after,
+        "update kept every previous file (bytes and mtime identical)",
+    )
+
+    # --- 8: push streams a digest from the fixture LLM endpoint. ---
+    send(
+        {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "push",
+            "params": {
+                "dir": out_chain,
+                "prompt": "Summarize the chain.",
+                "model": "fixture-model",
+                "env": {"OPENROUTER_API_KEY": "test-key-123"},
+            },
+        }
+    )
+    r9 = reply(9)
+    push = (r9 or {}).get("result", {})
+    expect(push.get("digest") == "Hello world", f"push digest streamed (got {push.get('digest')!r})")
+    expect(push.get("files") == CHAIN_LEN, f"push read the corpus ({push.get('files')} files)")
+    expect(
+        any(
+            m.get("method") == "event"
+            and m["params"].get("type") == "push"
+            and m["params"].get("delta")
+            for m in messages
+        ),
+        "push deltas arrived as events",
+    )
+    expect(
+        server.push_auth_headers == ["Bearer test-key-123"],
+        "push sent the request-scoped key in the Authorization header",
+    )
+
+    proc.stdin.close()  # EOF -> clean shutdown
+    proc.wait(timeout=30)
+    stderr_text = proc.stderr.read()
+
     server.shutdown()
     if failures:
         print("\nprotocol lines:\n" + "\n".join(raw[-10:]))
         print("\nstderr tail:\n" + "\n".join(stderr_text.splitlines()[-15:]))
         sys.exit(1)
-    print("\nfrozen sidecar verified: stdio protocol + static fetch stack intact")
+    print(
+        "\nfrozen sidecar verified: stdio protocol, static fetch, "
+        "cancel/resume/update lifecycle and push intact"
+    )
 
 
 if __name__ == "__main__":

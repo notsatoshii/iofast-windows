@@ -13,7 +13,14 @@ import time
 import urllib.request
 from urllib.parse import urlparse
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# IOFAST_OPENROUTER_URL is a test seam: packaging/verify_frozen.py points the
+# frozen binary at a local fixture server to exercise `push` end to end. It is
+# read once at import, from the environment the parent set — the same trust
+# boundary as IOFAST_PROXY (a parent that can set env can already redirect
+# traffic wholesale).
+OPENROUTER_URL = os.environ.get(
+    "IOFAST_OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions"
+)
 SAMPLE_CAP = 30_000  # chars of page HTML sent to the model
 PROMPT = (
     "You are given the HTML of one documentation page. Reply with ONLY a JSON "

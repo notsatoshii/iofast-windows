@@ -343,7 +343,19 @@ class DocSpider(Spider):
         return survivors
 
     async def start_requests(self):
-        seeds = self.seeds[: self.max_pages] if self.seeds else [(self.start_url, False)]
+        seeds = self.seeds if self.seeds else [(self.start_url, False)]
+        if self.previous and not self.resume:
+            # docs/RPC.md `update`: the previous manifest seeds the url list.
+            # Without this, a link-crawl site whose root answers 304 (empty
+            # body, so no links to follow) never revisits its child pages, and
+            # the rewritten manifest silently drops their validators.
+            seeded = {url for url, _ in seeds}
+            seeds = seeds + [
+                (url, False)
+                for url, row in sorted(self.previous.items())
+                if row.get("file") and url not in seeded
+            ]
+        seeds = seeds[: self.max_pages]
         for url, from_llms in seeds:
             if url in self.seen:
                 continue
