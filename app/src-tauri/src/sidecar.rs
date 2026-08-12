@@ -237,11 +237,19 @@ impl SidecarManager {
 }
 
 fn resolve_binary(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(explicit) = std::env::var_os("IOFAST_BIN") {
-        return Ok(PathBuf::from(explicit));
-    }
-    if let Ok(dir) = app.path().resource_dir() {
-        let bundled = dir.join("iofast").join("iofast");
+    // IOFAST_BIN is a dev-only override: honoring it in release would let any
+    // process that can set an env var point the app at an arbitrary executable.
+    if cfg!(debug_assertions) {
+        if let Some(explicit) = std::env::var_os("IOFAST_BIN") {
+            return Ok(PathBuf::from(explicit));
+        }
+    } else if let Ok(dir) = app.path().resource_dir() {
+        // Release-only: in dev, resource_dir() is target/debug, where a copy
+        // left by an earlier build would shadow the fresh engine/dist tree.
+        // Resources land under engine/ (not iofast/): Tauri also copies them
+        // next to the cargo binary, and a dir named `iofast` would collide
+        // with the binary itself and break the build.
+        let bundled = dir.join("engine").join("iofast");
         if bundled.is_file() {
             return Ok(bundled);
         }

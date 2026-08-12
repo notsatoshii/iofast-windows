@@ -26,12 +26,9 @@ jobs:
         working-directory: engine
       - run: python packaging/verify_frozen.py dist/iofast/iofast
         working-directory: engine
-      # TODO(sign): wire sidecar into the bundle. src-tauri/src/sidecar.rs looks for
-      # the frozen binary at resource_dir()/iofast/iofast, but tauri.conf.json has no
-      # `resources` entry to place it there yet, so `pnpm tauri build` bundles the app
-      # WITHOUT the sidecar. The frozen tree lives at engine/dist/iofast/ after the step
-      # above. Wiring it (a bundle.resources mapping, or an externalBin) is its own change
-      # — left out here to keep the default build behavior identical.
+      # The freeze above must run BEFORE the Tauri build: tauri.conf.json's
+      # bundle.resources maps engine/dist/iofast/ into the bundle at
+      # Resources/engine/, where sidecar.rs resolves it in release builds.
 
       # 2. Pin the toolchain to the project's floor. cargo/rustc 1.78 is the known-good
       # toolchain the committed Cargo.lock was resolved against; a newer default runner

@@ -7,7 +7,24 @@ distribution are deferred by decision (PLAN.md Phase 4). Nothing here is active.
 ## Current state
 
 - Builds are **unsigned local builds**. `pnpm tauri build` in `app/` produces an
-  `.app` and `.dmg` with no code signature.
+  `.app` and `.dmg` with no Developer ID signature.
+- The frozen engine is bundled into the `.app` via `bundle.resources` in
+  `tauri.conf.json` (`engine/dist/iofast/` → `Contents/Resources/engine/`), so
+  `engine && pyinstaller --noconfirm packaging/iofast.spec` must run before
+  `pnpm tauri build`. PyInstaller output is a directory (a binary plus an
+  `_internal/` tree of dylibs), which is why this is `resources` and not
+  `externalBin` (that expects a single file). The resource target is `engine/`,
+  not `iofast/`: Tauri also copies resources next to the cargo binary in
+  `target/<profile>/`, and a directory named after the binary breaks the build.
+- **Measured signing state** (local, 2026-08-12, debug bundle): every Mach-O in
+  the bundled engine tree is already **ad-hoc signed** by PyInstaller on arm64;
+  `codesign -s - --deep --force` over the whole `.app` takes <1s;
+  `codesign --verify --strict --deep` passes. `spctl --assess --type execute`
+  **rejects** the ad-hoc bundle — expected, Gatekeeper acceptance needs the
+  Developer ID + notarization flow below. Note for that flow: notarization
+  requires a valid Developer ID signature on **each** Mach-O, including the
+  ~76 dylibs under `Resources/engine/_internal/` — plan for a sign pass over
+  the engine tree, not just the app binary.
 - `.github/workflows/release.yml` builds the same unsigned bundle on a `v*` tag (or
   manual dispatch) and uploads it as a CI artifact. It uses **no secrets** and runs
   green without any Apple credentials.

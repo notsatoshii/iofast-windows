@@ -106,8 +106,9 @@ engine/.venv/bin/iofast scrape https://docs.example.com/docs/ --out ./out
 stdio server the app talks to.
 
 **Frozen engine (the sidecar the app runs).** Build it before starting the
-app — the shell looks for `engine/dist/iofast/iofast`, or wherever `IOFAST_BIN`
-points.
+app. In dev the shell looks for `engine/dist/iofast/iofast` (or wherever
+`IOFAST_BIN` points — dev builds only); a release build bundles this tree into
+the `.app` via `bundle.resources`, so it must exist before `pnpm tauri build`.
 
 ```bash
 cd engine && .venv/bin/pyinstaller --noconfirm packaging/iofast.spec
