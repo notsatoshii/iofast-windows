@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager};
 /// `security -s` service name. Accounts are the env var names below.
 const KEYCHAIN_SERVICE: &str = "iofast";
 /// docs/RPC.md: the `env` allowlist the sidecar accepts, verbatim.
-pub const KEY_NAMES: [&str; 2] = ["OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL"];
+pub const KEY_NAMES: [&str; 3] = ["OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL", "IOFAST_PROXY"];
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {

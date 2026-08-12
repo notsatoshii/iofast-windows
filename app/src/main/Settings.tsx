@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { reason, type Config } from "../lib";
 
-/** docs/RPC.md `scrape.env` allowlist — the only two secrets the app holds. */
-const KEYS = [
+/** docs/RPC.md `scrape.env` allowlist — the secrets the app holds. */
+const RESCUE_KEYS = [
   {
     name: "OPENROUTER_API_KEY",
     label: "OpenRouter API key",
@@ -16,6 +16,15 @@ const KEYS = [
     label: "Rescue model",
     hint: "An OpenRouter model id, for example anthropic/claude-sonnet-4.5.",
     secret: false,
+  },
+] as const;
+
+const NETWORK_KEYS = [
+  {
+    name: "IOFAST_PROXY",
+    label: "Proxy",
+    hint: "Routes every fetch tier through one proxy for sites that block by IP. Format: http://user:pass@host:port.",
+    secret: true,
   },
 ] as const;
 
@@ -86,6 +95,46 @@ export default function Settings({
     }
   };
 
+  const keyRow = (key: { name: string; label: string; hint: string; secret: boolean }) => (
+    <div className="set" key={key.name}>
+      <div className="set-label">
+        {key.label}
+        <span className="set-hint">{key.hint}</span>
+      </div>
+      <div className="set-control">
+        {stored[key.name] ? (
+          <>
+            <span className="saved">Saved</span>
+            <button type="button" className="btn" onClick={() => void clearKey(key.name)}>
+              Clear
+            </button>
+          </>
+        ) : (
+          <>
+            <input
+              className="text-input"
+              type={key.secret ? "password" : "text"}
+              value={drafts[key.name] ?? ""}
+              spellCheck={false}
+              autoComplete="off"
+              aria-label={key.label}
+              onChange={(e) => setDrafts((d) => ({ ...d, [key.name]: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && void saveKey(key.name)}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={!drafts[key.name]}
+              onClick={() => void saveKey(key.name)}
+            >
+              Save
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="pane">
       <h2>Library</h2>
@@ -137,47 +186,12 @@ export default function Settings({
       </div>
 
       <h2>Rescue</h2>
-      {KEYS.map((key) => (
-        <div className="set" key={key.name}>
-          <div className="set-label">
-            {key.label}
-            <span className="set-hint">{key.hint}</span>
-          </div>
-          <div className="set-control">
-            {stored[key.name] ? (
-              <>
-                <span className="saved">Saved</span>
-                <button type="button" className="btn" onClick={() => void clearKey(key.name)}>
-                  Clear
-                </button>
-              </>
-            ) : (
-              <>
-                <input
-                  className="text-input"
-                  type={key.secret ? "password" : "text"}
-                  value={drafts[key.name] ?? ""}
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-label={key.label}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [key.name]: e.target.value }))}
-                  onKeyDown={(e) => e.key === "Enter" && void saveKey(key.name)}
-                />
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!drafts[key.name]}
-                  onClick={() => void saveKey(key.name)}
-                >
-                  Save
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      ))}
+      {RESCUE_KEYS.map(keyRow)}
+
+      <h2>Network</h2>
+      {NETWORK_KEYS.map(keyRow)}
       <p className="foot">
-        Both live in the macOS keychain, never in the config file, and reach the engine only
+        These live in the macOS keychain, never in the config file, and reach the engine only
         inside the request for the run that needs them. Saved values are never read back into
         this window.
       </p>

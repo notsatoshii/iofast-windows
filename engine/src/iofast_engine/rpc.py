@@ -24,7 +24,7 @@ MAX_PAGES_MAX = 2000
 # Request-scoped secrets a scrape may carry (PLAN key-handoff rule): applied to
 # the environment for that run only. Allowlisted so a client cannot use the
 # sidecar to set arbitrary process environment.
-ALLOWED_ENV = {"OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL"}
+ALLOWED_ENV = {"OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL", "IOFAST_PROXY"}
 
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600

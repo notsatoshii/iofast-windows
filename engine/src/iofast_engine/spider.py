@@ -177,21 +177,33 @@ class DocSpider(Spider):
 
         The browser-session import stays behind the guard: importing it pulls in
         playwright, which a frozen static-only sidecar deliberately excludes.
+
+        IOFAST_PROXY (request-scoped, read from the environment like the rescue
+        key) routes every tier through one proxy — the resilient-fetch layer for
+        sites that block by IP. Unset = no proxy kwarg, so behaviour is
+        byte-identical to before.
         """
         from scrapling.fetchers import FetcherSession
 
-        manager.add("static", FetcherSession(timeout=30), default=True)
+        proxy = os.environ.get("IOFAST_PROXY") or None
+        proxy_kw = {"proxy": proxy} if proxy else {}
+
+        manager.add("static", FetcherSession(timeout=30, **proxy_kw), default=True)
         if self.browsers:
             from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
 
             manager.add(
                 "dynamic",
-                AsyncDynamicSession(headless=True, disable_resources=True, max_pages=2),
+                AsyncDynamicSession(
+                    headless=True, disable_resources=True, max_pages=2, **proxy_kw
+                ),
                 lazy=True,
             )
             manager.add(
                 "stealth",
-                AsyncStealthySession(headless=True, solve_cloudflare=True, max_pages=1),
+                AsyncStealthySession(
+                    headless=True, solve_cloudflare=True, max_pages=1, **proxy_kw
+                ),
                 lazy=True,
             )
 
