@@ -406,7 +406,7 @@ pub fn detect_agents() -> Vec<DetectedAgent> {
 
 /// A library run directory, validated exactly like `library_delete`: `path`
 /// arrives from the webview, so it must be a direct child of the configured root.
-fn checked_run_dir(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+pub(crate) fn checked_run_dir(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let root = library_root(app)?.canonicalize().map_err(|e| e.to_string())?;
     let dir = PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
     if dir.parent() != Some(root.as_path()) || !dir.is_dir() {

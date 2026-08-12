@@ -94,6 +94,35 @@ async fn sidecar_scrape_start(
     Ok(rid)
 }
 
+/// Ingest mode 3 (API push): ask an LLM the user's `prompt` over one run's
+/// scraped corpus, return the digest. `dir` arrives from the webview, so it is
+/// checked to be a library child here (like `open_in_agent`/`mcp_index`) before
+/// its path reaches the sidecar. The OPENROUTER_API_KEY / IOFAST_RESCUE_MODEL
+/// ride in the request body from the keychain — same handoff as `scrape`, never
+/// argv. `model` is not a secret; it is a plain param the engine defaults from
+/// IOFAST_RESCUE_MODEL when omitted. Awaited: one LLM call, not a long crawl.
+#[tauri::command]
+async fn sidecar_push(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    dir: String,
+    prompt: String,
+    model: Option<String>,
+) -> Result<Value, String> {
+    let run_dir = store::checked_run_dir(&app, &dir)?;
+    let mut params = json!({ "dir": run_dir.to_string_lossy(), "prompt": prompt });
+    if let Some(m) = model {
+        if !m.trim().is_empty() {
+            params["model"] = json!(m);
+        }
+    }
+    let env = store::scrape_env();
+    if !env.is_empty() {
+        params["env"] = Value::Object(env);
+    }
+    sc.request(&app, "push", params).await
+}
+
 #[tauri::command]
 async fn sidecar_cancel(
     app: AppHandle,
@@ -242,6 +271,7 @@ fn main() {
             sidecar_map,
             sidecar_estimate,
             sidecar_scrape_start,
+            sidecar_push,
             sidecar_cancel,
             open_path,
             panel_hide,

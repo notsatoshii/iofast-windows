@@ -13,6 +13,7 @@ import threading
 from . import __version__
 from .estimate import run_estimate
 from .manifest import SCHEMA
+from .push import run_push
 from .runner import run_map, run_scrape, validate
 
 PROTOCOL = 1
@@ -233,6 +234,43 @@ class RpcServer:
             pending_cancel = self.cancel_event is not None and self.cancel_event.is_set()
         if pending_cancel:
             spider.request_cancel()
+
+    def handle_push(self, rid, params):
+        run_dir, prompt, model = params.get("dir"), params.get("prompt"), params.get("model")
+        if not isinstance(run_dir, str) or not run_dir:
+            return self.fail(rid, INVALID_PARAMS, "dir is required and must be a string")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return self.fail(rid, INVALID_PARAMS, "prompt is required and must be a non-empty string")
+        if not (model is None or isinstance(model, str)):
+            return self.fail(rid, INVALID_PARAMS, "model must be a string or null")
+        env = params.get("env") or {}
+        if not (
+            isinstance(env, dict)
+            and set(env) <= ALLOWED_ENV
+            and all(isinstance(v, str) for v in env.values())
+        ):
+            return self.fail(
+                rid, INVALID_PARAMS, f"env keys must be within {sorted(ALLOWED_ENV)}"
+            )
+        with self.state:
+            thread = self.threads.get("push")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "push already running")
+            thread = threading.Thread(
+                target=self._push_thread, args=(rid, run_dir, prompt, model, env), daemon=True
+            )
+            self.threads["push"] = thread
+            thread.start()
+
+    def _push_thread(self, rid, run_dir, prompt, model, env):
+        try:
+            result = run_push(
+                run_dir, prompt, model=model, env=env,
+                emit=lambda event: self.notify(rid, event),
+            )
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
 
     def handle_cancel(self, rid, params):
         want = params.get("rid")

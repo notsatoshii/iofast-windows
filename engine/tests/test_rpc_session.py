@@ -385,3 +385,73 @@ def test_env_is_request_scoped_and_restored():
     assert result["cancelled"] is True
     assert seen["during"] == "test-model", "secret must be set while the run executes"
     assert key not in os.environ, "secret must be restored after the run"
+
+
+# ---------- push (ingest Mode 3, API push) ----------
+
+
+@pytest.mark.parametrize(
+    "params, reason",
+    [
+        ({"prompt": "q"}, "dir required"),
+        ({"dir": "/lib/run", "prompt": "  "}, "prompt must be non-empty"),
+        ({"dir": "/lib/run", "prompt": "q", "model": 5}, "model must be a string"),
+        ({"dir": "/lib/run", "prompt": "q", "env": {"PATH": "/evil"}}, "env allowlisted"),
+    ],
+)
+def test_push_rejects_bad_params(params, reason):
+    server, out = make_server()
+    server.dispatch({"jsonrpc": "2.0", "id": 1, "method": "push", "params": params})
+    error = json.loads(lines(out)[0])["error"]
+    assert error["code"] == rpc.INVALID_PARAMS, reason
+    assert "push" not in server.threads
+
+
+def test_push_happy_path_and_event(monkeypatch):
+    """dispatch -> thread -> canned run_push: the digest response and the one
+    push progress notification both land, correlated to the request rid."""
+    server, out = make_server()
+
+    def canned_push(run_dir, prompt, *, model=None, env=None, emit=None, cap=None):
+        assert run_dir == "/lib/run" and prompt == "explain auth"
+        assert env == {"OPENROUTER_API_KEY": "sk-x"}
+        emit({"type": "push", "message": "asking…"})
+        return {"digest": "Use a Bearer token.", "model": "m/x", "files": 3, "chars": 42, "truncated": False}
+
+    monkeypatch.setattr(rpc, "run_push", canned_push)
+    server.dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "push",
+            "params": {
+                "dir": "/lib/run",
+                "prompt": "explain auth",
+                "env": {"OPENROUTER_API_KEY": "sk-x"},
+            },
+        }
+    )
+    join(server, "push")
+    msgs = [json.loads(line) for line in lines(out)]
+    event = next(m for m in msgs if m.get("method") == "event")
+    assert event["params"] == {"type": "push", "message": "asking…", "rid": 7}
+    reply = next(m for m in msgs if m.get("id") == 7)
+    assert reply["result"]["digest"] == "Use a Bearer token."
+    assert reply["result"]["truncated"] is False
+
+
+def test_second_push_is_busy(monkeypatch):
+    server, out = make_server()
+    gate = threading.Event()
+
+    def blocking(run_dir, prompt, **kw):
+        gate.wait(5)
+        return {"digest": "", "model": "m", "files": 0, "chars": 0, "truncated": False}
+
+    monkeypatch.setattr(rpc, "run_push", blocking)
+    server.dispatch({"jsonrpc": "2.0", "id": 1, "method": "push", "params": {"dir": "/a", "prompt": "q"}})
+    server.dispatch({"jsonrpc": "2.0", "id": 2, "method": "push", "params": {"dir": "/a", "prompt": "q"}})
+    busy = json.loads(lines(out)[0])
+    assert busy["error"]["code"] == rpc.BUSY
+    gate.set()
+    join(server, "push")

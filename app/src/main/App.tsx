@@ -17,7 +17,7 @@ import {
 } from "../lib";
 
 /** docs/RPC.md: `params` of an `event` notification IS the engine event dict. */
-type EngineEvent = { type: string; rid?: number; n?: number; message?: string };
+type EngineEvent = { type: string; rid?: number; n?: number; message?: string; delta?: string };
 type ScrapeResult = { written: number; out_dir: string; exit_code: number; cancelled: boolean };
 type ScrapeDone = { rid: number; result?: ScrapeResult; error?: string };
 type Started = { rid: number; url: string; out: string; update: boolean };
@@ -26,6 +26,8 @@ type EstimateResult = { page_count: number | null };
 type Agent = { id: string; path: string; terminal: boolean };
 /** Result of indexing a run into docs-mcp (store.rs `mcp_index`). */
 type McpIndexed = { library: string; config_json: string };
+/** Result of an API push over a run's corpus (engine `push`). */
+type PushResult = { digest: string; model: string; files: number; chars: number; truncated: boolean };
 
 /** The run whose events the progress strip is showing — panel-started too. */
 type Active = { rid: number; label: string; update: boolean };
@@ -70,9 +72,20 @@ export default function App() {
   const [mcpBusy, setMcpBusy] = useState<string | null>(null);
   const [mcpConfig, setMcpConfig] = useState<McpIndexed | null>(null);
   const [copied, setCopied] = useState(false);
+  const [hasKey, setHasKey] = useState(false);
+  const [ask, setAsk] = useState<{ dir: string; host: string } | null>(null);
+  const [askPrompt, setAskPrompt] = useState("");
+  const [askModel, setAskModel] = useState("");
+  const [pushBusy, setPushBusy] = useState(false);
+  const [digest, setDigest] = useState<(PushResult & { host: string }) | null>(null);
+  const [stream, setStream] = useState("");
 
   const activeRef = useRef<Active | null>(null);
   const estSeq = useRef(0);
+  // Only one push runs at a time (engine BUSY guard), so any `push` delta event
+  // belongs to the in-flight one — no rid correlation needed. The ref keeps the
+  // event listener from appending after the call has landed.
+  const streamingRef = useRef(false);
 
   const target = parseTarget(url);
   const scope = target ? scopePrefix(target) : null;
@@ -107,15 +120,25 @@ export default function App() {
     invoke<string | null>("detect_node").then(setNode).catch(() => undefined);
   }, []);
 
+  // Whether an OpenRouter key is stored, for the row's "Ask AI" action. Re-read
+  // on focus too — the user may add or clear it in Settings between visits.
+  const recheckKey = useCallback(() => {
+    invoke<Record<string, boolean>>("keychain_status")
+      .then((s) => setHasKey(!!s.OPENROUTER_API_KEY))
+      .catch(() => undefined);
+  }, []);
+  useEffect(recheckKey, [recheckKey]);
+
   // No index file to keep in sync: the library IS the folders, so re-read them
   // whenever the window comes forward.
   useEffect(() => {
     const onFocus = () => {
       if (boot?.config) refresh();
+      recheckKey();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [boot, refresh]);
+  }, [boot, refresh, recheckKey]);
 
   useEffect(() => {
     const started = listen<Started>("scrape-started", (e) => {
@@ -153,6 +176,19 @@ export default function App() {
       void all.then((fns) => fns.forEach((f) => f()));
     };
   }, [refresh]);
+
+  // API-push answer streams in as `push` delta events; append them live while a
+  // push is in flight. The final digest arrives on the awaited sidecar_push call.
+  useEffect(() => {
+    const chunks = listen<EngineEvent>("engine-event", (e) => {
+      if (streamingRef.current && e.payload.type === "push" && typeof e.payload.delta === "string") {
+        setStream((s) => s + e.payload.delta);
+      }
+    });
+    return () => {
+      void chunks.then((f) => f());
+    };
+  }, []);
 
   // Same pre-Enter pass as the quick panel, and just as non-blocking: it only
   // ever writes the annotation line and the gate's page count.
@@ -255,6 +291,31 @@ export default function App() {
       setError(reason(e));
     } finally {
       setMcpBusy(null);
+    }
+  };
+
+  // Ask the model the typed prompt over this run's corpus, then show the answer.
+  const runPush = async () => {
+    if (!ask || !askPrompt.trim()) return;
+    setError("");
+    setStream("");
+    streamingRef.current = true;
+    setPushBusy(true);
+    try {
+      const r = await invoke<PushResult>("sidecar_push", {
+        dir: ask.dir,
+        prompt: askPrompt,
+        model: askModel.trim() || null,
+      });
+      setDigest({ ...r, host: ask.host });
+      setAsk(null);
+      setAskPrompt("");
+    } catch (e) {
+      setError(reason(e));
+    } finally {
+      streamingRef.current = false;
+      setPushBusy(false);
+      setStream("");
     }
   };
 
@@ -404,6 +465,72 @@ export default function App() {
             </div>
           )}
 
+          {ask && (
+            <div className="gate mcp ask">
+              <span>
+                Ask AI about <strong>{ask.host}</strong>. The scraped pages go to the model as
+                untrusted reference — it is told to treat them as data, never as instructions.
+              </span>
+              <textarea
+                className="ask-prompt"
+                rows={3}
+                value={askPrompt}
+                spellCheck={false}
+                disabled={pushBusy}
+                autoFocus
+                placeholder="e.g. How do I authenticate a request?"
+                onChange={(e) => setAskPrompt(e.target.value)}
+              />
+              <input
+                className="text-input ask-model"
+                type="text"
+                value={askModel}
+                spellCheck={false}
+                autoComplete="off"
+                disabled={pushBusy}
+                placeholder="model (optional — defaults to your rescue model)"
+                onChange={(e) => setAskModel(e.target.value)}
+              />
+              {pushBusy && (
+                <pre className="mcp-config digest" aria-live="polite">
+                  {stream || "…"}
+                </pre>
+              )}
+              <div className="acts">
+                <button
+                  type="button"
+                  className="btn go"
+                  disabled={pushBusy || !askPrompt.trim()}
+                  onClick={() => void runPush()}
+                >
+                  {pushBusy ? "Asking…" : "Ask"}
+                </button>
+                <button type="button" className="btn" disabled={pushBusy} onClick={() => setAsk(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {digest && (
+            <div className="gate mcp">
+              <span>
+                Answer about <strong>{digest.host}</strong> — {digest.model}, over{" "}
+                {plural(digest.files, "file")}
+                {digest.truncated ? " (corpus truncated to fit)" : ""}.
+              </span>
+              <pre className="mcp-config digest">{digest.digest}</pre>
+              <div className="acts">
+                <button type="button" className="btn go" onClick={() => copyMcp(digest.digest)}>
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <button type="button" className="btn" onClick={() => setDigest(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+
           {runs.length === 0 ? (
             <p className="empty">
               Nothing here yet. Paste a URL above, or press <kbd className="key">⌘</kbd>
@@ -479,6 +606,20 @@ export default function App() {
                           onClick={() => void indexMcp(run.dir)}
                         >
                           {mcpBusy === run.dir ? "Indexing…" : "MCP search"}
+                        </button>
+                      )}
+                      {hasKey && (
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={() => {
+                            setDigest(null);
+                            setError("");
+                            setAskPrompt("");
+                            setAsk({ dir: run.dir, host: run.host });
+                          }}
+                        >
+                          Ask AI
                         </button>
                       )}
                       <button

@@ -83,6 +83,33 @@ Trust note: `out` is a client-supplied write path. The stdio pipe is the trust
 boundary — anything that can reach it controls where files land. Acceptable
 for a local shell-owned sidecar; do not expose this server on a socket.
 
+### `push`
+Params: `{"dir": str, "prompt": str, "model": str|null}` plus the same optional
+`"env": {"OPENROUTER_API_KEY": str, "IOFAST_RESCUE_MODEL": str}` as `scrape`
+(request-scoped, allowlisted, restored after the call — never argv, never a
+file). Ingest Mode 3 (API push, PLAN Phase 3): the engine reads the run's
+scraped `.md` pages (skipping the generated `report.md` / `README-UNTRUSTED.md`),
+concatenates them under a char cap in filename order, and sends them to the
+OpenRouter chat endpoint as UNTRUSTED reference alongside the user's `prompt`.
+`model` is a plain param (not a secret); omitted, the engine defaults it from
+`IOFAST_RESCUE_MODEL`. The system prompt marks the corpus untrusted, on top of
+each page's own banner (PLAN rule). `dir` is a client-supplied read path — the
+shell validates it is a library child before the call; the stdio pipe is the
+same trust boundary as `scrape.out`.
+Result: `{"digest": str, "model": str, "files": int, "chars": int,
+"truncated": bool}` — `truncated` is true when the corpus hit the cap.
+The answer is streamed from OpenRouter (`stream: true`): each token arrives as a
+`push` event notification carrying a `delta` field, and the same full text is
+returned in `digest` when the call lands. A `push` event with a `message` field
+(no `delta`) is the one-shot pre-call progress line.
+Runs in a worker thread. One push at a time (`-32000` while one runs); not
+cancellable in protocol 1 (the streaming read runs to completion; a 120s
+timeout bounds it). Config or corpus problems (missing key, no model, empty run)
+and a bad upstream response (error envelope, empty answer) come back as `-32603`
+with the message — never a bare `KeyError`. The key is read from the
+request-scoped `env` and never written to `os.environ` (so a concurrent scrape's
+env-wrap cannot race or persist it).
+
 ### `cancel`
 Params: `{"rid": int|null}` — optionally pins the scrape request id, so a
 cancel racing a finishing run cannot hit the next one. `-32001` on mismatch
@@ -124,8 +151,8 @@ Every event the engine `emit()`s is forwarded verbatim as a notification:
 ```
 
 `params` **is** the engine event dict — the existing shapes (`progress`,
-`page`, `platform`, `warning`, `rescue`, `result`) are the contract, plus one
-added field: `rid`, the id of the request that produced it (additive; the
+`page`, `platform`, `warning`, `rescue`, `result`, `push`) are the contract, plus
+one added field: `rid`, the id of the request that produced it (additive; the
 CLI's `--json` stream is untouched — rid is injected by the RPC sink only).
 Events from a `map` carry that map request's rid.
 
