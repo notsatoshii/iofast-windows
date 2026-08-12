@@ -60,7 +60,7 @@ Verified by running grep/python against the installed package at `~/code/iofast-
 - **Three fetch tiers**: `Fetcher` (fast HTTP, TLS-fingerprint impersonation, HTTP/3), `DynamicFetcher` (Playwright browser), `StealthyFetcher` (fingerprint spoofing, Cloudflare Turnstile bypass). This is exactly the static → dynamic → stealth escalation the engine needs. The Turnstile bypass in `StealthyFetcher` is real.
 - **The escalation MECHANISM already exists.** `SessionManager` (session.py) holds `FetcherSession` + `AsyncDynamicSession` + `AsyncStealthySession` together. A per-request `sid` selects the tier. We wire the ladder; we do not build the plumbing.
 - **Checkpoints are real** — `spiders/checkpoint.py`, `CheckpointManager`. Long crawls survive interruption via pause/resume.
-- **Sessions** (sync/async), browser pool with `max_pages`, per-request proxy overrides, built-in ProxyRotator (feeds the backlogged max-evasion feature).
+- **Sessions** (sync/async), browser pool with `max_pages`, per-request proxy overrides, built-in ProxyRotator (feeds the backlogged resilient-fetch feature).
 - Adaptive element tracking (`find_similar`, similarity relocation) — useful when a platform adapter's selectors drift.
 
 **Claimed before but NOT in 0.4.2 — we must write these:**
