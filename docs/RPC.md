@@ -185,11 +185,40 @@ are PyPI's own), extracts each wheel's `driver/` tree into
 match its pinned digest is REFUSED and deleted — `-32603` with
 `IntegrityError: checksum mismatch …`, nothing kept on disk. Progress arrives
 as `browser_install` events (`component`, `stage`
-`download|extract|chromium|done`, `pct` on downloads, human `message`).
+`download|skip|extract|chromium|done`, `pct` on downloads, human `message`);
+the chromium stage streams the driver's own output line by line (with a 900s
+kill timeout), so download progress is never dark.
 Result: the same shape as `browser_status`. Runs in a worker thread; one
 install at a time (`-32000` while one runs). The freshly installed drivers are
 active for the next scrape in the same process (driver resolution is repointed
 at install time and re-checked per scrape).
+
+Hardening: the install refuses to start with under ~2GB free disk; downloads
+retry up to 3 times with backoff (safe — the digest check gates every
+attempt); a package whose receipt already matches is skipped (`skip` stage),
+so a re-run after a mid-install failure re-fetches only what is missing.
+`IOFAST_PROXY` routes both the wheel download and the chromium fetch (exported
+as `HTTPS_PROXY`/`HTTP_PROXY` to the driver child), and a
+`PLAYWRIGHT_DOWNLOAD_HOST` set on the sidecar process passes through to the
+chromium download. Each successful package writes an install receipt
+(`<support>/components.json`: version, wheel digest, on-disk digests+sizes of
+the driver files, chromium revision) — `browser_status` and the per-scrape
+availability check trust receipt + file sizes (cheap), not bare file
+existence, so a truncated or partial install reports not-installed.
+
+Consent note for the app UI: a full install is ~770MB on disk, measured with
+both pins at 1.58.x (~520MB chromium + ~250MB drivers) — show the real number
+before starting.
+
+### `verify_components`
+Params: none.
+Recomputes the SHA-256 of every receipt-recorded driver file (the honest
+check the cheap size test skips — a same-size tamper only shows up here).
+Result: `{"ok": bool, "packages": {name: "ok" | reason}, "status": …}` with
+`status` in the `browser_status` shape. Read-only and answered synchronously
+(~1s of hashing). To repair, call `install_browsers` again: its per-package
+skip decision re-verifies digests, so anything this check flags gets
+re-downloaded (`iofast browsers verify --repair` is the CLI one-step form).
 
 ## Notifications (event stream)
 

@@ -66,10 +66,20 @@ def main(argv=None):
     browsers_p = sub.add_parser(
         "browsers", help="out-of-band browser components (SHA-256-pinned download)"
     )
-    browsers_p.add_argument("action", choices=("status", "install"))
+    browsers_p.add_argument("action", choices=("status", "install", "verify"))
+    browsers_p.add_argument(
+        "--repair", action="store_true", help="verify only: reinstall packages that fail"
+    )
     browsers_p.add_argument("--json", action="store_true", help="result as JSON on stdout")
 
     args = ap.parse_args(argv)
+
+    # Every command needs browsers/caches rooted in app support (the frozen
+    # bundle dir is read-only in a signed .app) — not just the browsers
+    # subcommand: a scrape that skips this never finds installed chromium.
+    from .browsers import default_storage_env
+
+    default_storage_env()
 
     if args.command == "rpc":
         from .rpc import serve_stdio
@@ -78,15 +88,27 @@ def main(argv=None):
 
     if args.command == "browsers":
         from . import browsers
-        from .browsers import default_storage_env
 
-        default_storage_env()
         if args.action == "install":
             try:
                 result = browsers.install(emit=human_emit)
             except (browsers.IntegrityError, RuntimeError, OSError) as error:
                 print(f"install failed: {error}", file=sys.stderr)
                 return 1
+        elif args.action == "verify":
+            try:
+                report = browsers.verify(repair=args.repair, emit=human_emit)
+            except (browsers.IntegrityError, RuntimeError, OSError) as error:
+                print(f"verify failed: {error}", file=sys.stderr)
+                return 1
+            if args.json:
+                print(json.dumps(report), flush=True)
+            else:
+                for package, state in report["packages"].items():
+                    print(f"{package}: {state}", file=sys.stderr)
+                if report.get("repaired"):
+                    print(f"repaired: {', '.join(report['repaired'])}", file=sys.stderr)
+            return 0 if report["ok"] else 1
         else:
             result = browsers.status()
         if args.json:

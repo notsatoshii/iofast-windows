@@ -26,6 +26,10 @@ Drives the REAL frozen binary over stdio:
 10. browser components -> with a fresh (empty) support dir, browser_status
    reports nothing installed and the scrape above warned "static tier only":
    the frozen fast-path answers False without spawning any driver.
+11. CLI entry point -> a frozen `iofast scrape --json` run (the second frozen
+   entry point, one gate assertion per entry point) roots its browser lookup
+   in app support: the static-tier warning names <support>/browsers, proving
+   default_storage_env() ran for the scrape command, not just `browsers`.
 Every stdout line must parse as JSON: any dependency print() that leaked onto
 fd 1 fails the run (the RPC server redirects fd 1 to stderr — proven here).
 """
@@ -519,6 +523,36 @@ def main(binary):
         "frozen scrape warned 'static tier only' (fast-path stayed False)",
     )
 
+    # --- 11: the CLI entry point sets storage env before scraping. ---
+    cli_out = tempfile.mkdtemp(prefix="iofast-frozen-cli-")
+    cli_support = tempfile.mkdtemp(prefix="iofast-frozen-cli-support-")
+    cli_run = subprocess.run(
+        [binary, "scrape", f"{base}/docs/", "--out", cli_out, "--json", "--max-pages", "3"],
+        capture_output=True,
+        text=True,
+        timeout=150,
+        env={**os.environ, "IOFAST_SUPPORT_DIR": cli_support},
+    )
+    expect(cli_run.returncode == 0, f"CLI scrape exit 0 (got {cli_run.returncode})")
+    cli_events = []
+    for line in cli_run.stdout.splitlines():
+        try:
+            cli_events.append(json.loads(line))
+        except ValueError:
+            failures.append(f"non-JSON line on CLI --json stdout: {line!r}")
+    warning = next(
+        (
+            e.get("message", "")
+            for e in cli_events
+            if e.get("type") == "warning" and "static tier only" in e.get("message", "")
+        ),
+        "",
+    )
+    expect(
+        os.path.join(cli_support, "browsers") in warning,
+        f"CLI scrape looked for chromium under app support (warning: {warning!r})",
+    )
+
     proc.stdin.close()  # EOF -> clean shutdown
     proc.wait(timeout=30)
     stderr_text = proc.stderr.read()
@@ -531,7 +565,7 @@ def main(binary):
     print(
         "\nfrozen sidecar verified: stdio protocol, static fetch, "
         "cancel/resume/update lifecycle, overwrite guard, browser-component "
-        "status and push intact"
+        "status, CLI storage env and push intact"
     )
 
 

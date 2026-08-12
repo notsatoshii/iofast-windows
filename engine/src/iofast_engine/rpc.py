@@ -288,6 +288,13 @@ class RpcServer:
 
         self.respond(rid, browsers.status())
 
+    def handle_verify_components(self, rid, params):
+        from . import browsers
+
+        # Read-only digest check (~1s over the driver files) — repair goes
+        # through install_browsers, which is idempotent per package.
+        self.respond(rid, browsers.verify())
+
     def handle_install_browsers(self, rid, params):
         with self.state:
             thread = self.threads.get("browsers")

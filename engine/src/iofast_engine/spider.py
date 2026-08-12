@@ -163,7 +163,11 @@ class DocSpider(Spider):
             self.emit(
                 {
                     "type": "warning",
-                    "message": "⚠️  no Playwright chromium found — static tier only",
+                    "message": (
+                        "⚠️  no Playwright chromium found (looked under "
+                        f"{os.environ.get('PLAYWRIGHT_BROWSERS_PATH', 'unset')})"
+                        " — static tier only"
+                    ),
                 }
             )
         self.seeds, self.discovery = self._discover()
