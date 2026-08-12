@@ -197,10 +197,12 @@ fn applescript_string(text: &str) -> String {
 
 /// Folder picker. `tauri-plugin-dialog` is the portable route, but it pulls
 /// `tauri-plugin-fs` -> `toml ^1.0` -> `toml_parser`, which requires edition2024
-/// and so cannot be parsed by cargo 1.78 (verified: no pin helps, the `^1.0`
-/// requirement is hard). Same failure class as `tauri-plugin-clipboard-manager`
-/// — see `clipboard_text` in main.rs. `choose folder` is a Standard Additions
-/// built-in: no crate, no automation (TCC) prompt, macOS-only like this app.
+/// and so could not be parsed by cargo 1.78 (verified then: no pin helped, the
+/// `^1.0` requirement is hard). Same failure class as
+/// `tauri-plugin-clipboard-manager` — see `clipboard_text` in main.rs. The
+/// toolchain floor moved (rust-toolchain.toml = 1.97.1, D2 2026-08-12), but
+/// `choose folder` stays: a Standard Additions built-in beats a crate — no
+/// dependency, no automation (TCC) prompt, macOS-only like this app.
 #[tauri::command]
 pub fn pick_folder(start: Option<String>) -> Result<Option<String>, String> {
     let prompt = "Choose the folder where iofast keeps your library";

@@ -1,0 +1,6 @@
+# D2 decision (2026-08-12): toolchain adopted after the throwaway-worktree
+# experiment proved `cargo +1.97.1 build --locked` + all tests green against
+# the committed lockfile. Pinned exact so every checkout builds with the same
+# compiler; bump deliberately, then re-run the app build + tests.
+[toolchain]
+channel = "1.97.1"

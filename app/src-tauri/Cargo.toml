@@ -5,12 +5,11 @@ description = "iofast desktop shell"
 edition = "2021"
 rust-version = "1.77.2"
 
-# Cargo.lock IS load-bearing here — commit it. cargo 1.78 has no MSRV-aware
-# resolver, so a fresh resolve grabs transitive crates that need rustc 1.81-1.85
-# (derive_more, litemap, unicode-segmentation, time/time-core, toml*, uuid,
-# getrandom, plist, serde_with, embed-resource, ...). Every one is pinned back in
-# the lockfile; none is a direct dependency, so there is nothing to pin here.
-# Re-run `cargo update` only on a newer toolchain.
+# Cargo.lock IS load-bearing here — commit it. The lockfile was resolved under
+# cargo 1.78 (no MSRV-aware resolver), pinning back transitive crates that need
+# rustc 1.81-1.85; the toolchain is now 1.97.1 (rust-toolchain.toml, D2
+# 2026-08-12) and builds this lockfile unchanged. A future `cargo update` may
+# raise transitive floors — that is fine now, but keep the lockfile committed.
 #
 # tauri-plugin-opener drags a Linux-only zbus/zvariant subtree that resolves to
 # edition2024 crates. They are never fetched or compiled for macOS/Windows, so

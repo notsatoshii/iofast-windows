@@ -80,17 +80,21 @@ Adding that crate is the same risk class that already forced two features to be
 hand-rolled in this codebase:
 
 - `tauri-plugin-clipboard-manager` was rejected because it drags edition2024 crates
-  (zune-jpeg / getrandom) into the macOS graph, which **cargo 1.78 refuses to parse**
+  (zune-jpeg / getrandom) into the macOS graph, which **cargo 1.78 refused to parse**
   — see the `clipboard_text` comment in `app/src-tauri/src/main.rs` (lines ~158-164).
 - `tauri-plugin-dialog` was rejected for the same reason (it pulls `toml ^1.0` →
   `toml_parser`, which requires edition2024) — see the folder-picker comment in
   `app/src-tauri/src/store.rs` (lines ~194-198).
 
-Cargo.toml documents the same constraint: the committed `Cargo.lock` is load-bearing
-because cargo 1.78 has no MSRV-aware resolver. Adding `tauri-plugin-updater` risks
-pulling the toolchain floor up the same way, so it is **deferred**, not added.
+**The toolchain floor moved (D2, 2026-08-12):** `app/src-tauri/rust-toolchain.toml`
+pins **1.97.1**, adopted after a throwaway-worktree experiment built the committed
+lockfile `--locked` with all tests green. The edition2024 rejections above are
+historical context — those plugins are viable now, and each gets adopted only when
+its slice needs it (updater at distribution time, single-instance with the D3
+LaunchAgent work, clipboard in slice #7). The committed `Cargo.lock` stays
+load-bearing: it was resolved under cargo 1.78 and still builds unchanged.
 
-To add it later (once the toolchain floor moves):
+To add `tauri-plugin-updater` later:
 
 1. Add the `tauri-plugin-updater` crate (verify it resolves under the pinned toolchain
    first).

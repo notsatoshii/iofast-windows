@@ -230,9 +230,11 @@ fn panel_resize(app: AppHandle, height: f64) {
 /// `arboard` dependency turns on `image-data` by default (feature unification
 /// means we cannot switch it off from here), and that pulls image -> moxcms /
 /// zune-jpeg / getrandom releases requiring edition2024 into the *macOS* graph,
-/// which cargo 1.78 refuses to parse. Pinning arboard and image back just moved
+/// which cargo 1.78 refused to parse. Pinning arboard and image back just moved
 /// the failure one crate along. `pbpaste` is a macOS built-in, and the panel is
-/// a macOS menubar utility; revisit when the toolchain floor moves.
+/// a macOS menubar utility. The toolchain floor moved (rust-toolchain.toml =
+/// 1.97.1, D2 2026-08-12), so a real clipboard crate is now viable — swap in
+/// slice #7 if it earns its place.
 fn clipboard_text() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
