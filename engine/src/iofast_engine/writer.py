@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from urllib.parse import urlparse
 
 from .ledger import report_md
@@ -57,6 +58,23 @@ def envelope(url: str, text: str) -> str:
     return f"--- SOURCE: {url} ---\n{UNTRUSTED_BANNER}\n\n{text}\n"
 
 
+def write_json_atomic(path, data):
+    """Serialize to a temp file in the same dir, then os.replace onto the target.
+
+    manifest.json is the source of truth for update's ETag validators, resume's
+    ledger seed, and the app's auto re-scrape target. A torn write (disk full, a
+    kill mid-dump) silently breaks all three, so it never lands in place.
+    """
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 def write_run(out_dir, ledger, info):
     """report.md + manifest.json for a finished run, whatever produced it. Returns the manifest."""
     from .clean import evaluate
@@ -68,8 +86,7 @@ def write_run(out_dir, ledger, info):
         fh.write(report_md(ledger, info))
     manifest = build_manifest(info, ledger, reconciled)
     manifest["clean"] = evaluate(ledger, out_dir)
-    with open(os.path.join(out_dir, "manifest.json"), "w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2)
+    write_json_atomic(os.path.join(out_dir, "manifest.json"), manifest)
     return manifest
 
 

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Listener, Manager};
 
 use crate::sidecar::SidecarManager;
 
@@ -19,6 +19,10 @@ const DAILY_MS: u64 = 86_400_000;
 const WEEKLY_MS: u64 = 604_800_000;
 /// How often the thread wakes to look for due runs.
 const TICK: Duration = Duration::from_secs(300);
+/// A run that fired but never succeeded stays due (see `stamp_on_success`), so it
+/// retries — but on this floor, not on every 5-minute tick. An offline laptop
+/// must not launch the engine 288 times a day.
+const RETRY_MS: u64 = 3_600_000;
 
 /// Sits beside config.json, same dir. Shape: `{ "<run dir>": {"every","last_ms"} }`.
 fn schedules_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -44,7 +48,24 @@ fn write_schedules(app: &AppHandle, map: &Map<String, Value>) -> Result<(), Stri
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&Value::Object(map.clone())).map_err(|e| e.to_string())?;
-    std::fs::write(path, text).map_err(|e| e.to_string())
+    // Temp-then-rename, same dir so the replace is atomic on one volume: a torn
+    // write here drops every run's Auto setting, and `read_schedules` swallows
+    // the parse error as "no schedules at all".
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+/// Re-reads before writing rather than editing the tick's snapshot — a
+/// `schedule_set` from the UI can land while a scrape runs. An entry the user
+/// cleared meanwhile stays cleared.
+fn stamp(app: &AppHandle, dir: &str, field: &str, ms: u64) {
+    let mut map = read_schedules(app);
+    let Some(entry) = map.get_mut(dir).and_then(Value::as_object_mut) else {
+        return;
+    };
+    entry.insert(field.to_string(), json!(ms));
+    let _ = write_schedules(app, &map);
 }
 
 #[tauri::command]
@@ -68,8 +89,9 @@ pub fn schedule_set(app: AppHandle, dir: String, every: Option<String>) -> Resul
             // Keep the existing last_ms so re-setting the cadence doesn't reset the
             // clock. A BRAND-NEW schedule stamps `now`, NOT 0: the run has fresh
             // data the moment you enable Auto, so the first auto-scrape waits a full
-            // interval. `0` (due-now) would fire an `update` within one tick, and
-            // update deletes any .crawl/checkpoint.pkl — silently killing Resume.
+            // interval. `0` (due-now) would re-scrape fresh data within one tick.
+            // (`update` deletes any .crawl/checkpoint.pkl, which would kill Resume
+            // — `next_due` guards that for every fire, not just this first one.)
             let last_ms = map
                 .get(&dir)
                 .and_then(|v| v.get("last_ms"))
@@ -109,6 +131,67 @@ fn read_target(manifest: &Path) -> Option<(String, Option<String>)> {
     Some((url, scope))
 }
 
+/// The one run this tick should fire, if any. One fire per tick: `fire_scrape`
+/// sets the in-flight flag, so any other due run would only get BUSY.
+/// Pure over the map so the skip rules are testable without an AppHandle.
+fn next_due(map: &Map<String, Value>, now: u64) -> Option<(String, String, Option<String>)> {
+    for (dir, entry) in map.iter() {
+        let every = entry.get("every").and_then(Value::as_str).unwrap_or("");
+        let last_ms = entry.get("last_ms").and_then(Value::as_u64).unwrap_or(0);
+        if !due(now, every, last_ms) {
+            continue;
+        }
+        // Fired recently without succeeding: back off instead of retrying every tick.
+        let attempt_ms = entry.get("last_attempt_ms").and_then(Value::as_u64).unwrap_or(0);
+        if attempt_ms > 0 && now.saturating_sub(attempt_ms) < RETRY_MS {
+            continue;
+        }
+        // Paused mid-crawl. `update` deletes .crawl/checkpoint.pkl (spider.py clears
+        // a stale one on any non-resume start), so firing here would destroy the
+        // frontier and make the Resume button vanish. Skip WITHOUT stamping: the run
+        // stays due and fires once the user resumes or finishes it.
+        if dir_is_paused(dir) {
+            continue;
+        }
+        // A run the user deleted: skip it, leave the (harmless) stale entry.
+        let manifest = Path::new(dir).join("manifest.json");
+        let Some((url, scope)) = manifest.is_file().then(|| read_target(&manifest)).flatten() else {
+            continue;
+        };
+        return Some((dir.clone(), url, scope));
+    }
+    None
+}
+
+/// Same predicate as the library row's `resumable` flag (store::read_run).
+fn dir_is_paused(dir: &str) -> bool {
+    Path::new(dir).join(".crawl/checkpoint.pkl").is_file()
+}
+
+/// `fire_scrape` returns Ok as soon as the JSON-RPC line is written, so its Ok
+/// says nothing about the run. Stamp `last_ms` only on the `scrape-done` that
+/// carries a real result — otherwise a failed weekly run (offline, 403, sidecar
+/// died) waits another full week while the UI calls the docs fresh.
+fn stamp_on_success(app: &AppHandle, rid: u64, dir: String) {
+    let handle = app.clone();
+    app.once("scrape-done", move |event| {
+        let payload: Value = serde_json::from_str(event.payload()).unwrap_or(Value::Null);
+        if payload.get("rid").and_then(Value::as_u64) == Some(rid) && succeeded(&payload) {
+            stamp(&handle, &dir, "last_ms", now_ms());
+        }
+    });
+}
+
+/// The windows' own success test (App.tsx `scrape-done`): a result arrived, the
+/// user did not Stop it, and the engine exited clean.
+fn succeeded(payload: &Value) -> bool {
+    let Some(result) = payload.get("result") else {
+        return false;
+    };
+    result.get("cancelled").and_then(Value::as_bool) != Some(true)
+        && result.get("exit_code").and_then(Value::as_i64) == Some(0)
+}
+
 pub fn spawn_scheduler(app: AppHandle, sc: SidecarManager) {
     std::thread::spawn(move || loop {
         std::thread::sleep(TICK);
@@ -117,28 +200,15 @@ pub fn spawn_scheduler(app: AppHandle, sc: SidecarManager) {
         if crate::scrape_in_flight() {
             continue;
         }
-        let map = read_schedules(&app);
         let now = now_ms();
-        for (dir, entry) in map.iter() {
-            let every = entry.get("every").and_then(Value::as_str).unwrap_or("");
-            let last_ms = entry.get("last_ms").and_then(Value::as_u64).unwrap_or(0);
-            if !due(now, every, last_ms) {
-                continue;
-            }
-            // A run the user deleted: skip it, leave the (harmless) stale entry.
-            let manifest = Path::new(dir).join("manifest.json");
-            let Some((url, scope)) = manifest.is_file().then(|| read_target(&manifest)).flatten()
-            else {
-                continue;
-            };
-            if crate::fire_scrape(&app, &sc, &url, dir, scope.as_deref(), None, None, true, false).is_ok() {
-                let mut next = map.clone();
-                next.insert(dir.clone(), json!({ "every": every, "last_ms": now }));
-                let _ = write_schedules(&app, &next);
-            }
-            // One fire per tick: fire_scrape just set the in-flight flag, so any
-            // other due run would only get BUSY. Next tick catches it.
-            break;
+        let Some((dir, url, scope)) = next_due(&read_schedules(&app), now) else {
+            continue;
+        };
+        if let Ok(rid) =
+            crate::fire_scrape(&app, &sc, &url, &dir, scope.as_deref(), None, None, true, false)
+        {
+            stamp(&app, &dir, "last_attempt_ms", now);
+            stamp_on_success(&app, rid, dir);
         }
     });
 }
@@ -163,5 +233,73 @@ mod tests {
         assert!(due(now, "daily", 0));
         // Unknown cadence never fires.
         assert!(!due(now, "monthly", 0));
+    }
+
+    const NOW: u64 = 1_700_000_000_000;
+
+    /// No tempdir crate in this crate's deps; a pid+tag dir is enough for a unit test.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("iofast-sched-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"info":{"start url":"https://x.com/docs","scope":"/docs"}}"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    fn one_due_run(dir: &Path, extra: Value) -> (String, Map<String, Value>) {
+        let key = dir.to_string_lossy().into_owned();
+        let mut entry = json!({ "every": "daily", "last_ms": NOW - DAILY_MS });
+        for (k, v) in extra.as_object().unwrap() {
+            entry[k] = v.clone();
+        }
+        let mut map = Map::new();
+        map.insert(key.clone(), entry);
+        (key, map)
+    }
+
+    #[test]
+    fn a_paused_run_is_never_auto_updated() {
+        let dir = scratch("paused");
+        let (key, map) = one_due_run(&dir, json!({}));
+        std::fs::create_dir_all(dir.join(".crawl")).unwrap();
+        std::fs::write(dir.join(".crawl/checkpoint.pkl"), b"frontier").unwrap();
+
+        // Due, but resumable: firing an `update` would delete the checkpoint.
+        assert!(next_due(&map, NOW).is_none());
+        // And it must stay due — no stamp — so it fires once the user resumes/finishes.
+        assert_eq!(map[&key]["last_ms"], json!(NOW - DAILY_MS));
+        assert!(map[&key].get("last_attempt_ms").is_none());
+
+        // Same run, checkpoint gone: fires, with the manifest's own target.
+        std::fs::remove_file(dir.join(".crawl/checkpoint.pkl")).unwrap();
+        let (fired, url, scope) = next_due(&map, NOW).expect("a due run with no checkpoint fires");
+        assert_eq!(fired, key);
+        assert_eq!(url, "https://x.com/docs");
+        assert_eq!(scope.as_deref(), Some("/docs"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_run_retries_but_not_every_tick() {
+        let dir = scratch("retry");
+        // Attempted, never stamped last_ms: the run failed, so it is still due.
+        let (_, map) = one_due_run(&dir, json!({ "last_attempt_ms": NOW - RETRY_MS + 1 }));
+        assert!(next_due(&map, NOW).is_none(), "retried inside the backoff floor");
+        assert!(next_due(&map, NOW + RETRY_MS).is_some(), "never retried at all");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_clean_scrape_done_counts_as_success() {
+        assert!(succeeded(&json!({ "rid": 1, "result": { "exit_code": 0, "written": 12 } })));
+        // Sidecar died / RPC error: no result at all.
+        assert!(!succeeded(&json!({ "rid": 1, "error": "sidecar exited before replying" })));
+        // User pressed Stop: pages kept, but the docs are not fresh.
+        assert!(!succeeded(&json!({ "rid": 1, "result": { "exit_code": 0, "cancelled": true } })));
+        assert!(!succeeded(&json!({ "rid": 1, "result": { "exit_code": 3, "written": 0 } })));
     }
 }
