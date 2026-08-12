@@ -19,6 +19,10 @@ Drives the REAL frozen binary over stdio:
 8. push                  -> streamed digest from a local OpenRouter stand-in
    (via the IOFAST_OPENROUTER_URL test seam), Authorization header carries
    the request-scoped key.
+9. update overwrite guard -> one chain page mutates into a consent/soft-block
+   page (200, no CF markers, clears the thin band) and one into an honest
+   trim. The guard must refuse the first (old file kept byte-identical,
+   outcome suspect_shrink, exit 1) and write the second.
 Every stdout line must parse as JSON: any dependency print() that leaked onto
 fd 1 fails the run (the RPC server redirects fd 1 to stderr — proven here).
 """
@@ -26,6 +30,7 @@ fd 1 fails the run (the RPC server redirects fd 1 to stderr — proven here).
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -85,6 +90,32 @@ def chain_page(index):
 
 CHAIN = {path: chain_page(i) for i, path in enumerate(chain_paths())}
 
+MUTATED_LAST_MODIFIED = "Thu, 01 Jan 2026 00:00:00 GMT"
+
+# A soft-block/consent page: 200, no Cloudflare markers, extracts past the
+# thin band (>= 250 chars) — everything upstream of the overwrite guard lets
+# it through. The reason string of the suspect row proves the measured size.
+SOFT_BLOCK_PAGE = """<!doctype html><html><head><title>One more step</title></head><body>
+<main><h1>Before you continue</h1>
+<p>We value your privacy and your reading experience. Please review our terms
+of service and confirm your consent preferences before you continue to the
+requested documentation page. Click accept to proceed with all cookies
+enabled, or open the preference manager to make a granular choice.</p>
+</main></body></html>"""
+
+# An honest editorial trim of a chain page: shorter than the recorded page but
+# well above half of it — the guard must let this overwrite happen.
+HONEST_TRIM_PAGE = """<!doctype html><html><head><title>{title}</title></head><body>
+<nav>{next_link}</nav>
+<main><h1>{title}</h1>
+<p>This chain fixture page was legitimately rewritten shorter in the second
+revision: the prose now spans two paragraphs instead of three, which is an
+honest editorial trim that any real documentation site performs routinely.</p>
+<p>The remaining paragraph keeps the character count above the thin-page
+escalation band so the static tier still writes it, while landing well above
+half of the recorded size — the overwrite guard must let this through.</p>
+</main></body></html>"""
+
 # Two SSE deltas + [DONE]: the shape push.py streams from OpenRouter.
 SSE_BODY = (
     'data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n'
@@ -108,6 +139,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if key in CHAIN:
             # The engine normalizes trailing slashes; serve both spellings.
             time.sleep(self.server.delay)
+            mutated = self.server.mutated.get(key)
+            if mutated is not None:
+                # Changed content: conditionals no longer match, answer 200.
+                self._send(200, mutated, "text/html", last_modified=MUTATED_LAST_MODIFIED)
+                return
             if self.headers.get("If-Modified-Since"):
                 self.send_response(304)
                 self.end_headers()
@@ -170,6 +206,7 @@ def main(binary):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.delay = 0.0
     server.push_auth_headers = []
+    server.mutated = {}
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     out_docs = tempfile.mkdtemp(prefix="iofast-frozen-docs-")
@@ -376,6 +413,81 @@ def main(binary):
         "push sent the request-scoped key in the Authorization header",
     )
 
+    # --- 9: update overwrite guard. One page mutates into a consent/soft-block
+    # page (refused: old file kept, suspect_shrink, exit 1) and one into an
+    # honest trim (written normally). Fixture preconditions are asserted from
+    # the run's own measured numbers, not remembered constants. ---
+    suspect_url, trim_url = f"{base}/chain/p3", f"{base}/chain/p5"
+    server.mutated["/chain/p3"] = SOFT_BLOCK_PAGE
+    server.mutated["/chain/p5"] = HONEST_TRIM_PAGE.format(
+        title="Chain 5", next_link=f'<a href="{chain_paths()[6]}">Next</a>'
+    )
+    prev_rows = {p["url"]: p for p in updated_pages if p.get("file")}
+    before_guard = file_stats(out_chain)
+    send(
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "scrape",
+            "params": {"url": f"{base}/chain/", "out": out_chain, "update": True},
+        }
+    )
+    r10 = reply(10)
+    guarded = (r10 or {}).get("result", {})
+    expect(
+        guarded.get("exit_code") == 1,
+        f"guard run exits 1 (suspect page counts as failure; got {guarded.get('exit_code')})",
+    )
+    expect(
+        guarded.get("written") == 1,
+        f"guard run wrote only the honest trim (written {guarded.get('written')})",
+    )
+    rows = {p["url"]: p for p in guarded.get("manifest", {}).get("pages", [])}
+    suspect = rows.get(suspect_url, {})
+    prev_suspect = prev_rows.get(suspect_url, {})
+    expect(
+        suspect.get("outcome") == "suspect_shrink",
+        f"consent shrink refused as suspect_shrink (got {suspect.get('outcome')!r})",
+    )
+    expect(
+        suspect.get("file") == prev_suspect.get("file")
+        and suspect.get("chars") == prev_suspect.get("chars"),
+        "suspect row keeps the previous file and recorded chars",
+    )
+    new_chars = re.search(r"new content (\d+) chars", suspect.get("reason", ""))
+    prev_chars = prev_suspect.get("chars") or 0
+    expect(
+        new_chars is not None
+        and 250 <= int(new_chars.group(1)) < prev_chars * 0.45,
+        f"fixture precondition: consent page clears the thin band and sits well "
+        f"inside the refuse band (reason {suspect.get('reason')!r} vs {prev_chars})",
+    )
+    trim = rows.get(trim_url, {})
+    prev_trim_chars = (prev_rows.get(trim_url, {}).get("chars")) or 0
+    expect(
+        trim.get("outcome") == "ok"
+        and prev_trim_chars * 0.55 < (trim.get("chars") or 0) < prev_trim_chars,
+        f"fixture precondition + pass: honest trim rewrote the page "
+        f"({trim.get('chars')} of {prev_trim_chars} chars, outcome {trim.get('outcome')!r})",
+    )
+    after_guard = file_stats(out_chain)
+    suspect_file = prev_suspect.get("file", "")
+    expect(
+        before_guard.get(suspect_file) == after_guard.get(suspect_file),
+        "guard kept the suspect page's file (bytes and mtime identical)",
+    )
+    trim_file = trim.get("file", "")
+    expect(
+        trim_file
+        and before_guard.get(trim_file) != after_guard.get(trim_file)
+        and b"honest editorial trim" in (after_guard.get(trim_file) or (b"", 0))[0],
+        "honest trim landed on disk",
+    )
+    expect(
+        len([p for p in rows.values() if p.get("status") == 304]) == CHAIN_LEN - 2,
+        "guard run: every untouched page still answered 304",
+    )
+
     proc.stdin.close()  # EOF -> clean shutdown
     proc.wait(timeout=30)
     stderr_text = proc.stderr.read()
@@ -387,7 +499,7 @@ def main(binary):
         sys.exit(1)
     print(
         "\nfrozen sidecar verified: stdio protocol, static fetch, "
-        "cancel/resume/update lifecycle and push intact"
+        "cancel/resume/update lifecycle, overwrite guard and push intact"
     )
 
 

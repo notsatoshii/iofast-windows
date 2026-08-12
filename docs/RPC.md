@@ -73,6 +73,14 @@ sites that block by IP. Absent = no proxy, byte-identical to before.
 additive schema-1 page fields), the static tier sends If-None-Match /
 If-Modified-Since, and a 304 keeps the existing file, recorded `ok` with
 reason "not modified (304)" — never a blind full re-crawl.
+Update runs also carry an **overwrite guard**: when a page answers 200 but the
+new content is under half of the manifest's recorded `chars` for that page
+(the shape of a soft-block/consent page, which can clear the thin band with no
+Cloudflare markers), the old file is kept untouched and the page is recorded
+with the additive outcome `suspect_shrink` (a failure class — the run exits 1
+and the page appears in `report.md`'s failures table). The suspect row keeps
+the OLD validators, so the next update re-fetches and re-judges instead of
+304-ing on suspect content.
 `resume: true` replays a paused crawl's checkpoint frontier (see `cancel`):
 it requires an existing `<out>/.crawl/checkpoint.pkl` (else `-32602`) and is
 mutually exclusive with `update` (both set is `-32602`). The checkpoint carries

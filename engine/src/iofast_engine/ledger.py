@@ -1,6 +1,10 @@
 """Outcome ledger: every enqueued URL ends in exactly one outcome class."""
 
 # "cancelled" is additive (schema 1 stays): user stopped the run, NOT a failure.
+# "suspect_shrink" is additive too: an update run refused to overwrite a page
+# whose new content shrank drastically vs the recorded chars (soft-block/consent
+# pages answer 200 and clear the thin band). The previous file stays the truth;
+# the class counts as a failure so an unattended run exits 1 and gets reviewed.
 OUTCOMES = (
     "ok",
     "thin_escalated_ok",
@@ -8,8 +12,9 @@ OUTCOMES = (
     "failed_fetch",
     "failed_exception",
     "cancelled",
+    "suspect_shrink",
 )
-FAILURE_OUTCOMES = ("skipped_no_content", "failed_fetch", "failed_exception")
+FAILURE_OUTCOMES = ("skipped_no_content", "failed_fetch", "failed_exception", "suspect_shrink")
 
 
 class Ledger:

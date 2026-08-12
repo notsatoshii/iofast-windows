@@ -14,7 +14,11 @@ import threading
 
 import pytest
 
+from iofast_engine.extract import CONTENT_SELECTORS, page_content
+from iofast_engine.ledger import FAILURE_OUTCOMES, OUTCOMES
 from iofast_engine.runner import run_scrape
+from iofast_engine.spider import UPDATE_SHRINK_RATIO
+from iofast_engine.tiers import THIN_CHARS
 
 PAGE = """<!doctype html><html><head><title>{title}</title></head><body>
 <main><h1>{title}</h1>
@@ -150,6 +154,100 @@ def test_update_304_keeps_files_and_validators_round_trip(tmp_path):
         guide = next(r for u, r in rows3.items() if u.endswith("/docs/guide"))
         assert guide["etag"] == '"guide-v2"'
         assert guide["reason"] != "not modified (304)"
+    finally:
+        site.stop()
+
+
+# A soft-block/consent page: answers 200, no Cloudflare markers, and extracts
+# past THIN_CHARS — so nothing upstream of the overwrite guard rejects it.
+SOFT_BLOCK = """<!doctype html><html><head><title>One more step</title></head><body>
+<main><h1>Before you continue</h1>
+<p>We value your privacy and your reading experience. Please review our terms
+of service and confirm your consent preferences before you continue to the
+requested documentation page. Click accept to proceed with all cookies
+enabled, or open the preference manager to make a granular choice. Your
+selection is stored for one year and can be changed at any time.</p>
+</main></body></html>"""
+
+
+def _extracted(html, url):
+    return len(page_content(html, url, CONTENT_SELECTORS)[0])
+
+
+def test_suspect_shrink_outcome_is_a_failure_class():
+    assert "suspect_shrink" in OUTCOMES
+    assert "suspect_shrink" in FAILURE_OUTCOMES  # exit 1 flags the unattended run
+
+
+@pytest.mark.integration
+def test_update_refuses_drastic_shrink_keeps_file(tmp_path):
+    """MUST-REFUSE: a consent page replacing a real doc page on an update run
+    is not written; the previous file, chars, and validators stay the truth."""
+    site = Site()
+    big = PAGE.format(title="Guide", body="guide v1 content " * 100)
+    site.bodies["/docs/guide"] = big
+    # Fixture preconditions: the shrink must genuinely clear every upstream
+    # filter (thin band) AND sit well inside the refuse band, else this test
+    # passes for the wrong reason.
+    prev_chars = _extracted(big, "http://x/docs/guide")
+    soft_chars = _extracted(SOFT_BLOCK, "http://x/docs/guide")
+    assert soft_chars >= THIN_CHARS, "fixture bug: soft block would be thin-escalated"
+    assert soft_chars < prev_chars * (UPDATE_SHRINK_RATIO - 0.05), "fixture bug: shrink too mild"
+    try:
+        first = scrape(site, tmp_path)
+        assert first["exit_code"] == 0, first["manifest"]["counts"]
+        rows = {r["url"]: r for r in first["manifest"]["pages"]}
+        guide_url = next(u for u in rows if u.endswith("/docs/guide"))
+        assert rows[guide_url]["chars"] == prev_chars
+        guide_file = rows[guide_url]["file"]
+        path = tmp_path / guide_file
+        bytes_before = path.read_bytes()
+
+        site.bodies["/docs/guide"] = SOFT_BLOCK
+        site.etags["/docs/guide"] = '"soft-block"'
+        second = scrape(site, tmp_path, update=True)
+        assert second["exit_code"] == 1  # suspect page = completed with failures
+        pages = {r["url"]: r for r in second["manifest"]["pages"]}
+        guide = pages[guide_url]
+        assert guide["outcome"] == "suspect_shrink"
+        assert guide["file"] == guide_file
+        assert guide["chars"] == prev_chars  # the file on disk is still the old one
+        assert "kept previous file" in guide["reason"]
+        assert path.read_bytes() == bytes_before, "guard must not touch the file"
+        # Old validators survive so the NEXT update re-fetches and re-judges.
+        assert guide["etag"] == '"guide-v1"'
+        # The unchanged page still 304s — the guard is per-page, not per-run.
+        home = next(r for u, r in pages.items() if u.endswith("/docs"))
+        assert home["reason"] == "not modified (304)"
+    finally:
+        site.stop()
+
+
+@pytest.mark.integration
+def test_update_allows_honest_plausible_shrink(tmp_path):
+    """MUST-PASS: an honest editorial trim (above the ratio) overwrites normally."""
+    site = Site()
+    big = PAGE.format(title="Guide", body="guide v1 content " * 100)
+    honest = PAGE.format(title="Guide", body="guide v2 rewritten shorter " * 45)
+    site.bodies["/docs/guide"] = big
+    prev_chars = _extracted(big, "http://x/docs/guide")
+    honest_chars = _extracted(honest, "http://x/docs/guide")
+    assert honest_chars < prev_chars, "fixture bug: not a shrink at all"
+    assert honest_chars > prev_chars * (UPDATE_SHRINK_RATIO + 0.05), "fixture bug: trim too deep"
+    try:
+        first = scrape(site, tmp_path)
+        assert first["exit_code"] == 0, first["manifest"]["counts"]
+        site.bodies["/docs/guide"] = honest
+        site.etags["/docs/guide"] = '"guide-v2"'
+        second = scrape(site, tmp_path, update=True)
+        assert second["exit_code"] == 0
+        pages = {r["url"]: r for r in second["manifest"]["pages"]}
+        guide = next(r for u, r in pages.items() if u.endswith("/docs/guide"))
+        assert guide["outcome"] == "ok"
+        assert guide["chars"] == honest_chars
+        assert guide["etag"] == '"guide-v2"'
+        body = (tmp_path / guide["file"]).read_text(encoding="utf-8")
+        assert "guide v2 rewritten shorter" in body
     finally:
         site.stop()
 

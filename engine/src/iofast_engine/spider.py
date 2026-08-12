@@ -33,6 +33,15 @@ from .urls import (
 )
 from .writer import Writer, write_run
 
+# Overwrite guard for unattended update runs: refuse to replace a page when the
+# new content is under this fraction of the ledger's recorded chars. A soft-block
+# or consent page answers 200 with no Cloudflare markers and >= THIN_CHARS
+# extracted (measured 2026-08-12: consent fixture extracts 357 chars; real
+# fixture pages 731-1922, so a consent page lands at 0.19-0.49 of them — 0.3
+# would let the 731-char case through). A refused page keeps its old file and is
+# recorded "suspect_shrink"; a false positive costs one flagged, reviewable page.
+UPDATE_SHRINK_RATIO = 0.5
+
 
 class DocSpider(Spider):
     name = "iofast_docs"
@@ -605,6 +614,43 @@ class DocSpider(Spider):
         self.validators[url] = validators
 
     def _write(self, url, text, tier="static", how="", escalated=False, status=None):
+        # Update overwrite guard: on a re-scrape, a drastic char-shrink vs the
+        # previous manifest keeps the old file and records the page as suspect.
+        # The OLD validators are recorded (not this response's), so the next
+        # update re-fetches and re-judges instead of 304-ing on suspect content.
+        prev = self.previous.get(url) if not self.resume else None
+        if (
+            prev
+            and prev.get("file")
+            and prev.get("chars", 0) > 0
+            and len(text) < prev["chars"] * UPDATE_SHRINK_RATIO
+        ):
+            self.ledger.record(
+                url,
+                "suspect_shrink",
+                f"kept previous file: new content {len(text)} chars "
+                f"vs {prev['chars']} recorded",
+                tier=tier,
+                chars=prev["chars"],
+                file=prev["file"],
+                status=status,
+                escalated=escalated,
+                elapsed_ms=self._elapsed(url),
+                etag=prev.get("etag"),
+                last_modified=prev.get("last_modified"),
+            )
+            self.writer.names[prev["file"].removesuffix(".md")] = url
+            self.emit(
+                {
+                    "type": "warning",
+                    "url": url,
+                    "message": (
+                        f"🛑 suspect shrink ({len(text)} vs {prev['chars']} chars) "
+                        f"— kept {prev['file']}"
+                    ),
+                }
+            )
+            return
         # Outcome comes from whether this page needed an escalation — never from the tier.
         etag, last_modified = (self.validators or {}).get(url, (None, None))
         self.writer.write(
