@@ -174,6 +174,26 @@ async fn sidecar_push(
     sc.request(&app, "push", params).await
 }
 
+/// docs/RPC.md `browser_status`: out-of-band component state, answered fast.
+#[tauri::command]
+async fn sidecar_browser_status(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    sc.request(&app, "browser_status", json!({})).await
+}
+
+/// docs/RPC.md `install_browsers`: minutes-long (~770MB). Progress arrives as
+/// `browser_install` engine-events; awaiting the reply here is fine — the
+/// invoke promise resolves when the install finishes (same shape as `push`).
+#[tauri::command]
+async fn sidecar_install_browsers(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    sc.request(&app, "install_browsers", json!({})).await
+}
+
 #[tauri::command]
 async fn sidecar_cancel(
     app: AppHandle,
@@ -324,6 +344,8 @@ fn main() {
             sidecar_scrape_start,
             sidecar_push,
             sidecar_cancel,
+            sidecar_browser_status,
+            sidecar_install_browsers,
             open_path,
             panel_hide,
             panel_resize,

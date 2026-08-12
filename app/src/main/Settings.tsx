@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-import { reason, type Config } from "../lib";
+import { reason, type BrowserStatus, type Config } from "../lib";
 
 /** docs/RPC.md `scrape.env` allowlist — the secrets the app holds. */
 const RESCUE_KEYS = [
@@ -39,13 +40,41 @@ export default function Settings({
   const [stored, setStored] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [browsers, setBrowsers] = useState<BrowserStatus | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installMsg, setInstallMsg] = useState("");
 
   const readKeys = () =>
     invoke<Record<string, boolean>>("keychain_status").then(setStored).catch(() => undefined);
 
   useEffect(() => {
     void readKeys();
+    void invoke<BrowserStatus>("sidecar_browser_status").then(setBrowsers).catch(() => undefined);
+    // Install progress rides the shared engine-event stream (docs/RPC.md).
+    const events = listen<{ type: string; message?: string }>("engine-event", (e) => {
+      if (e.payload.type === "browser_install" && e.payload.message) {
+        setInstallMsg(e.payload.message);
+      }
+    });
+    return () => {
+      void events.then((un) => un());
+    };
   }, []);
+
+  const installBrowsers = async () => {
+    setConfirming(false);
+    setInstalling(true);
+    setError("");
+    try {
+      setBrowsers(await invoke<BrowserStatus>("sidecar_install_browsers"));
+    } catch (e) {
+      setError(reason(e));
+    } finally {
+      setInstalling(false);
+      setInstallMsg("");
+    }
+  };
 
   const write = async (next: Config) => {
     try {
@@ -182,6 +211,49 @@ export default function Settings({
           <kbd className="key">⌘</kbd>
           <kbd className="key">⇧</kbd>
           <kbd className="key">K</kbd>
+        </div>
+      </div>
+
+      <h2>Browser tiers</h2>
+      <div className="set">
+        <div className="set-label">
+          Browser components
+          <span className="set-hint">
+            Enable the dynamic and stealth tiers for JavaScript-heavy and bot-guarded sites.
+            Until installed, every scrape runs static-only.
+          </span>
+        </div>
+        <div className="set-control">
+          {browsers === null ? (
+            <span className="set-hint">…</span>
+          ) : installing ? (
+            <span className="set-hint" aria-live="polite">
+              {installMsg || "installing…"}
+            </span>
+          ) : browsers.installed ? (
+            <span className="saved">Installed</span>
+          ) : confirming ? (
+            <>
+              <span className="set-hint">
+                Downloads ~770&nbsp;MB (pinned drivers + Chromium) into app support.
+              </span>
+              <button type="button" className="btn" onClick={() => void installBrowsers()}>
+                Download
+              </button>
+              <button type="button" className="btn" onClick={() => setConfirming(false)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="set-hint">
+                {browsers.drivers ? "Drivers only — Chromium missing" : "Not installed"}
+              </span>
+              <button type="button" className="btn" onClick={() => setConfirming(true)}>
+                Install…
+              </button>
+            </>
+          )}
         </div>
       </div>
 

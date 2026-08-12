@@ -23,6 +23,14 @@ export type Run = {
 /** One row of schedules.json (schedule_get): the run's auto re-scrape cadence. */
 export type Schedule = { every: "daily" | "weekly"; last_ms: number };
 
+/** docs/RPC.md `browser_status`: out-of-band browser-component state. */
+export type BrowserStatus = {
+  installed: boolean;
+  drivers: boolean;
+  chromium: boolean;
+  path: string;
+};
+
 export const reason = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Used until `config_get` lands, and by the panel if settings were never opened. */
