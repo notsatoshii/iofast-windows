@@ -36,13 +36,16 @@ def browsers_available() -> bool:
 
     Ask Playwright for the executable path it would use: a cache holding some other
     chromium revision is a false positive (`python -m playwright install chromium` fixes it).
+    Frozen builds strip the node driver; components download out-of-band into app
+    support (browsers.py) — until they exist, answer False without spawning anything.
     """
     import sys
 
-    if getattr(sys, "frozen", False):
-        # Frozen sidecar ships static-only; don't spawn Playwright's node driver
-        # just to learn that. Flips when the dynamic-tier download lands (Phase 2+).
+    from . import browsers as components
+
+    if getattr(sys, "frozen", False) and not components.drivers_installed():
         return False
+    components.activate()
     try:
         from playwright.sync_api import sync_playwright
 

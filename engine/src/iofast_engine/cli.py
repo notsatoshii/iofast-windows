@@ -63,12 +63,40 @@ def main(argv=None):
 
     sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
 
+    browsers_p = sub.add_parser(
+        "browsers", help="out-of-band browser components (SHA-256-pinned download)"
+    )
+    browsers_p.add_argument("action", choices=("status", "install"))
+    browsers_p.add_argument("--json", action="store_true", help="result as JSON on stdout")
+
     args = ap.parse_args(argv)
 
     if args.command == "rpc":
         from .rpc import serve_stdio
 
         return serve_stdio()
+
+    if args.command == "browsers":
+        from . import browsers
+        from .browsers import default_storage_env
+
+        default_storage_env()
+        if args.action == "install":
+            try:
+                result = browsers.install(emit=human_emit)
+            except (browsers.IntegrityError, RuntimeError, OSError) as error:
+                print(f"install failed: {error}", file=sys.stderr)
+                return 1
+        else:
+            result = browsers.status()
+        if args.json:
+            print(json.dumps(result), flush=True)
+        else:
+            state = "installed" if result["installed"] else (
+                "drivers only — chromium missing" if result["drivers"] else "not installed"
+            )
+            print(f"browser components: {state} ({result['path']})", file=sys.stderr)
+        return 0 if result["installed"] else 1
 
     # Argument validation happens before any network call.
     error = validate(args.url, args.scope)

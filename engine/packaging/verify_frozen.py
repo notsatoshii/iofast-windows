@@ -23,6 +23,9 @@ Drives the REAL frozen binary over stdio:
    page (200, no CF markers, clears the thin band) and one into an honest
    trim. The guard must refuse the first (old file kept byte-identical,
    outcome suspect_shrink, exit 1) and write the second.
+10. browser components -> with a fresh (empty) support dir, browser_status
+   reports nothing installed and the scrape above warned "static tier only":
+   the frozen fast-path answers False without spawning any driver.
 Every stdout line must parse as JSON: any dependency print() that leaked onto
 fd 1 fails the run (the RPC server redirects fd 1 to stderr — proven here).
 """
@@ -211,6 +214,7 @@ def main(binary):
     base = f"http://127.0.0.1:{server.server_address[1]}"
     out_docs = tempfile.mkdtemp(prefix="iofast-frozen-docs-")
     out_chain = tempfile.mkdtemp(prefix="iofast-frozen-chain-")
+    support = tempfile.mkdtemp(prefix="iofast-frozen-support-")
 
     # stdin must stay OPEN until the last response: EOF is the shutdown signal
     # (parent gone -> sink silenced), so closing early swallows in-flight replies.
@@ -220,7 +224,11 @@ def main(binary):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={**os.environ, "IOFAST_OPENROUTER_URL": f"{base}/api/chat"},
+        env={
+            **os.environ,
+            "IOFAST_OPENROUTER_URL": f"{base}/api/chat",
+            "IOFAST_SUPPORT_DIR": support,
+        },
     )
     failures = []
     messages = []
@@ -488,6 +496,29 @@ def main(binary):
         "guard run: every untouched page still answered 304",
     )
 
+    # --- 10: browser components absent -> honest status, no driver spawn. ---
+    send({"jsonrpc": "2.0", "id": 11, "method": "browser_status"})
+    r11 = reply(11)
+    components = (r11 or {}).get("result", {})
+    expect(
+        components.get("installed") is False and components.get("drivers") is False,
+        f"browser_status: fresh support dir reports nothing installed (got {components})",
+    )
+    expect(
+        components.get("path") == support,
+        "browser_status: components rooted in IOFAST_SUPPORT_DIR",
+    )
+    expect(
+        any(
+            m.get("method") == "event"
+            and m["params"].get("rid") == 4
+            and m["params"].get("type") == "warning"
+            and "static tier only" in (m["params"].get("message") or "")
+            for m in messages
+        ),
+        "frozen scrape warned 'static tier only' (fast-path stayed False)",
+    )
+
     proc.stdin.close()  # EOF -> clean shutdown
     proc.wait(timeout=30)
     stderr_text = proc.stderr.read()
@@ -499,7 +530,8 @@ def main(binary):
         sys.exit(1)
     print(
         "\nfrozen sidecar verified: stdio protocol, static fetch, "
-        "cancel/resume/update lifecycle, overwrite guard and push intact"
+        "cancel/resume/update lifecycle, overwrite guard, browser-component "
+        "status and push intact"
     )
 
 

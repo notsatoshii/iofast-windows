@@ -84,6 +84,7 @@ Browsers are downloaded on first use of the dynamic tier. They are NEVER bundled
 - First-use download keeps browsers outside the code signature. This makes notarization tractable.
 - Set `PLAYWRIGHT_BROWSERS_PATH` and the scrapling storage paths to an app-support dir explicitly.
 - **Size budget.** The sidecar ships small (static tier only). The dynamic tier prompts a one-time ~550MB download with visible progress and explicit consent.
+- **SHIPPED (engine side).** `iofast_engine/browsers.py`: the node drivers arrive as SHA-256-pinned PyPI wheels (`browser_pins.py`, refuse-on-mismatch, atomic extract into app support), each driver then installs its own chromium into `PLAYWRIGHT_BROWSERS_PATH`. Surface: `browser_status` / `install_browsers` RPC methods (docs/RPC.md) + `iofast browsers status|install` CLI. App-side consent/progress UI rides the UI slice.
 
 ### API-key handoff (LOCKED)
 

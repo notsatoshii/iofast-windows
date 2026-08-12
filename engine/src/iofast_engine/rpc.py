@@ -11,6 +11,7 @@ import sys
 import threading
 
 from . import __version__
+from .browsers import default_storage_env
 from .estimate import run_estimate
 from .manifest import SCHEMA
 from .push import run_push
@@ -282,6 +283,31 @@ class RpcServer:
         except Exception as error:
             self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
 
+    def handle_browser_status(self, rid, params):
+        from . import browsers
+
+        self.respond(rid, browsers.status())
+
+    def handle_install_browsers(self, rid, params):
+        with self.state:
+            thread = self.threads.get("browsers")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "browser install already running")
+            thread = threading.Thread(
+                target=self._install_browsers_thread, args=(rid,), daemon=True
+            )
+            self.threads["browsers"] = thread
+            thread.start()
+
+    def _install_browsers_thread(self, rid):
+        from . import browsers
+
+        try:
+            result = browsers.install(emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
     def handle_cancel(self, rid, params):
         want = params.get("rid")
         if not (want is None or _is_int(want)):
@@ -320,22 +346,9 @@ class RpcServer:
         self._exit(0)
 
 
-def _default_storage_env():
-    """Browsers and caches live under app support — the frozen bundle dir is
-    read-only in a signed .app. Explicit spawn-time env still wins (setdefault)."""
-    if sys.platform == "darwin":
-        support = os.path.expanduser("~/Library/Application Support/iofast")
-    else:
-        support = os.path.join(
-            os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.local/share"), "iofast"
-        )
-    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(support, "browsers"))
-    os.environ.setdefault("IOFAST_CACHE_DIR", os.path.join(support, "cache"))
-
-
 def serve_stdio():
     """Entry point for `iofast rpc`: harden stdout, then serve until EOF."""
-    _default_storage_env()
+    default_storage_env()
     # Dup the real stdout for protocol lines, then point fd 1 at stderr so a
     # dependency that print()s can never corrupt the protocol stream.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8")
