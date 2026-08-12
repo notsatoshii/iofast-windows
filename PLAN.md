@@ -123,10 +123,10 @@ First-run chooser; remembered; changeable in settings (locked decision).
 
 ## Phase 4 — hardening + distribution
 
-- CAPTCHA handoff: on unsolvable challenge, open visible browser window, user solves once, session continues.
-- Pause/resume long crawls (Scrapling checkpoints), scheduled re-scrapes ("keep React docs fresh weekly").
-- Signing/notarization + auto-update when distribution flips on (deferred by decision; structure — config file, CI matrix builds — ready from Phase 2).
-- Generate `THIRD-PARTY-NOTICES.md` from the lockfile (scrapling BSD-3, playwright Apache-2.0, patchright, curl_cffi, lxml, browserforge, Chromium) and show it in the about panel.
+- CAPTCHA handoff: on unsolvable challenge, open visible browser window, user solves once, session continues. **DEFERRED** — sits on the dynamic/stealth browser tier, which is hard-disabled in every frozen build (`browsers_available()` returns False when `sys.frozen`) and has no on-demand chromium download flow yet. Gated behind building that download first (a Phase 2 structural residual); tracked for the next slice.
+- Pause/resume long crawls (Scrapling checkpoints), scheduled re-scrapes ("keep React docs fresh weekly"). **SHIPPED.** `scrape` gained `resume: bool` — Stop already pauses+checkpoints (`<out>/.crawl/checkpoint.pkl`), and resume replays that frontier while seeding the ledger (including fileless failure/cancelled rows) from the prior manifest so the resumed run's manifest reconciles over the whole crawl; mutually exclusive with `update`. The app shows a per-run Resume button (when a checkpoint exists) and a per-run Auto control (daily/weekly) driven by a resident scheduler thread over the existing `update` conditional-GET path, one scrape at a time.
+- Signing/notarization + auto-update when distribution flips on (deferred by decision; structure — config file, CI matrix builds — ready from Phase 2). **STRUCTURE SHIPPED (inert).** `tauri.conf` macOS block (unset `signingIdentity` = no codesign unless `APPLE_SIGNING_IDENTITY` is present), `entitlements.plist` for the frozen-sidecar + downloaded-Chromium model, a tag/dispatch-only unsigned release CI matrix, and `docs/DISTRIBUTION.md`. Auto-update (`tauri-plugin-updater`) intentionally NOT added — the crate risks the cargo-1.78/edition2024 floor; documented in DISTRIBUTION.md. Sidecar-into-bundle wiring is a documented TODO.
+- Generate `THIRD-PARTY-NOTICES.md` from the lockfile (scrapling BSD-3, playwright Apache-2.0, patchright, curl_cffi, lxml, browserforge, Chromium) and show it in the about panel. **SHIPPED.** `engine/packaging/gen_notices.py` reads real installed license metadata (37 pkgs + a curated Chromium runtime-download note), and the About panel embeds the file via `include_str!`; a direct-dep test guards against a new lib shipping un-noticed.
 
 ## Backlog (explicitly deferred, not dropped)
 

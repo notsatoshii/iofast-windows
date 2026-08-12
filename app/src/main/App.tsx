@@ -14,6 +14,7 @@ import {
   DEFAULT_THRESHOLD,
   type Boot,
   type Run,
+  type Schedule,
 } from "../lib";
 
 /** docs/RPC.md: `params` of an `event` notification IS the engine event dict. */
@@ -28,6 +29,8 @@ type Agent = { id: string; path: string; terminal: boolean };
 type McpIndexed = { library: string; config_json: string };
 /** Result of an API push over a run's corpus (engine `push`). */
 type PushResult = { digest: string; model: string; files: number; chars: number; truncated: boolean };
+/** app + engine versions and the compiled-in notices (about.rs `about_info`). */
+type AboutInfo = { app_version: string; engine_version: string; notices: string };
 
 /** The run whose events the progress strip is showing — panel-started too. */
 type Active = { rid: number; label: string; update: boolean };
@@ -56,8 +59,10 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function App() {
   const [boot, setBoot] = useState<Boot | null>(null);
-  const [tab, setTab] = useState<"library" | "settings">("library");
+  const [tab, setTab] = useState<"library" | "settings" | "about">("library");
   const [runs, setRuns] = useState<Run[]>([]);
+  const [schedules, setSchedules] = useState<Record<string, Schedule>>({});
+  const [about, setAbout] = useState<AboutInfo | null>(null);
   const [url, setUrl] = useState("");
   const [estimate, setEstimate] = useState<Estimate>({ k: "none" });
   const [gate, setGate] = useState<Gate | null>(null);
@@ -97,6 +102,14 @@ export default function App() {
       .catch(() => undefined);
   }, []);
 
+  // Auto re-scrape cadence per run, keyed by run.dir. Re-read with the library.
+  const loadSchedules = useCallback(() => {
+    invoke<Record<string, Schedule>>("schedule_get")
+      .then(setSchedules)
+      .catch(() => undefined);
+  }, []);
+  useEffect(loadSchedules, [loadSchedules]);
+
   const reboot = useCallback(() => {
     invoke<Boot>("config_get")
       .then((next) => {
@@ -133,12 +146,23 @@ export default function App() {
   // whenever the window comes forward.
   useEffect(() => {
     const onFocus = () => {
-      if (boot?.config) refresh();
+      if (boot?.config) {
+        refresh();
+        loadSchedules();
+      }
       recheckKey();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [boot, refresh, recheckKey]);
+  }, [boot, refresh, recheckKey, loadSchedules]);
+
+  // The About panel's data is compile-time constant plus one initialize call;
+  // load it once, the first time the tab is opened.
+  useEffect(() => {
+    if (tab === "about" && !about) {
+      invoke<AboutInfo>("about_info").then(setAbout).catch((e) => setError(reason(e)));
+    }
+  }, [tab, about]);
 
   useEffect(() => {
     const started = listen<Started>("scrape-started", (e) => {
@@ -215,7 +239,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
-  const start = async (href: string, at: string, out: string, update: boolean) => {
+  const start = async (
+    href: string,
+    at: string,
+    out: string,
+    opts: { update: boolean; resume: boolean },
+  ) => {
     setGate(null);
     setError("");
     setNote("");
@@ -228,7 +257,8 @@ export default function App() {
         scope: at,
         depth: null,
         maxPages: null,
-        update,
+        update: opts.update,
+        resume: opts.resume,
       });
     } catch (e) {
       setError(reason(e));
@@ -247,7 +277,7 @@ export default function App() {
       void (async () => {
         try {
           const out = await invoke<string>("library_dir", { host: target.host, scope });
-          await start(target.href, scope, out, false);
+          await start(target.href, scope, out, { update: false, resume: false });
           setUrl("");
         } catch (e) {
           setError(reason(e));
@@ -258,7 +288,19 @@ export default function App() {
 
   /** Re-scrape: conditional GETs against this run's own manifest, same folder. */
   const rescrape = (run: Run) =>
-    guard(run.pages, () => void start(run.url, run.scope, run.dir, true));
+    guard(run.pages, () => void start(run.url, run.scope, run.dir, { update: true, resume: false }));
+
+  // Cycle a run's auto re-scrape: Off -> Daily -> Weekly -> Off.
+  const cycleAuto = async (dir: string) => {
+    const cur = schedules[dir]?.every;
+    const every = cur === undefined ? "daily" : cur === "daily" ? "weekly" : null;
+    try {
+      await invoke("schedule_set", { dir, every });
+      loadSchedules();
+    } catch (e) {
+      setError(reason(e));
+    }
+  };
 
   const remove = async (run: Run) => {
     setDoomed(null);
@@ -352,7 +394,7 @@ export default function App() {
           iofast
         </div>
         <nav className="tabs">
-          {(["library", "settings"] as const).map((name) => (
+          {(["library", "settings", "about"] as const).map((name) => (
             <button
               key={name}
               type="button"
@@ -360,7 +402,7 @@ export default function App() {
               aria-current={tab === name}
               onClick={() => setTab(name)}
             >
-              {name === "library" ? "Library" : "Settings"}
+              {name === "library" ? "Library" : name === "settings" ? "Settings" : "About"}
             </button>
           ))}
         </nav>
@@ -385,6 +427,26 @@ export default function App() {
 
       {tab === "settings" ? (
         <Settings config={config} onChanged={reboot} />
+      ) : tab === "about" ? (
+        <div className="pane about">
+          <h2>Version</h2>
+          <div className="set">
+            <div className="set-label">
+              <span>iofast</span>
+              <span className="set-hint">the desktop app</span>
+            </div>
+            <span className="saved">{about?.app_version ?? "…"}</span>
+          </div>
+          <div className="set">
+            <div className="set-label">
+              <span>Engine</span>
+              <span className="set-hint">the frozen sidecar</span>
+            </div>
+            <span className="saved">{about?.engine_version ?? "…"}</span>
+          </div>
+          <h2>Third-party notices</h2>
+          <pre className="mcp-config notices">{about?.notices ?? "…"}</pre>
+        </div>
       ) : (
         <div className="pane">
           <div className="add">
@@ -622,6 +684,18 @@ export default function App() {
                           Ask AI
                         </button>
                       )}
+                      {run.resumable && !active && (
+                        <button
+                          type="button"
+                          className="link"
+                          title="Continue the paused crawl from its checkpoint"
+                          onClick={() =>
+                            void start(run.url, run.scope, run.dir, { update: false, resume: true })
+                          }
+                        >
+                          Resume
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="link"
@@ -629,6 +703,14 @@ export default function App() {
                         onClick={() => rescrape(run)}
                       >
                         Re-scrape
+                      </button>
+                      <button
+                        type="button"
+                        className="link"
+                        title="Auto re-scrape on a schedule"
+                        onClick={() => void cycleAuto(run.dir)}
+                      >
+                        Auto: {schedules[run.dir]?.every ? cap(schedules[run.dir].every) : "off"}
                       </button>
                       <button
                         type="button"

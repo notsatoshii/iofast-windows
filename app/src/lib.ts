@@ -16,7 +16,12 @@ export type Run = {
   clean: boolean;
   cancelled: boolean;
   modified_ms: number;
+  /** A stopped crawl left `.crawl/checkpoint.pkl` — the Resume action keys on it. */
+  resumable: boolean;
 };
+
+/** One row of schedules.json (schedule_get): the run's auto re-scrape cadence. */
+export type Schedule = { every: "daily" | "weekly"; last_ms: number };
 
 export const reason = (e: unknown) => (e instanceof Error ? e.message : String(e));
 

@@ -18,7 +18,7 @@ from .discovery import (
     robots_sitemaps,
 )
 from .extract import CONTENT_SELECTORS, page_content
-from .ledger import Ledger
+from .ledger import OUTCOMES, Ledger
 from .rescue import rescue_selectors
 from .tiers import THIN_CHARS, TIERS, browsers_available, header_lookup, is_challenge
 from .urls import (
@@ -46,6 +46,7 @@ class DocSpider(Spider):
     # object.__new__) read as "no cancel requested, no previous run".
     cancel_event = None
     _pause_sent = False
+    resume = False  # instances set their own; default keeps fresh runs unchanged
     previous: dict = {}  # read-only fallback; instances get their own in __init__
     validators = None  # lazy: written only through _remember_validators
 
@@ -105,6 +106,35 @@ class DocSpider(Spider):
         # GETs; validators captures this run's ETag/Last-Modified for the next one.
         self.previous = previous or {}
         self.validators = {}  # url -> (etag, last_modified)
+        self.resume = bool(resume)
+        if self.resume:
+            # Resume replays the checkpoint frontier, but the checkpoint does NOT
+            # carry the ledger — so seed both ledger and seen from the prior
+            # manifest, else on_close would reconcile only the resumed tail and
+            # the manifest would undercount the whole crawl. Mirrors the 304 path.
+            for url, row in self.previous.items():
+                outcome = row.get("outcome") or "ok"
+                if outcome not in OUTCOMES:  # clamp a stale/blank class to ok
+                    outcome = "ok"
+                self.ledger.record(
+                    url,
+                    outcome,
+                    row.get("reason", ""),
+                    tier=row.get("tier", "static"),
+                    chars=row.get("chars", 0),
+                    file=row.get("file", "") or "",
+                    status=row.get("status"),
+                    escalated=row.get("escalated", False),
+                    etag=row.get("etag"),
+                    last_modified=row.get("last_modified"),
+                )
+                # A fileless prior FAILURE is preserved in the ledger but NOT marked
+                # seen — so if the resumed frontier re-links it, it retries and
+                # record() overwrites the placeholder. A written page IS seen (never
+                # re-fetch it) and its name->url is re-registered so re-links resolve.
+                if row.get("file"):
+                    self.seen.add(url)
+                    self.writer.names[row["file"].removesuffix(".md")] = url
         self.selectors = selectors_for(adapter, CONTENT_SELECTORS)
         self.browsers = browsers_available()
         # The adapter's fetch_strategy is the STARTING tier; the ladder still runs above it.
@@ -318,7 +348,9 @@ class DocSpider(Spider):
         """
         extra = {}
         prev = self.previous.get(meta.get("origin_url", ""))
-        if prev and self.start_tier == "static":
+        # Resume continues the paused frontier — it must NOT turn every frontier
+        # fetch into a conditional GET against the prior run (that's update's job).
+        if prev and self.start_tier == "static" and not self.resume:
             headers = {}
             if prev.get("etag"):
                 headers["If-None-Match"] = prev["etag"]

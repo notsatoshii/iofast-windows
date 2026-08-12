@@ -167,6 +167,11 @@ class RpcServer:
         update = params.get("update", False)
         if not isinstance(update, bool):
             return self.fail(rid, INVALID_PARAMS, "update must be a boolean")
+        resume = params.get("resume", False)
+        if not isinstance(resume, bool):
+            return self.fail(rid, INVALID_PARAMS, "resume must be a boolean")
+        if resume and update:
+            return self.fail(rid, INVALID_PARAMS, "resume and update cannot both be set")
         env = params.get("env") or {}
         if not (
             isinstance(env, dict)
@@ -180,6 +185,10 @@ class RpcServer:
             return self.fail(rid, INVALID_PARAMS, "url must be a string")
         if not isinstance(out, str) or not out:
             return self.fail(rid, INVALID_PARAMS, "out is required and must be a string")
+        if resume and not os.path.exists(
+            os.path.join(os.path.abspath(out), ".crawl", "checkpoint.pkl")
+        ):
+            return self.fail(rid, INVALID_PARAMS, f"no checkpoint to resume in {out}")
         if not (scope is None or isinstance(scope, str)):
             return self.fail(rid, INVALID_PARAMS, "scope must be a string or null")
         if not (_is_int(depth) and _is_int(max_pages)):
@@ -199,13 +208,13 @@ class RpcServer:
             self.cancelling = False
             thread = threading.Thread(
                 target=self._scrape_thread,
-                args=(rid, url, os.path.abspath(out), scope, depth, max_pages, update, env, self.cancel_event),
+                args=(rid, url, os.path.abspath(out), scope, depth, max_pages, update, resume, env, self.cancel_event),
                 daemon=True,
             )
             self.threads["scrape"] = thread
             thread.start()
 
-    def _scrape_thread(self, rid, url, out, scope, depth, max_pages, update, env, cancel_event):
+    def _scrape_thread(self, rid, url, out, scope, depth, max_pages, update, resume, env, cancel_event):
         try:
             result = run_scrape(
                 url,
@@ -217,6 +226,7 @@ class RpcServer:
                 cancel=cancel_event,
                 on_spider=self._adopt_spider,
                 update=update,
+                resume=resume,
                 env=env,
             )
             result["out_dir"] = os.path.abspath(result["out_dir"]) if result["out_dir"] else out

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hardened-runtime entitlements for a NOTARIZED iofast.app.
+
+  INERT UNTIL SIGNING IS ENABLED: these keys are only applied when `codesign`
+  runs, which Tauri does only when APPLE_SIGNING_IDENTITY is present at build.
+  A normal unsigned `pnpm tauri build` never reads this file. See docs/DISTRIBUTION.md.
+
+  Every entitlement here exists for the frozen-sidecar + downloaded-Chromium model:
+
+  - com.apple.security.cs.allow-jit
+      The Playwright/patchright Chromium (downloaded to app-support on first use of
+      the dynamic tier, NEVER bundled — see PLAN.md) is a JIT engine. Hardened
+      runtime blocks JIT unless this is granted.
+
+  - com.apple.security.cs.allow-unsigned-executable-memory
+      Same Chromium maps writable+executable pages (V8). Required alongside allow-jit
+      for a browser engine to run under hardened runtime.
+
+  - com.apple.security.cs.disable-library-validation
+      The PyInstaller-frozen `iofast` sidecar and the out-of-band Chromium are NOT
+      co-signed with the app (different signatures / downloaded post-notarization).
+      Library validation would refuse to load them.
+
+  - com.apple.security.cs.allow-dyld-environment-variables
+      The sidecar sets PLAYWRIGHT_BROWSERS_PATH and the scrapling storage paths on
+      spawn (PLAN.md "First-use download"). Hardened runtime strips DYLD_*/spawn env
+      vars unless this is granted.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+</dict>
+</plist>

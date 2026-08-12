@@ -1,0 +1,73 @@
+name: release
+
+# Structure only: builds the UNSIGNED app bundle on a version tag. Signing and
+# notarization are deferred by decision (PLAN.md Phase 4) — no secrets, no
+# codesign, no notarytool. Turning them on is config, not surgery: fill in the
+# commented env block below and add the four secrets. Because it triggers on
+# tags and manual dispatch only, normal pushes and PRs never run it.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Freeze the Python sidecar exactly as engine-ci's frozen-sidecar job does.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e "engine[dev,build]"
+      - run: pyinstaller --noconfirm packaging/iofast.spec
+        working-directory: engine
+      - run: python packaging/verify_frozen.py dist/iofast/iofast
+        working-directory: engine
+      # TODO(sign): wire sidecar into the bundle. src-tauri/src/sidecar.rs looks for
+      # the frozen binary at resource_dir()/iofast/iofast, but tauri.conf.json has no
+      # `resources` entry to place it there yet, so `pnpm tauri build` bundles the app
+      # WITHOUT the sidecar. The frozen tree lives at engine/dist/iofast/ after the step
+      # above. Wiring it (a bundle.resources mapping, or an externalBin) is its own change
+      # — left out here to keep the default build behavior identical.
+
+      # 2. Pin the toolchain to the project's floor. cargo/rustc 1.78 is the known-good
+      # toolchain the committed Cargo.lock was resolved against; a newer default runner
+      # rust risks a surprise resolve into edition2024 crates (see Cargo.toml's lockfile
+      # note, and the clipboard/dialog comments in src/main.rs and src/store.rs).
+      - uses: dtolnay/rust-toolchain@1.78.0
+
+      # 3. Build the Tauri bundle. pnpm 9.15.2 + node 22 to match local dev.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      # Unsigned build. Tauri does NOT codesign unless APPLE_SIGNING_IDENTITY is set,
+      # so this runs green today with no secrets. To turn signing + notarization on,
+      # uncomment the env block below and add the secrets in repo settings — no other
+      # change to this step is needed (tauri.conf.json macOS.hardenedRuntime and
+      # macOS.entitlements already point at the entitlements file):
+      #   env:
+      #     APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      #     APPLE_ID: ${{ secrets.APPLE_ID }}
+      #     APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}   # app-specific password
+      #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - run: pnpm tauri build
+        working-directory: app
+
+      # 4. Keep the unsigned bundle as a build artifact (not a public release).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iofast-macos-unsigned
+          path: |
+            app/src-tauri/target/release/bundle/dmg/*.dmg
+            app/src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: warn

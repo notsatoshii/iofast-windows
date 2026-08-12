@@ -114,6 +114,9 @@ pub struct Run {
     clean: bool,
     cancelled: bool,
     modified_ms: u64,
+    /// A `Stop`ped crawl leaves `.crawl/checkpoint.pkl`; its presence is what the
+    /// row's Resume action keys on (the engine's `scrape resume` needs it).
+    resumable: bool,
 }
 
 fn host_of(url: &str) -> String {
@@ -152,6 +155,7 @@ fn read_run(dir: &Path) -> Option<Run> {
             .unwrap_or(false),
         cancelled: info.get("cancelled").and_then(Value::as_bool).unwrap_or(false),
         modified_ms,
+        resumable: dir.join(".crawl/checkpoint.pkl").is_file(),
     })
 }
 

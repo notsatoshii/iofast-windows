@@ -59,7 +59,7 @@ site with many sitemaps (25 fetches × 20s timeout worst case).
 
 ### `scrape`
 Params: `{"url": str, "out": str, "scope": str|null, "depth": int=3,
-"max_pages": int=200, "update": bool=false}`.
+"max_pages": int=200, "update": bool=false, "resume": bool=false}`.
 Optional `"env": {"OPENROUTER_API_KEY": str, "IOFAST_RESCUE_MODEL": str}` —
 request-scoped secrets for the Tier 3 rescue, applied to the process
 environment for THIS run only and restored after (never argv, never a file;
@@ -70,6 +70,15 @@ keychain and sends them only when a run may need the rescue.
 additive schema-1 page fields), the static tier sends If-None-Match /
 If-Modified-Since, and a 304 keeps the existing file, recorded `ok` with
 reason "not modified (304)" — never a blind full re-crawl.
+`resume: true` replays a paused crawl's checkpoint frontier (see `cancel`):
+it requires an existing `<out>/.crawl/checkpoint.pkl` (else `-32602`) and is
+mutually exclusive with `update` (both set is `-32602`). The checkpoint carries
+scrapling's pending queue but NOT the ledger, so the run seeds its ledger and
+`seen` set from the prior `manifest.json` — the resumed run's manifest then
+represents the WHOLE crawl and still reconciles (zero silent failures), instead
+of undercounting to just the resumed tail. Unlike `update`, resume does NOT send
+conditional GETs: it continues the frontier rather than re-validating fetched
+pages.
 `out` is **required** — a GUI-spawned sidecar has no meaningful cwd, so the
 shell always supplies the library path. `depth` is clamped to [0, 10],
 `max_pages` to [1, 2000]; out-of-range values clamp, wrong types are `-32602`.
@@ -136,11 +145,15 @@ still reports `exit_code: 3`; consult `cancelled` first.
 
 Stop = pause + checkpoint: a paused crawl saves scrapling's
 `checkpoint.pkl` under `<out>/.crawl`, and the ledger/report/manifest are
-written regardless. There is no `resume` METHOD in protocol 1 — a fresh
-scrape of the same `out` deliberately clears any stale checkpoint first
-(auto-resume would skip discovery and this ledger is not checkpointed);
-the supported "continue later" path is `update: true`, which re-walks the
-site with conditional GETs so already-fetched pages cost one 304 each.
+written regardless. There is no separate `resume` METHOD — `scrape` with
+`resume: true` now replays that checkpoint frontier from where Stop left off,
+seeding the ledger from the prior manifest so the whole crawl still reconciles
+(see `scrape`). A fresh scrape of the same `out` (resume omitted) still
+deliberately clears any stale checkpoint first (auto-resume would skip discovery
+and this ledger is not checkpointed). The two "continue later" paths differ:
+`resume: true` finishes an interrupted crawl's remaining frontier, while
+`update: true` re-walks an already-complete site with conditional GETs so
+already-fetched pages cost one 304 each.
 
 ## Notifications (event stream)
 

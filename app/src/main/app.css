@@ -536,3 +536,16 @@ body.app-window {
   font-size: 13px;
   max-height: 360px;
 }
+
+/* --- about panel ----------------------------------------------------------- */
+/* The notices are a long compiled-in text block; wrap and scroll it in place. */
+.app .pane.about {
+  padding-bottom: 24px;
+}
+
+.app .notices {
+  margin: 8px 18px 0;
+  max-height: 440px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

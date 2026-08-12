@@ -1,7 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod about;
+mod schedule;
 mod sidecar;
 mod store;
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{json, Value};
 use tauri::menu::{Menu, MenuItem};
@@ -49,6 +53,71 @@ async fn sidecar_estimate(
     sc.request(&app, "estimate", json!({ "url": url })).await
 }
 
+/// True from the moment a `scrape` request is written until its reply lands.
+///
+/// ponytail: one global flag, not per-run — the engine is the real one-at-a-time
+/// authority (a second scrape gets BUSY -32000). This only lets the scheduler
+/// skip a tick instead of firing a request it knows will be refused.
+static SCRAPE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn scrape_in_flight() -> bool {
+    SCRAPE_IN_FLIGHT.load(Ordering::SeqCst)
+}
+
+/// Fire one `scrape` and wire its lifecycle events, returning the request id
+/// immediately — the result arrives minutes later on `scrape-done`. The manual
+/// button (via `sidecar_scrape_start`) and the auto-scheduler both go through
+/// here, so the `scrape-started`/`scrape-done` contract stays identical.
+pub(crate) fn fire_scrape(
+    app: &AppHandle,
+    sc: &SidecarManager,
+    url: &str,
+    out: &str,
+    scope: Option<&str>,
+    depth: Option<i64>,
+    max_pages: Option<i64>,
+    update: bool,
+    resume: bool,
+) -> Result<u64, String> {
+    let mut params = json!({ "url": url, "out": out, "scope": scope });
+    // Omitted rather than null: docs/RPC.md types these, and the engine defaults them.
+    if let Some(d) = depth {
+        params["depth"] = json!(d);
+    }
+    if let Some(m) = max_pages {
+        params["max_pages"] = json!(m);
+    }
+    // update and resume are mutually exclusive; the engine rejects both at once.
+    if update {
+        params["update"] = json!(true);
+    }
+    if resume {
+        params["resume"] = json!(true);
+    }
+    // docs/RPC.md "API-key handoff": read from the keychain here, send in the
+    // request body, per run. Never argv, never the sidecar's spawn environment.
+    let env = store::scrape_env();
+    if !env.is_empty() {
+        params["env"] = Value::Object(env);
+    }
+    let (rid, rx) = sc.start_request(app, "scrape", params)?;
+    SCRAPE_IN_FLIGHT.store(true, Ordering::SeqCst);
+    // Both windows track the run from this, so a scrape started in the quick
+    // panel still shows its progress strip in the main window.
+    let _ = app.emit("scrape-started", json!({ "rid": rid, "url": url, "out": out, "update": update }));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let payload = match rx.await {
+            Ok(Ok(result)) => json!({ "rid": rid, "result": result }),
+            Ok(Err(message)) => json!({ "rid": rid, "error": message }),
+            Err(_) => json!({ "rid": rid, "error": "sidecar exited before replying" }),
+        };
+        SCRAPE_IN_FLIGHT.store(false, Ordering::SeqCst);
+        let _ = tauri::Emitter::emit(&app, "scrape-done", payload);
+    });
+    Ok(rid)
+}
+
 /// Returns the request id immediately; the run's result arrives later as a
 /// `scrape-done` event. A scrape can take minutes — nothing may await it here.
 #[tauri::command]
@@ -61,37 +130,19 @@ async fn sidecar_scrape_start(
     depth: Option<i64>,
     max_pages: Option<i64>,
     update: Option<bool>,
+    resume: Option<bool>,
 ) -> Result<u64, String> {
-    let mut params = json!({ "url": url, "out": out, "scope": scope });
-    // Omitted rather than null: docs/RPC.md types these, and the engine defaults them.
-    if let Some(d) = depth {
-        params["depth"] = json!(d);
-    }
-    if let Some(m) = max_pages {
-        params["max_pages"] = json!(m);
-    }
-    if update == Some(true) {
-        params["update"] = json!(true);
-    }
-    // docs/RPC.md "API-key handoff": read from the keychain here, send in the
-    // request body, per run. Never argv, never the sidecar's spawn environment.
-    let env = store::scrape_env();
-    if !env.is_empty() {
-        params["env"] = Value::Object(env);
-    }
-    let (rid, rx) = sc.start_request(&app, "scrape", params)?;
-    // Both windows track the run from this, so a scrape started in the quick
-    // panel still shows its progress strip in the main window.
-    let _ = app.emit("scrape-started", json!({ "rid": rid, "url": url, "out": out, "update": update == Some(true) }));
-    tauri::async_runtime::spawn(async move {
-        let payload = match rx.await {
-            Ok(Ok(result)) => json!({ "rid": rid, "result": result }),
-            Ok(Err(message)) => json!({ "rid": rid, "error": message }),
-            Err(_) => json!({ "rid": rid, "error": "sidecar exited before replying" }),
-        };
-        let _ = tauri::Emitter::emit(&app, "scrape-done", payload);
-    });
-    Ok(rid)
+    fire_scrape(
+        &app,
+        &sc,
+        &url,
+        &out,
+        scope.as_deref(),
+        depth,
+        max_pages,
+        update == Some(true),
+        resume == Some(true),
+    )
 }
 
 /// Ingest mode 3 (API push): ask an LLM the user's `prompt` over one run's
@@ -288,11 +339,19 @@ fn main() {
             store::mcp_index,
             store::keychain_status,
             store::keychain_set,
-            store::keychain_clear
+            store::keychain_clear,
+            schedule::schedule_get,
+            schedule::schedule_set,
+            about::about_info
         ])
         .setup(|app| {
             setup_tray(app.handle())?;
             setup_hotkey(app.handle())?;
+            // Resident background loop: fires due auto re-scrapes while the app runs.
+            schedule::spawn_scheduler(
+                app.handle().clone(),
+                app.state::<SidecarManager>().inner().clone(),
+            );
             if let Some(panel) = app.get_webview_window("panel") {
                 place_panel(&panel);
             }

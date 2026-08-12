@@ -48,12 +48,22 @@ def run_map(url, *, scope=None, emit=None):
     return map_run(resolved, scope, adapter=adapter, emit=emit)
 
 
-def previous_pages(out):
-    """The prior run's manifest rows (url -> row), for conditional re-scrapes."""
+def previous_pages(out, *, include_fileless=False):
+    """The prior run's manifest rows (url -> row).
+
+    Conditional re-scrapes (update) want only file-bearing rows — a page to keep
+    on a 304. Resume wants ALL rows, the fileless failures/cancelled included, so
+    seeding the resumed ledger preserves them and the manifest still covers the
+    WHOLE crawl (a pure link-crawl would otherwise never re-link a prior failure).
+    """
     try:
         with open(os.path.join(out, "manifest.json"), encoding="utf-8") as fh:
             manifest = json.load(fh)
-        return {r["url"]: r for r in manifest.get("pages", []) if r.get("file")}
+        return {
+            r["url"]: r
+            for r in manifest.get("pages", [])
+            if include_fileless or r.get("file")
+        }
     except Exception:
         return {}
 
@@ -69,6 +79,7 @@ def run_scrape(
     cancel=None,
     on_spider=None,
     update=False,
+    resume=False,
     env=None,
 ):
     """Run one scrape; returns {written, out_dir, exit_code, cancelled, manifest}.
@@ -79,6 +90,9 @@ def run_scrape(
     the RPC server uses it to reach request_cancel().
     update: conditional re-scrape — the previous manifest in `out` supplies
     ETag/Last-Modified validators; unchanged pages 304 and keep their files.
+    resume: replay a paused crawl's checkpoint frontier; the prior manifest
+    seeds the spider's ledger + seen so the resumed run's manifest still
+    reconciles over the WHOLE crawl (docs/RPC.md). Mutually exclusive with update.
     env: request-scoped secrets (Tier 3 rescue keys) applied to os.environ for
     THIS run only and restored after — never argv, never a file (PLAN key rule).
     """
@@ -96,6 +110,7 @@ def run_scrape(
                 cancel=cancel,
                 on_spider=on_spider,
                 update=update,
+                resume=resume,
             )
         finally:
             for key, value in saved.items():
@@ -137,7 +152,17 @@ def run_scrape(
             adapter=adapter,
             resolve=False,  # preflight already followed the redirect
             cancel_event=cancel,
-            previous=previous_pages(out) if (update and out) else None,
+            # previous rows drive update's conditional GETs AND resume's ledger seed
+            # — but resume needs the fileless failure/cancelled rows too (else a
+            # link-crawl resume silently drops them from the whole-crawl manifest).
+            previous=(
+                previous_pages(out, include_fileless=True)
+                if (resume and out)
+                else previous_pages(out)
+                if (update and out)
+                else None
+            ),
+            resume=resume,
         )
         if on_spider is not None:
             on_spider(spider)
