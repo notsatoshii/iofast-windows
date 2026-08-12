@@ -43,6 +43,28 @@ from .writer import Writer, write_run
 UPDATE_SHRINK_RATIO = 0.5
 
 
+def _proxy_kwarg(raw):
+    """IOFAST_PROXY -> the proxy kwarg every fetch tier shares.
+
+    One value -> ``{"proxy": ...}`` (byte-identical to the single-proxy MVP).
+    Several (comma/whitespace/newline separated) -> ``{"proxy_rotator": ...}``
+    holding ONE shared ProxyRotator; Scrapling cycles it per fetch across every
+    tier. The rotation is cyclic, NOT failure-driven — a request through a dead
+    proxy fails and the NEXT request just moves to the next in the ring.
+    Scrapling raises if both ``proxy`` and ``proxy_rotator`` are passed
+    (engines/static.py, _browsers/_validators.py), so exactly one key is set.
+    None/blank -> ``{}`` (no proxy kwarg at all).
+    """
+    proxies = [p for p in (raw or "").replace(",", " ").split() if p]
+    if len(proxies) == 1:
+        return {"proxy": proxies[0]}
+    if len(proxies) > 1:
+        from scrapling.fetchers import ProxyRotator
+
+        return {"proxy_rotator": ProxyRotator(proxies)}
+    return {}
+
+
 class DocSpider(Spider):
     name = "iofast_docs"
 
@@ -192,14 +214,14 @@ class DocSpider(Spider):
         playwright, which a frozen static-only sidecar deliberately excludes.
 
         IOFAST_PROXY (request-scoped, read from the environment like the rescue
-        key) routes every tier through one proxy — the resilient-fetch layer for
-        sites that block by IP. Unset = no proxy kwarg, so behaviour is
-        byte-identical to before.
+        key) routes every tier through the resilient-fetch layer for sites that
+        block by IP. One proxy = every tier uses it; several (comma/whitespace/
+        newline separated) = one shared ProxyRotator cycled per fetch across all
+        tiers (see _proxy_kwarg). Unset = no proxy kwarg, byte-identical to before.
         """
         from scrapling.fetchers import FetcherSession
 
-        proxy = os.environ.get("IOFAST_PROXY") or None
-        proxy_kw = {"proxy": proxy} if proxy else {}
+        proxy_kw = _proxy_kwarg(os.environ.get("IOFAST_PROXY"))
 
         manager.add("static", FetcherSession(timeout=30, **proxy_kw), default=True)
         if self.browsers:

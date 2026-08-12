@@ -66,8 +66,11 @@ environment for THIS run only and restored after (never argv, never a file;
 keys outside the allowlist are `-32602`). The shell reads them from the OS
 keychain and sends them only when a run may need them.
 `IOFAST_PROXY` (e.g. `http://user:pass@host:port`) routes every fetch tier
-(static/dynamic/stealth) through one proxy — the resilient-fetch layer for
-sites that block by IP. Absent = no proxy, byte-identical to before.
+(static/dynamic/stealth) through the resilient-fetch layer for sites that block
+by IP. One value routes every tier through that proxy; several — separated by
+commas, whitespace, or newlines — build one shared rotator cycled per fetch
+across all tiers (cyclic, not failure-driven). Absent = no proxy, byte-identical
+to before.
 `update: true` is a conditional re-scrape: the previous `manifest.json` in
 `out` supplies each page's stored validators (`etag` / `last_modified`,
 additive schema-1 page fields), the static tier sends If-None-Match /

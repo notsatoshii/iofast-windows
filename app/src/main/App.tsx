@@ -302,6 +302,19 @@ export default function App() {
     }
   };
 
+  // Per-run proxy toggle for scheduled re-scrapes. A dead proxy would silently
+  // fail every unattended run, so a run can opt its schedule out of it. Absent
+  // field = on. Only meaningful while Auto is on (the button is hidden otherwise).
+  const toggleProxy = async (dir: string) => {
+    const on = schedules[dir]?.proxy !== false;
+    try {
+      await invoke("schedule_set", { dir, proxy: !on });
+      loadSchedules();
+    } catch (e) {
+      setError(reason(e));
+    }
+  };
+
   const remove = async (run: Run) => {
     setDoomed(null);
     try {
@@ -712,6 +725,16 @@ export default function App() {
                       >
                         Auto: {schedules[run.dir]?.every ? cap(schedules[run.dir].every) : "off"}
                       </button>
+                      {schedules[run.dir]?.every && (
+                        <button
+                          type="button"
+                          className="link"
+                          title="Use the Settings proxy for this run's scheduled re-scrapes"
+                          onClick={() => void toggleProxy(run.dir)}
+                        >
+                          Proxy: {schedules[run.dir]?.proxy === false ? "off" : "on"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="link"

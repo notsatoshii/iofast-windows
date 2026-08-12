@@ -20,8 +20,9 @@ export type Run = {
   resumable: boolean;
 };
 
-/** One row of schedules.json (schedule_get): the run's auto re-scrape cadence. */
-export type Schedule = { every: "daily" | "weekly"; last_ms: number };
+/** One row of schedules.json (schedule_get): the run's auto re-scrape cadence.
+ *  `proxy` is the per-run proxy toggle; absent = on (pre-toggle schedules). */
+export type Schedule = { every: "daily" | "weekly"; last_ms: number; proxy?: boolean };
 
 /** docs/RPC.md `browser_status`: out-of-band browser-component state. */
 export type BrowserStatus = {

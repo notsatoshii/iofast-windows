@@ -78,6 +78,7 @@ pub(crate) fn fire_scrape(
     max_pages: Option<i64>,
     update: bool,
     resume: bool,
+    use_proxy: bool,
 ) -> Result<u64, String> {
     let mut params = json!({ "url": url, "out": out, "scope": scope });
     // Omitted rather than null: docs/RPC.md types these, and the engine defaults them.
@@ -96,7 +97,13 @@ pub(crate) fn fire_scrape(
     }
     // docs/RPC.md "API-key handoff": read from the keychain here, send in the
     // request body, per run. Never argv, never the sidecar's spawn environment.
-    let env = store::scrape_env();
+    let mut env = store::scrape_env();
+    // A scheduled run with its proxy toggle off drops IOFAST_PROXY: a dead proxy
+    // would otherwise silently fail every unattended weekly re-scrape. Manual
+    // runs always pass use_proxy=true, so the Settings proxy still applies there.
+    if !use_proxy {
+        env.remove("IOFAST_PROXY");
+    }
     if !env.is_empty() {
         params["env"] = Value::Object(env);
     }
@@ -142,6 +149,7 @@ async fn sidecar_scrape_start(
         max_pages,
         update == Some(true),
         resume == Some(true),
+        true, // manual runs always honour the Settings proxy
     )
 }
 

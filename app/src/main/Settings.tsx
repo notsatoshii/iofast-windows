@@ -24,7 +24,7 @@ const NETWORK_KEYS = [
   {
     name: "IOFAST_PROXY",
     label: "Proxy",
-    hint: "Routes every fetch tier through one proxy for sites that block by IP. Format: http://user:pass@host:port.",
+    hint: "Routes every fetch tier for sites that block by IP. Format: http://user:pass@host:port. Enter several, comma-separated, to rotate across requests.",
     secret: true,
   },
 ] as const;

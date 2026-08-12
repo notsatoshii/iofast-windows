@@ -77,14 +77,32 @@ pub fn schedule_get(app: AppHandle) -> Result<Map<String, Value>, String> {
 /// webview, so it is checked to be a library child before it is stored — but the
 /// original string is kept as the key so it matches the library rows verbatim
 /// (canonicalizing here would desync the UI's per-row lookup).
+/// `every` sets/clears the cadence; `proxy` is the optional per-run proxy toggle
+/// (default on). `every: Some` sets the cadence and keeps the proxy setting
+/// unless `proxy` overrides it. `every: None` with `proxy: Some` flips ONLY the
+/// proxy field on an existing entry — a proxy setting without a schedule is
+/// inert. `every: None` with `proxy: None` clears the whole schedule.
 #[tauri::command]
-pub fn schedule_set(app: AppHandle, dir: String, every: Option<String>) -> Result<(), String> {
+pub fn schedule_set(
+    app: AppHandle,
+    dir: String,
+    every: Option<String>,
+    proxy: Option<bool>,
+) -> Result<(), String> {
     crate::store::checked_run_dir(&app, &dir)?;
     let mut map = read_schedules(&app);
+    let existing_proxy = map.get(&dir).and_then(|v| v.get("proxy")).and_then(Value::as_bool);
     match every.as_deref() {
-        None => {
-            map.remove(&dir);
-        }
+        None => match proxy {
+            None => {
+                map.remove(&dir);
+            }
+            Some(p) => {
+                if let Some(entry) = map.get_mut(&dir).and_then(Value::as_object_mut) {
+                    entry.insert("proxy".to_string(), json!(p));
+                }
+            }
+        },
         Some(e @ ("daily" | "weekly")) => {
             // Keep the existing last_ms so re-setting the cadence doesn't reset the
             // clock. A BRAND-NEW schedule stamps `now`, NOT 0: the run has fresh
@@ -97,7 +115,8 @@ pub fn schedule_set(app: AppHandle, dir: String, every: Option<String>) -> Resul
                 .and_then(|v| v.get("last_ms"))
                 .and_then(Value::as_u64)
                 .unwrap_or_else(now_ms);
-            map.insert(dir, json!({ "every": e, "last_ms": last_ms }));
+            let use_proxy = proxy.or(existing_proxy).unwrap_or(true);
+            map.insert(dir, json!({ "every": e, "last_ms": last_ms, "proxy": use_proxy }));
         }
         Some(other) => return Err(format!("unknown schedule {other}")),
     }
@@ -134,10 +153,12 @@ fn read_target(manifest: &Path) -> Option<(String, Option<String>)> {
 /// The one run this tick should fire, if any. One fire per tick: `fire_scrape`
 /// sets the in-flight flag, so any other due run would only get BUSY.
 /// Pure over the map so the skip rules are testable without an AppHandle.
-fn next_due(map: &Map<String, Value>, now: u64) -> Option<(String, String, Option<String>)> {
+fn next_due(map: &Map<String, Value>, now: u64) -> Option<(String, String, Option<String>, bool)> {
     for (dir, entry) in map.iter() {
         let every = entry.get("every").and_then(Value::as_str).unwrap_or("");
         let last_ms = entry.get("last_ms").and_then(Value::as_u64).unwrap_or(0);
+        // Absent proxy field = proxy on (matches pre-toggle schedules verbatim).
+        let use_proxy = entry.get("proxy").and_then(Value::as_bool).unwrap_or(true);
         if !due(now, every, last_ms) {
             continue;
         }
@@ -158,7 +179,7 @@ fn next_due(map: &Map<String, Value>, now: u64) -> Option<(String, String, Optio
         let Some((url, scope)) = manifest.is_file().then(|| read_target(&manifest)).flatten() else {
             continue;
         };
-        return Some((dir.clone(), url, scope));
+        return Some((dir.clone(), url, scope, use_proxy));
     }
     None
 }
@@ -201,12 +222,21 @@ pub fn spawn_scheduler(app: AppHandle, sc: SidecarManager) {
             continue;
         }
         let now = now_ms();
-        let Some((dir, url, scope)) = next_due(&read_schedules(&app), now) else {
+        let Some((dir, url, scope, use_proxy)) = next_due(&read_schedules(&app), now) else {
             continue;
         };
-        if let Ok(rid) =
-            crate::fire_scrape(&app, &sc, &url, &dir, scope.as_deref(), None, None, true, false)
-        {
+        if let Ok(rid) = crate::fire_scrape(
+            &app,
+            &sc,
+            &url,
+            &dir,
+            scope.as_deref(),
+            None,
+            None,
+            true,
+            false,
+            use_proxy,
+        ) {
             stamp(&app, &dir, "last_attempt_ms", now);
             stamp_on_success(&app, rid, dir);
         }
@@ -276,10 +306,23 @@ mod tests {
 
         // Same run, checkpoint gone: fires, with the manifest's own target.
         std::fs::remove_file(dir.join(".crawl/checkpoint.pkl")).unwrap();
-        let (fired, url, scope) = next_due(&map, NOW).expect("a due run with no checkpoint fires");
+        let (fired, url, scope, use_proxy) =
+            next_due(&map, NOW).expect("a due run with no checkpoint fires");
         assert_eq!(fired, key);
         assert_eq!(url, "https://x.com/docs");
         assert_eq!(scope.as_deref(), Some("/docs"));
+        // No proxy field on the entry -> proxy on (pre-toggle schedules unchanged).
+        assert!(use_proxy);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn proxy_toggle_off_reaches_the_fire() {
+        let dir = scratch("noproxy");
+        // A due run that opted its scheduled scrape out of the proxy.
+        let (_, map) = one_due_run(&dir, json!({ "proxy": false }));
+        let (_, _, _, use_proxy) = next_due(&map, NOW).expect("a due run fires");
+        assert!(!use_proxy, "proxy:false must flow through to fire_scrape");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
