@@ -201,10 +201,16 @@ def resolve_start(start_url: str, emit=None) -> str:
 
 
 def discover_llms(origin: str, scope_root: str):
-    """Try llms.txt / llms-full.txt at the origin and at the scope root."""
+    """Try llms.txt / llms-full.txt at the origin and at the scope root.
+
+    `llms.txt` (the curated link index) comes first: it lists the per-page
+    `.md` twins the scraper wants. `llms-full.txt` is the whole docs
+    concatenated into one file — its embedded links are content references
+    (often external), not a clean page index — so it is only a fallback.
+    """
     bases = [origin, scope_root.rstrip("/")]
     for base in dict.fromkeys(bases):
-        for name in ("llms-full.txt", "llms.txt"):
+        for name in ("llms.txt", "llms-full.txt"):
             url = f"{base}/{name}"
             response = _get(url)
             if response and response.status == 200:

@@ -24,6 +24,7 @@ from .tiers import THIN_CHARS, TIERS, browsers_available, header_lookup, is_chal
 from .urls import (
     bad_href,
     clean_url,
+    md_twins,
     md_variant,
     norm_host,
     path_depth,
@@ -378,22 +379,40 @@ class DocSpider(Spider):
         self.robots.allowed(f"{self.origin}/")
 
         pages = discover_sitemap(self.origin, robots_sitemaps(self.origin), emit=self.emit)
+        # An llms.txt means every page has a `<path>.md` twin (Mintlify / llms
+        # convention) — the clean markdown source, regardless of whether the
+        # sitemap or llms.txt supplied the url list. Probe it either way so
+        # sitemap-discovered pages fetch the twin instead of scraping the SPA
+        # HTML (which mangles down to a fragment). llms.txt links already point
+        # at `.md`; canonicalise to the page url so naming/scope stay clean and
+        # md_variant re-derives the same twin.
+        llms_url, found = discover_llms(self.origin, scope_root)
+        # Only per-page `.md` links prove twins exist. A generic llms.txt (bundle
+        # files like llms-full.txt, no per-page `.md`) must NOT flip md on: else
+        # every page double-fetches a 404ing twin and the bundle urls pollute the
+        # crawl. Canonicalise the twins to their page url so naming/scope stay
+        # clean and md_variant re-derives the same twin.
+        canon = md_twins(found)
+        md = bool(canon)
+
         if pages:
-            urls = self._reconcile([url for url, _ in pages])
+            urls = self._reconcile([url for url, _ in pages] + canon)
             self.emit(
                 {
                     "type": "progress",
                     "message": (
                         f"🗺  sitemap: {len(pages)} urls, {len(urls)} in scope {self.scope}"
+                        + (" · llms.txt .md twins" if md else "")
                     ),
                 }
             )
             if urls:
-                return [(url, False) for url in urls], "sitemap"
+                return [(url, md) for url in urls], ("sitemap+llms" if md else "sitemap")
 
-        llms_url, found = discover_llms(self.origin, scope_root)
         if found:
-            urls = self._reconcile(found)
+            # `.md`-twin llms.txt (Mintlify): fetch the twins. Generic llms.txt:
+            # take its raw urls as plain html seeds (md off, no bogus twin fetch).
+            urls = self._reconcile(canon if md else found)
             self.emit(
                 {
                     "type": "progress",
@@ -403,7 +422,7 @@ class DocSpider(Spider):
                 }
             )
             if urls:
-                return [(url, True) for url in urls], "llms.txt"
+                return [(url, md) for url in urls], "llms.txt"
 
         self.emit(
             {
@@ -452,13 +471,13 @@ class DocSpider(Spider):
                 if row.get("file") and url not in seeded
             ]
         seeds = seeds[: self.max_pages]
-        for url, from_llms in seeds:
+        for url, md_capable in seeds:
             if url in self.seen:
                 continue
             self.seen.add(url)
             self._enqueue(url)
-            target = md_variant(url) if from_llms else url
-            yield Request(target, **self._request_kwargs({"depth": 0, "origin_url": url, "md_probe": from_llms}))
+            target = md_variant(url) if md_capable else url
+            yield Request(target, **self._request_kwargs({"depth": 0, "origin_url": url, "md_probe": md_capable}))
 
     def _request_kwargs(self, meta):
         """Every page request starts at the adapter's tier (static unless it said otherwise).
@@ -527,7 +546,12 @@ class DocSpider(Spider):
         if meta.get("md_probe"):
             ctype = header_lookup(headers, "content-type").lower()
             text = _body_text(response)
-            if status == 200 and ("markdown" in ctype or "text/plain" in ctype) and not text.lstrip().startswith("<"):
+            if (
+                status == 200
+                and ("markdown" in ctype or "text/plain" in ctype)
+                and not text.lstrip().startswith("<")
+                and len(text.strip()) >= THIN_CHARS  # a tiny text/plain body is a soft-404, not a page
+            ):
                 self._write(
                     origin_url, text.strip(), tier, "llms.txt .md variant", escalated, status
                 )

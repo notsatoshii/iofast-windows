@@ -4,6 +4,7 @@ from iofast_engine.urls import (
     bad_href,
     clean_url,
     is_asset,
+    md_twins,
     md_variant,
     norm_host,
     path_depth,
@@ -51,9 +52,28 @@ def test_href_and_asset_helpers():
 
 
 def test_md_variant():
-    assert md_variant("https://x/docs/a") == "https://x/docs/a/index.html.md"
-    assert md_variant("https://x/docs/a/") == "https://x/docs/a/index.html.md"
+    # Mintlify / llms.txt convention: the markdown twin is `<path>.md`, which is
+    # exactly what an llms.txt link list already points at. The older
+    # `<path>/index.html.md` form 404s on these sites.
+    assert md_variant("https://x/docs/a") == "https://x/docs/a.md"
+    assert md_variant("https://x/docs/a/") == "https://x/docs/a.md"
     assert md_variant("https://x/docs/a.html") == "https://x/docs/a.html.md"
+    # Idempotent: an already-.md url (llms.txt hands these directly) is unchanged.
+    assert md_variant("https://x/docs/a.md") == "https://x/docs/a.md"
+    # Site root has no `<path>.md` twin — leave it for the HTML fallback.
+    assert md_variant("https://x/") == "https://x/"
+
+
+def test_md_twins_only_counts_per_page_md_links():
+    # Mintlify llms.txt: per-page `.md` twins -> canonical page urls, md-capable.
+    assert md_twins(["https://x/docs/a.md", "https://x/docs/b.md"]) == [
+        "https://x/docs/a",
+        "https://x/docs/b",
+    ]
+    # Generic bundle-only llms.txt (svelte-shaped): NO per-page `.md` -> empty, so
+    # the crawl stays md-incapable and never double-fetches a 404ing twin.
+    assert md_twins(["https://x/llms-full.txt", "https://x/llms-small.txt"]) == []
+    assert md_twins([]) == []
 
 
 def test_clean_url_strips_query_and_fragment():

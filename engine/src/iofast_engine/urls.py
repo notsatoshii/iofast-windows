@@ -96,16 +96,29 @@ def locale_dupe(url: str, keep: frozenset = frozenset()) -> bool:
 
 
 def md_variant(url: str) -> str:
-    """Markdown twin of a docs URL (harvested from docs-mcp-server WebScraperStrategy)."""
+    """Markdown twin of a docs URL, Mintlify / llms.txt convention: `<path>.md`.
+
+    This is exactly the URL an llms.txt link list already points at, so the
+    round-trip (strip `.md` for the canonical page name, re-append here to fetch)
+    is exact. Idempotent when handed an already-.md url. The site root has no
+    twin — the caller's md-probe just re-fetches it as HTML.
+    """
     parsed = urlparse(url)
-    path = parsed.path
-    if path.endswith("/"):
-        new = f"{path}index.html.md"
-    elif "." in path.rsplit("/", 1)[-1]:
-        new = f"{path}.md"
-    else:
-        new = f"{path}/index.html.md"
-    return parsed._replace(path=new).geturl()
+    path = parsed.path.rstrip("/")
+    if not path or path.endswith(".md"):
+        return url
+    return parsed._replace(path=f"{path}.md").geturl()
+
+
+def md_twins(llms_urls):
+    """Canonical page urls for the `.md` twins in an llms.txt link list.
+
+    Empty when the llms.txt lists no per-page `.md` (a generic bundle-only
+    llms.txt — llms-full.txt and friends). An empty result is the signal to
+    NOT treat the crawl as markdown-capable, so pages fetch their html directly
+    instead of double-fetching a twin that 404s.
+    """
+    return [u[:-3] for u in llms_urls if u.endswith(".md")]
 
 
 def reject_url(url, host, scope, max_depth, keep_locales=frozenset()):
