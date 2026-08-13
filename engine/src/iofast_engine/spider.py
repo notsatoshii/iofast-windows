@@ -65,6 +65,15 @@ def _proxy_kwarg(raw):
     return {}
 
 
+def _single_proxy(raw):
+    """First IOFAST_PROXY value, or None. The interactive solve+continue pair
+    pins ONE non-rotating proxy (cf_clearance is IP-bound), so it cannot use the
+    per-fetch rotator _proxy_kwarg builds for the tiers.
+    """
+    proxies = [p for p in (raw or "").replace(",", " ").split() if p]
+    return proxies[0] if proxies else None
+
+
 class DocSpider(Spider):
     name = "iofast_docs"
 
@@ -77,6 +86,9 @@ class DocSpider(Spider):
     # object.__new__) read as "no cancel requested, no previous run".
     cancel_event = None
     _pause_sent = False
+    _solve_lock = None  # lazily created asyncio.Lock: one headed handoff at a time
+    interactive = False  # instances set their own; default = no human CAPTCHA handoff
+    solve_proxy = None
     resume = False  # instances set their own; default keeps fresh runs unchanged
     previous: dict = {}  # read-only fallback; instances get their own in __init__
     validators = None  # lazy: written only through _remember_validators
@@ -94,6 +106,7 @@ class DocSpider(Spider):
         cancel_event=None,
         previous=None,
         resume=False,
+        interactive=False,
         **kwargs,
     ):
         self.emit = emit or (lambda event: None)
@@ -102,6 +115,13 @@ class DocSpider(Spider):
         self.cancel_event = cancel_event
         self._pause_sent = False
         self._cancel_lock = threading.Lock()
+        # Interactive CAPTCHA handoff: on a challenge the stealth tier can't
+        # auto-solve, open a visible browser for a one-time human solve (solve.py).
+        # Default off — scheduled/unattended runs never block on a human. The
+        # solve+continue pins ONE proxy (cf_clearance is IP-bound), so it takes
+        # the first IOFAST_PROXY value, never the tiers' rotator.
+        self.interactive = bool(interactive)
+        self.solve_proxy = _single_proxy(os.environ.get("IOFAST_PROXY"))
         # The CLI resolves and fingerprints the start URL once, then passes both in.
         resolved = resolve_start(start_url, emit=self.emit) if resolve else start_url
         parsed = urlparse(resolved)
@@ -296,6 +316,47 @@ class DocSpider(Spider):
                 self._pause_sent = True
             except (RuntimeError, AttributeError):
                 pass
+
+    async def _solve(self, url, depth, escalated):
+        """Interactive CAPTCHA handoff: run the blocking headed solve off the
+        asyncio loop, then ingest the headless continue's response. Returns True
+        iff a page was written. Sync playwright cannot run inside the running
+        loop, so the solve goes to an executor thread (which has none). The
+        solved page is treated as a leaf — its links are NOT followed (a page
+        that needed a human is rescued content, not a crawl frontier).
+        """
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        if self._solve_lock is None:
+            # Created here (not __init__): the spider is constructed off-loop.
+            # The check-and-set has no await between, so it is atomic w.r.t. the
+            # single-threaded event loop — no double-create race.
+            self._solve_lock = asyncio.Lock()
+        try:
+            async with self._solve_lock:  # one headed handoff at a time
+                resp = await loop.run_in_executor(None, self._solve_blocking, url)
+        except Exception as exc:  # a headed browser is fragile; never crash the crawl
+            self.emit({"type": "warning", "url": url, "message": f"⚠️  solve failed: {exc}"})
+            return False
+        if resp is None or resp.status != 200:
+            return False
+        headers = dict(resp.headers or {})
+        body = _body_text(resp)
+        if is_challenge(resp.status, headers, body):
+            return False
+        content, how = page_content(body, url, self.selectors)
+        if len(content) < THIN_CHARS:
+            return False
+        self._write(url, content, "stealth", f"human-solved:{how}", escalated, resp.status)
+        return True
+
+    def _solve_blocking(self, url):
+        from .solve import solve_and_continue
+
+        return solve_and_continue(
+            url, proxy=self.solve_proxy, cancel_event=self.cancel_event, emit=self.emit
+        )
 
     def reject(self, url: str):
         return reject_url(url, self.host, self.scope, self.max_depth, self.keep_locales)
@@ -515,6 +576,10 @@ class DocSpider(Spider):
             escalation = self._escalate(origin_url, tier, "stealth", depth, reason)
             if escalation:
                 yield escalation
+            elif challenged and self.interactive and self.browsers and await self._solve(
+                origin_url, depth, escalated
+            ):
+                return  # human solved it; _solve wrote the page
             elif not self._write_best(origin_url):
                 self.ledger.record(
                     origin_url,

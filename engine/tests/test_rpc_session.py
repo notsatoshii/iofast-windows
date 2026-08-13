@@ -46,7 +46,7 @@ def join(server, name="scrape"):
 
 
 def canned_scrape(events, result):
-    def fake(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, env=None):
+    def fake(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, interactive=False, env=None):
         for event in events:
             emit(event)
         return dict(result, out_dir=out)
@@ -106,7 +106,7 @@ def test_cancel_without_scrape_and_rid_mismatch(monkeypatch):
 
     hold = threading.Event()
 
-    def blocking(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, env=None):
+    def blocking(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, interactive=False, env=None):
         hold.wait(timeout=5)
         return {"written": 0, "out_dir": out, "exit_code": 3, "cancelled": True, "manifest": {}}
 
@@ -205,7 +205,7 @@ def test_scrape_resume_threads_through_when_checkpoint_exists(tmp_path, monkeypa
     (tmp_path / ".crawl" / "checkpoint.pkl").write_bytes(b"ckpt")
     seen = {}
 
-    def record(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, env=None):
+    def record(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, interactive=False, env=None):
         seen.update(resume=resume, update=update)
         return {"written": 0, "out_dir": out, "exit_code": 0, "cancelled": False, "manifest": {}}
 
@@ -221,6 +221,50 @@ def test_scrape_resume_threads_through_when_checkpoint_exists(tmp_path, monkeypa
     )
     join(server)
     assert seen == {"resume": True, "update": False}
+
+
+# ---------- interactive (Phase 4 slice #5: CAPTCHA handoff) ----------
+
+
+def test_scrape_rejects_interactive_wrong_type():
+    """MUST-FAIL: interactive is a boolean, like update/resume."""
+    server, out = make_server()
+    server.dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "scrape",
+            "params": {"url": URL, "out": "/tmp/x", "interactive": "yes"},
+        }
+    )
+    error = json.loads(lines(out)[0])["error"]
+    assert error["code"] == rpc.INVALID_PARAMS
+    assert "interactive must be a boolean" in error["message"]
+    assert "scrape" not in server.threads, "no run thread may start on bad params"
+
+
+def test_scrape_interactive_threads_through(monkeypatch):
+    """interactive reaches run_scrape; omitted, it defaults False (unattended)."""
+    seen = {}
+
+    def record(url, *, out, scope, depth, max_pages, emit, cancel, on_spider,
+               update=False, resume=False, interactive=False, env=None):
+        seen[out] = interactive
+        return {"written": 0, "out_dir": out, "exit_code": 0, "cancelled": False, "manifest": {}}
+
+    monkeypatch.setattr(rpc, "run_scrape", record)
+    server, out = make_server()
+    server.dispatch(
+        {"jsonrpc": "2.0", "id": 1, "method": "scrape",
+         "params": {"url": URL, "out": "/tmp/on", "interactive": True}}
+    )
+    join(server)
+    server.dispatch(
+        {"jsonrpc": "2.0", "id": 2, "method": "scrape",
+         "params": {"url": URL, "out": "/tmp/off"}}
+    )
+    join(server)
+    assert seen == {"/tmp/on": True, "/tmp/off": False}
 
 
 # ---------- recorded session, byte-for-byte ----------
@@ -275,7 +319,7 @@ def test_cancel_during_discovery_no_spider_yet(monkeypatch):
     server, out = make_server()
     started = threading.Event()
 
-    def discovery_phase(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, env=None):
+    def discovery_phase(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, interactive=False, env=None):
         started.set()
         assert cancel.wait(timeout=5), "cancel event never arrived"
         return {"written": 0, "out_dir": out, "exit_code": 3, "cancelled": True, "manifest": {}}
@@ -305,7 +349,7 @@ def test_cancel_twice_is_idempotent_one_engine_pause(monkeypatch):
 
     spider = FakeSpider()
 
-    def with_spider(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, env=None):
+    def with_spider(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, interactive=False, env=None):
         on_spider(spider)
         assert cancel.wait(timeout=5)
         return {"written": 0, "out_dir": out, "exit_code": 1, "cancelled": True, "manifest": {}}
@@ -325,7 +369,7 @@ def test_cancel_twice_is_idempotent_one_engine_pause(monkeypatch):
 def test_clamps_reach_runner(monkeypatch):
     seen = {}
 
-    def record(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, env=None):
+    def record(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, interactive=False, env=None):
         seen.update(depth=depth, max_pages=max_pages)
         return {"written": 0, "out_dir": out, "exit_code": 3, "cancelled": False, "manifest": {}}
 
@@ -350,7 +394,7 @@ def test_eof_with_live_run_bounded_exit(monkeypatch):
     exited = {}
     started = threading.Event()
 
-    def blocking(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, env=None):
+    def blocking(url, *, out, scope, depth, max_pages, emit, cancel, on_spider, update=False, resume=False, interactive=False, env=None):
         started.set()
         assert cancel.wait(timeout=5), "shutdown must set the cancel event"
         emit({"type": "page", "url": "late"})  # lands after EOF: must be swallowed

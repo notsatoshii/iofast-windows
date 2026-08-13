@@ -7,3 +7,7 @@ dist/
 
 # manual CAPTCHA-continuity spike scratch profile (engine/tools/captcha_continuity_spike.py)
 tools/.spike_profile/
+
+# live-CF smoke result (engine/tools/captcha_solve_smoke.py) — generated per run;
+# git add -f to pin a milestone result
+tools/captcha_smoke_result.json

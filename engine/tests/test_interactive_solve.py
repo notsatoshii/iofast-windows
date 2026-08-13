@@ -1,0 +1,274 @@
+"""Interactive CAPTCHA handoff (Phase 4 slice #5).
+
+Offline unit coverage — no browser is ever launched. scrapling's StealthySession
+is stubbed with a recorder so these tests pin OUR orchestration (shared profile,
+pinned UA, single proxy, the parse trigger's gating), not scrapling's browser
+behaviour. The live headed→headless mechanism is exercised by the manual smoke
+(tools/captcha_solve_smoke.py), not here.
+"""
+import asyncio
+import threading
+
+import scrapling.fetchers as fetchers
+
+from iofast_engine import solve
+from iofast_engine.solve import _human_solve, solve_and_continue
+from iofast_engine.spider import DocSpider
+
+START = "https://docs.example.com/docs/"
+URL = "https://docs.example.com/docs/walled"
+
+
+# ---------- fakes ----------
+
+
+class FakePage:
+    """Minimal playwright-page stand-in for _human_solve.
+
+    ``htmls`` is the sequence returned by successive content() calls, so a test
+    can model "challenge, challenge, cleared".
+    """
+
+    def __init__(self, htmls, ua="RealChrome/149"):
+        self._htmls = list(htmls)
+        self._ua = ua
+        self.waits = 0
+
+    def evaluate(self, _expr):
+        return self._ua
+
+    def content(self):
+        return self._htmls.pop(0) if len(self._htmls) > 1 else self._htmls[0]
+
+    def wait_for_timeout(self, _ms):
+        self.waits += 1
+
+
+class FakeResp:
+    def __init__(self, status=200, headers=None, body=b""):
+        self.status = status
+        self.headers = headers or {}
+        self.body = body
+
+
+CLEAN_BODY = ("<html><body><article>" + "Real documentation text. " * 40 +
+              "</article></body></html>").encode()
+
+
+def fake_stealthy(record, *, headed_page=None, continue_resp=None):
+    """Return a StealthySession stand-in that records constructor kwargs and,
+    when a page_action is passed (the headed solve), drives it with headed_page.
+    """
+
+    class Fake:
+        def __init__(self, **kw):
+            self.kw = kw
+            record.append(kw)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def fetch(self, url, **kw):
+            action = kw.get("page_action")
+            if action is not None:  # the headed solve session
+                action(headed_page)
+                return FakeResp()
+            return continue_resp  # the headless continue
+
+    return Fake
+
+
+# ---------- _human_solve poll loop ----------
+
+
+def test_human_solve_detects_cleared_challenge():
+    captured = {"ua": "", "solved": False}
+    page = FakePage(["<p>just a moment...</p>", "<p>just a moment...</p>", "<h1>Docs</h1>"])
+    _human_solve(page, timeout_s=5, cancel_event=None, captured=captured)
+    assert captured["solved"] is True
+    assert captured["ua"] == "RealChrome/149"
+
+
+def test_human_solve_times_out_without_solve():
+    captured = {"ua": "", "solved": False}
+    page = FakePage(["<p>just a moment...</p>"])  # never clears
+    _human_solve(page, timeout_s=0, cancel_event=None, captured=captured)
+    assert captured["solved"] is False
+
+
+def test_human_solve_aborts_on_cancel():
+    captured = {"ua": "", "solved": False}
+    cancel = threading.Event()
+    cancel.set()
+    page = FakePage(["<h1>Docs</h1>"])  # would solve, but cancel wins
+    _human_solve(page, timeout_s=5, cancel_event=cancel, captured=captured)
+    assert captured["solved"] is False
+
+
+# ---------- solve_and_continue orchestration ----------
+
+
+def test_solve_and_continue_pins_profile_ua_and_single_proxy(monkeypatch):
+    record = []
+    resp = FakeResp(status=200, body=CLEAN_BODY)
+    page = FakePage(["<h1>Docs</h1>"])  # cleared immediately
+    monkeypatch.setattr(
+        fetchers, "StealthySession",
+        fake_stealthy(record, headed_page=page, continue_resp=resp),
+    )
+    events = []
+    out = solve_and_continue(URL, proxy="http://pinned:9", timeout=5, emit=events.append)
+
+    assert out is resp
+    headed, cont = record
+    # Headed solve is visible, does NOT auto-solve, uses the single pinned proxy.
+    assert headed["headless"] is False
+    assert headed["solve_cloudflare"] is False
+    assert headed["proxy"] == "http://pinned:9"
+    # Continue is headless, same profile, the captured build UA, same single proxy.
+    assert cont["headless"] is True
+    assert cont["user_data_dir"] == headed["user_data_dir"], "must share one profile"
+    assert cont["useragent"] == "RealChrome/149"
+    assert cont["proxy"] == "http://pinned:9"
+    assert any(e["type"] == "human_required" for e in events)
+
+
+def test_solve_and_continue_no_proxy_omits_kwarg(monkeypatch):
+    record = []
+    page = FakePage(["<h1>ok</h1>"])
+    monkeypatch.setattr(
+        fetchers, "StealthySession",
+        fake_stealthy(record, headed_page=page, continue_resp=FakeResp(body=CLEAN_BODY)),
+    )
+    solve_and_continue(URL, proxy=None, timeout=5, emit=lambda e: None)
+    for kw in record:
+        assert "proxy" not in kw
+
+
+def test_solve_and_continue_returns_none_and_warns_on_timeout(monkeypatch):
+    record = []
+    page = FakePage(["<p>just a moment...</p>"])  # never clears
+    monkeypatch.setattr(
+        fetchers, "StealthySession",
+        fake_stealthy(record, headed_page=page, continue_resp=FakeResp(body=CLEAN_BODY)),
+    )
+    events = []
+    out = solve_and_continue(URL, proxy=None, timeout=0, emit=events.append)
+    assert out is None
+    assert len(record) == 1, "the headless continue must NOT run when unsolved"
+    assert any(e["type"] == "warning" for e in events)
+
+
+# ---------- spider wiring + parse trigger ----------
+
+
+def build_spider(tmp_path, monkeypatch, *, interactive):
+    monkeypatch.setattr(DocSpider, "_discover", lambda self: ([], "crawl"))
+    spider = DocSpider(START, out_dir=str(tmp_path), resolve=False, interactive=interactive)
+    spider.browsers = True  # pretend chromium is installed
+    return spider
+
+
+def test_spider_reads_interactive_and_single_proxy(tmp_path, monkeypatch):
+    monkeypatch.setenv("IOFAST_PROXY", "http://a:9, http://b:9")
+    spider = build_spider(tmp_path, monkeypatch, interactive=True)
+    assert spider.interactive is True
+    assert spider.solve_proxy == "http://a:9"  # first only, never the rotator
+
+
+class _MetaResp(FakeResp):
+    def __init__(self):
+        super().__init__(status=200, headers={"cf-mitigated": "challenge"},
+                         body=b"<html><body>just a moment...</body></html>")
+        self.meta = {"origin_url": URL, "tier": "stealth", "escalated": True, "depth": 2}
+        self.url = URL
+
+
+def _drive(spider, resp):
+    async def go():
+        return [x async for x in spider.parse(resp)]
+
+    return asyncio.run(go())
+
+
+def test_parse_triggers_solve_when_interactive(tmp_path, monkeypatch):
+    spider = build_spider(tmp_path, monkeypatch, interactive=True)
+    calls = []
+
+    async def fake_solve(url, depth, escalated):
+        calls.append((url, depth, escalated))
+        return True  # pretend the human solved and the page was written
+
+    monkeypatch.setattr(spider, "_solve", fake_solve)
+    out = _drive(spider, _MetaResp())
+    assert out == []  # solved: returned without escalating or recording a failure
+    assert calls == [(URL, 2, True)]
+    assert URL not in spider.ledger.records  # no failed_fetch when solved
+
+
+def test_parse_skips_solve_when_not_interactive(tmp_path, monkeypatch):
+    spider = build_spider(tmp_path, monkeypatch, interactive=False)
+    called = []
+    monkeypatch.setattr(spider, "_solve", lambda *a: called.append(a))
+    _drive(spider, _MetaResp())
+    assert called == [], "no headed handoff on an unattended run"
+    assert spider.ledger.records[URL]["outcome"] == "failed_fetch"
+
+
+def test_solve_ingests_a_good_continue_response(tmp_path, monkeypatch):
+    spider = build_spider(tmp_path, monkeypatch, interactive=True)
+    monkeypatch.setattr(spider, "_solve_blocking",
+                        lambda url: FakeResp(status=200, body=CLEAN_BODY))
+    wrote = asyncio.run(spider._solve(URL, depth=1, escalated=True))
+    assert wrote is True
+    assert spider.written == 1
+    assert spider.ledger.records[URL]["outcome"] in ("ok", "thin_escalated_ok")
+
+
+def test_solve_returns_false_on_no_response(tmp_path, monkeypatch):
+    spider = build_spider(tmp_path, monkeypatch, interactive=True)
+    monkeypatch.setattr(spider, "_solve_blocking", lambda url: None)
+    assert asyncio.run(spider._solve(URL, depth=1, escalated=True)) is False
+    assert spider.written == 0
+
+
+def test_solve_lock_serializes_concurrent_handoffs(tmp_path, monkeypatch):
+    """At most one headed window open at a time: with concurrent_requests>1, two
+    stealth-challenged pages must not pop two browsers. The lock serializes the
+    blocking solve so the observed concurrency never exceeds 1.
+    """
+    import time
+
+    spider = build_spider(tmp_path, monkeypatch, interactive=True)
+    live = {"n": 0, "max": 0}
+
+    def blocking(url):  # runs in the executor thread; models the open window
+        live["n"] += 1
+        live["max"] = max(live["max"], live["n"])
+        time.sleep(0.05)  # widen the overlap window
+        live["n"] -= 1
+        return FakeResp(status=200, body=CLEAN_BODY)
+
+    monkeypatch.setattr(spider, "_solve_blocking", blocking)
+
+    async def go():
+        await asyncio.gather(
+            spider._solve(URL, 1, True),
+            spider._solve(URL + "/2", 1, True),
+        )
+
+    asyncio.run(go())
+    assert live["max"] == 1, "lock must serialize headed handoffs (saw overlap)"
+
+
+def test_solve_returns_false_when_still_challenged(tmp_path, monkeypatch):
+    spider = build_spider(tmp_path, monkeypatch, interactive=True)
+    monkeypatch.setattr(
+        spider, "_solve_blocking",
+        lambda url: FakeResp(status=200, headers={"cf-mitigated": "challenge"},
+                             body=b"just a moment..."),
+    )
+    assert asyncio.run(spider._solve(URL, depth=1, escalated=True)) is False

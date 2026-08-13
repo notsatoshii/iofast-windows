@@ -84,6 +84,7 @@ def run_scrape(
     on_spider=None,
     update=False,
     resume=False,
+    interactive=False,
     env=None,
 ):
     """Run one scrape; returns {written, out_dir, exit_code, cancelled, manifest}.
@@ -97,6 +98,9 @@ def run_scrape(
     resume: replay a paused crawl's checkpoint frontier; the prior manifest
     seeds the spider's ledger + seen so the resumed run's manifest still
     reconciles over the WHOLE crawl (docs/RPC.md). Mutually exclusive with update.
+    interactive: on a Cloudflare challenge the stealth tier can't auto-solve,
+    open a visible browser for a one-time human solve (solve.py). Default off —
+    unattended/scheduled runs never block on a human.
     env: request-scoped secrets (Tier 3 rescue keys) applied to os.environ for
     THIS run only and restored after — never argv, never a file (PLAN key rule).
     """
@@ -115,6 +119,7 @@ def run_scrape(
                 on_spider=on_spider,
                 update=update,
                 resume=resume,
+                interactive=interactive,
             )
         finally:
             for key, value in saved.items():
@@ -167,6 +172,7 @@ def run_scrape(
                 else None
             ),
             resume=resume,
+            interactive=interactive,
         )
         if on_spider is not None:
             on_spider(spider)

@@ -59,7 +59,8 @@ site with many sitemaps (25 fetches × 20s timeout worst case).
 
 ### `scrape`
 Params: `{"url": str, "out": str, "scope": str|null, "depth": int=3,
-"max_pages": int=200, "update": bool=false, "resume": bool=false}`.
+"max_pages": int=200, "update": bool=false, "resume": bool=false,
+"interactive": bool=false}`.
 Optional `"env": {"OPENROUTER_API_KEY": str, "IOFAST_RESCUE_MODEL": str,
 "IOFAST_PROXY": str}` — request-scoped secrets, applied to the process
 environment for THIS run only and restored after (never argv, never a file;
@@ -93,6 +94,17 @@ represents the WHOLE crawl and still reconciles (zero silent failures), instead
 of undercounting to just the resumed tail. Unlike `update`, resume does NOT send
 conditional GETs: it continues the frontier rather than re-validating fetched
 pages.
+`interactive: true` turns on the CAPTCHA handoff (PLAN Phase 4): when the
+stealth tier meets a Cloudflare challenge its auto-solver cannot clear, the
+engine opens a VISIBLE browser so the user solves it once, then continues the
+fetch headless — reusing the clearance in a shared browser profile, pinning one
+UA and one non-rotating proxy (cf_clearance binds both). A `human_required`
+event announces the window before the wait. Cancel ends the wait at the next poll (≤1s); the CLI has no cancel channel, so a headed solve there ends only on solve or timeout. Default **false**: unattended and
+scheduled runs never block on a human; they record the challenge as
+`failed_fetch` exactly as before. The solved page is treated as a leaf — its
+links are not followed. (Not yet validated against live Cloudflare — the manual
+smoke `engine/tools/captcha_solve_smoke.py` is the gate before this is exposed
+in the UI.)
 `out` is **required** — a GUI-spawned sidecar has no meaningful cwd, so the
 shell always supplies the library path. `depth` is clamped to [0, 10],
 `max_pages` to [1, 2000]; out-of-range values clamp, wrong types are `-32602`.
@@ -232,7 +244,8 @@ Every event the engine `emit()`s is forwarded verbatim as a notification:
 ```
 
 `params` **is** the engine event dict — the existing shapes (`progress`,
-`page`, `platform`, `warning`, `rescue`, `result`, `push`, `browser_install`) are the contract, plus
+`page`, `platform`, `warning`, `rescue`, `result`, `push`, `browser_install`,
+`human_required`) are the contract, plus
 one added field: `rid`, the id of the request that produced it (additive; the
 CLI's `--json` stream is untouched — rid is injected by the RPC sink only).
 Events from a `map` carry that map request's rid.

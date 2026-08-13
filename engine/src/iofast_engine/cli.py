@@ -50,6 +50,11 @@ def main(argv=None):
         action="store_true",
         help="conditional re-scrape against the previous manifest in --out (304 = keep file)",
     )
+    scrape.add_argument(
+        "--interactive",
+        action="store_true",
+        help="on an unsolvable Cloudflare challenge, open a visible browser for a one-time human solve",
+    )
     scrape.add_argument("--json", action="store_true", help="NDJSON events on stdout")
 
     map_p = sub.add_parser("map", help="discovery only: print the section tree, scrape nothing")
@@ -166,6 +171,7 @@ def main(argv=None):
         max_pages=args.max_pages,
         emit=emit,
         update=args.update,
+        interactive=args.interactive,
     )
     return result["exit_code"]
 

@@ -173,6 +173,9 @@ class RpcServer:
             return self.fail(rid, INVALID_PARAMS, "resume must be a boolean")
         if resume and update:
             return self.fail(rid, INVALID_PARAMS, "resume and update cannot both be set")
+        interactive = params.get("interactive", False)
+        if not isinstance(interactive, bool):
+            return self.fail(rid, INVALID_PARAMS, "interactive must be a boolean")
         env = params.get("env") or {}
         if not (
             isinstance(env, dict)
@@ -209,13 +212,13 @@ class RpcServer:
             self.cancelling = False
             thread = threading.Thread(
                 target=self._scrape_thread,
-                args=(rid, url, os.path.abspath(out), scope, depth, max_pages, update, resume, env, self.cancel_event),
+                args=(rid, url, os.path.abspath(out), scope, depth, max_pages, update, resume, interactive, env, self.cancel_event),
                 daemon=True,
             )
             self.threads["scrape"] = thread
             thread.start()
 
-    def _scrape_thread(self, rid, url, out, scope, depth, max_pages, update, resume, env, cancel_event):
+    def _scrape_thread(self, rid, url, out, scope, depth, max_pages, update, resume, interactive, env, cancel_event):
         try:
             result = run_scrape(
                 url,
@@ -228,6 +231,7 @@ class RpcServer:
                 on_spider=self._adopt_spider,
                 update=update,
                 resume=resume,
+                interactive=interactive,
                 env=env,
             )
             result["out_dir"] = os.path.abspath(result["out_dir"]) if result["out_dir"] else out
