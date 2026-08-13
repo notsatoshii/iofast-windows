@@ -71,6 +71,7 @@ def solve_and_continue(url, *, proxy=None, timeout=180, cancel_event=None, emit=
         {
             "type": "human_required",
             "url": url,
+            "timeout": timeout,
             "message": (
                 f"🧩 solve the challenge in the browser window to continue: {url} "
                 f"(waiting up to {timeout}s)"
@@ -112,4 +113,9 @@ def solve_and_continue(url, *, proxy=None, timeout=180, cancel_event=None, emit=
         ) as headless:
             return headless.fetch(url)
     finally:
+        # Paired with human_required on EVERY exit — solved, timed out, cancelled,
+        # or raised. A UI banner announcing the visible window has no other signal
+        # that the wait is over: the crawl runs other pages concurrently, so their
+        # events keep arriving throughout the solve and cannot mark its end.
+        emit({"type": "human_done", "url": url, "solved": captured["solved"]})
         shutil.rmtree(profile, ignore_errors=True)

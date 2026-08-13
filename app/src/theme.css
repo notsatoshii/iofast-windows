@@ -1,9 +1,29 @@
 /* Tokens shared by both surfaces. macOS utility: system font, hairline rules,
    one amber accent. Each surface owns only its own background and elevation
-   (translucent card in panel.css, opaque window in main/app.css). */
+   (translucent card in panel.css, opaque window in main/app.css).
+
+   Type is three steps, not five. The sizes drifted to 13 / 12.5 / 12 / 11.5 / 11
+   — neighbours half a pixel apart read as noise rather than hierarchy, because
+   nothing at that distance signals a level change. Each site was reclassified by
+   what it MEANS (a settings hint is secondary; a timestamp is meta), not by
+   rounding the number it happened to hold.
+
+   Space is a 4px rhythm. `--gutter` is the page edge specifically: the 18px it
+   replaces also appeared as first-run paragraph rhythm, which is a different
+   intent and keeps its own value. */
 
 .panel,
 .app {
+  --t-body: 13px;
+  --t-sub: 12px;
+  --t-meta: 11px;
+  --gutter: 16px;
+  --step-1: 4px;
+  --step-2: 8px;
+  --step-3: 12px;
+  --step-4: 16px;
+  --step-5: 24px;
+
   --fg: #f3f3f5;
   --dim: rgba(243, 243, 245, 0.52);
   --dimmer: rgba(243, 243, 245, 0.3);

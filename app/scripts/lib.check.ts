@@ -6,7 +6,7 @@
  *   node --experimental-strip-types scripts/lib.check.ts && echo ok
  */
 import assert from "node:assert/strict";
-import { DEFAULT_THRESHOLD, overThreshold, tokens, when } from "../src/lib.ts";
+import { countdown, DEFAULT_THRESHOLD, overThreshold, tokens, when } from "../src/lib.ts";
 
 // Must fire: over the limit, by one page or by thousands.
 assert.equal(overThreshold(301, 300), true);
@@ -39,3 +39,16 @@ assert.equal(ago(5), "5m ago");
 assert.equal(ago(90), "1h ago");
 assert.equal(ago(60 * 47), "47h ago");
 assert.equal(ago(60 * 49), "2d ago");
+
+// The CAPTCHA banner's countdown. Zero-pads the seconds, rounds up so the last
+// visible tick is 0:01, and never runs negative — a banner counting past the
+// engine's own deadline would claim a browser window is still waiting when the
+// engine has already given up on it.
+assert.equal(countdown(180_000), "3:00");
+assert.equal(countdown(125_000), "2:05");
+assert.equal(countdown(60_000), "1:00");
+assert.equal(countdown(59_400), "1:00");
+assert.equal(countdown(9_000), "0:09");
+assert.equal(countdown(1), "0:01");
+assert.equal(countdown(0), "0:00");
+assert.equal(countdown(-5_000), "0:00");

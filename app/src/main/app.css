@@ -7,17 +7,23 @@
 .app {
   --bg: #1c1c1f;
   --sunken: rgba(0, 0, 0, 0.22);
+  /* A wash of the accent, for the one banner that asks the user to act. */
+  --attention: rgba(240, 165, 90, 0.13);
   min-height: 100vh;
   background: var(--bg);
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  font-size: 13px;
+  font-size: var(--t-body);
 }
 
 @media (prefers-color-scheme: light) {
   .app {
     --bg: #fbfbfc;
     --sunken: rgba(0, 0, 0, 0.03);
+    /* Light mode's accent is a dark bronze, so the wash is mixed from the dark
+       scheme's amber instead — tinting with #a4570e reads as mud, not as a
+       highlight. */
+    --attention: rgba(240, 165, 90, 0.22);
   }
 }
 
@@ -38,7 +44,7 @@ body.app-window {
   align-items: center;
   justify-content: space-between;
   height: 46px;
-  padding: 0 18px;
+  padding: 0 var(--gutter);
   border-bottom: 1px solid var(--hairline);
   background: var(--bg);
 }
@@ -47,7 +53,7 @@ body.app-window {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--t-body);
   font-weight: 590;
   letter-spacing: -0.01em;
 }
@@ -65,7 +71,7 @@ body.app-window {
   color: var(--dim);
   cursor: default;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--t-sub);
   transition: color 120ms ease-out, background-color 120ms ease-out;
 }
 
@@ -86,9 +92,9 @@ body.app-window {
   align-items: center;
   gap: 12px;
   height: 38px;
-  padding: 0 18px;
+  padding: 0 var(--gutter);
   border-bottom: 1px solid var(--hairline);
-  font-size: 12px;
+  font-size: var(--t-sub);
 }
 
 .app .strip-what {
@@ -136,13 +142,73 @@ body.app-window {
   }
 }
 
+/* --- human-solve banner ---------------------------------------------------- */
+/* A visible browser window is open and the run is blocked on a person. Unlike
+   the strip's note — one slot that the next fetched page overwrites — this
+   persists for the whole wait, because the crawl keeps reporting other pages
+   throughout it. Tinted rather than dim: it is the only thing on screen asking
+   the user to go and do something. */
+
+.app .solve {
+  display: flex;
+  align-items: center;
+  gap: var(--step-3);
+  padding: 10px var(--gutter);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--attention);
+  font-size: var(--t-sub);
+}
+
+.app .solve-what {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app .solve-hint {
+  color: var(--dim);
+  font-size: var(--t-meta);
+}
+
+.app .solve-host {
+  flex: none;
+  overflow: hidden;
+  max-width: 30%;
+  color: var(--dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app .solve-left {
+  flex: none;
+  font-size: var(--t-body);
+  font-variant-numeric: tabular-nums;
+  font-weight: 590;
+}
+
+/* The last half-minute. The window is about to close and the page be skipped. */
+.app .solve-left[data-low="1"] {
+  color: var(--bad);
+}
+
+/* The shared .btn is deliberately quiet — a hairline border and dimmed text —
+   which is right everywhere it sits on a plain surface. On this tinted band,
+   under a running clock, the one action must not be the faintest thing in the
+   row, so it takes the stronger border and full-strength label here only. */
+.app .solve .btn {
+  border-color: var(--hairline-strong);
+  color: var(--fg);
+}
+
 /* --- add a URL ------------------------------------------------------------- */
 
 .app .add {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 18px;
+  padding: var(--step-3) var(--gutter);
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -155,7 +221,7 @@ body.app-window {
   color: var(--fg);
   caret-color: var(--accent);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--t-body);
   outline: none;
   -webkit-user-select: text;
   user-select: text;
@@ -179,26 +245,26 @@ body.app-window {
   overflow: hidden;
   max-width: 40%;
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--t-sub);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .app .alert {
-  padding: 10px 18px;
+  padding: 10px var(--gutter);
   border-bottom: 1px solid var(--hairline);
   color: var(--bad);
-  font-size: 12px;
+  font-size: var(--t-sub);
 }
 
 /* --- library rows ---------------------------------------------------------- */
 
 .app .empty {
   margin: 0;
-  padding: 64px 18px;
+  padding: 64px var(--gutter);
   color: var(--dim);
-  font-size: 13px;
+  font-size: var(--t-body);
   text-align: center;
   text-wrap: balance;
 }
@@ -218,7 +284,7 @@ body.app-window {
     "dot host scope when"
     ".   facts facts acts";
   grid-template-columns: 7px auto minmax(0, 1fr) auto;
-  padding: 10px 18px 11px;
+  padding: 10px var(--gutter) 11px;
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -241,7 +307,7 @@ body.app-window {
 
 .app .run-host {
   grid-area: host;
-  font-size: 13px;
+  font-size: var(--t-body);
   letter-spacing: -0.006em;
 }
 
@@ -249,7 +315,7 @@ body.app-window {
   grid-area: scope;
   overflow: hidden;
   color: var(--dim);
-  font-size: 12.5px;
+  font-size: var(--t-sub);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -257,7 +323,7 @@ body.app-window {
 .app .run-when {
   grid-area: when;
   color: var(--dimmer);
-  font-size: 11.5px;
+  font-size: var(--t-meta);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -265,14 +331,21 @@ body.app-window {
 .app .run-facts {
   grid-area: facts;
   color: var(--dim);
-  font-size: 11.5px;
+  font-size: var(--t-meta);
   font-variant-numeric: tabular-nums;
+}
+
+/* Whether a run is kept fresh is now readable without hovering it. */
+.app .run-auto {
+  color: var(--accent);
 }
 
 /* Actions sit in reserved space, so revealing them never moves a row. */
 .app .run-acts {
   display: flex;
   grid-area: acts;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 12px;
   opacity: 0;
   transition: opacity 120ms ease-out;
@@ -286,7 +359,7 @@ body.app-window {
 
 .app .run-acts .ask {
   color: var(--dim);
-  font-size: 11.5px;
+  font-size: var(--t-meta);
 }
 
 .app .link.bad {
@@ -300,9 +373,9 @@ body.app-window {
 /* --- settings -------------------------------------------------------------- */
 
 .app .pane h2 {
-  margin: 20px 18px 2px;
+  margin: var(--step-5) var(--gutter) 2px;
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--t-sub);
   font-weight: 590;
   letter-spacing: -0.005em;
 }
@@ -312,7 +385,7 @@ body.app-window {
   align-items: center;
   justify-content: space-between;
   gap: 28px;
-  padding: 11px 18px;
+  padding: 11px var(--gutter);
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -329,7 +402,7 @@ body.app-window {
 
 .app .set-hint {
   color: var(--dim);
-  font-size: 11.5px;
+  font-size: var(--t-sub);
 }
 
 .app .set-control {
@@ -341,7 +414,7 @@ body.app-window {
 
 .app .set-unit {
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--t-sub);
 }
 
 .app .num-input {
@@ -356,7 +429,7 @@ body.app-window {
 
 .app .saved {
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--t-sub);
 }
 
 .app .path,
@@ -365,7 +438,7 @@ body.app-window {
   color: var(--dim);
   /* The one non-system family, and only for paths — a path is data, not prose. */
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
+  font-size: var(--t-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -380,15 +453,15 @@ body.app-window {
   border-radius: 5px;
   color: var(--dim);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--t-meta);
   line-height: 1.4;
 }
 
 .app .foot {
-  margin: 14px 18px 24px;
+  margin: 14px var(--gutter) var(--step-5);
   max-width: 560px;
   color: var(--dimmer);
-  font-size: 11.5px;
+  font-size: var(--t-sub);
   line-height: 1.55;
 }
 
@@ -431,7 +504,7 @@ body.app-window {
 .app .first p {
   margin: 0 0 18px;
   color: var(--dim);
-  font-size: 13px;
+  font-size: var(--t-body);
   line-height: 1.55;
   text-wrap: pretty;
 }
@@ -442,7 +515,7 @@ body.app-window {
   border-radius: 7px;
   background: var(--sunken);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--t-sub);
 }
 
 .app .first-acts {
@@ -454,7 +527,7 @@ body.app-window {
 .app .first-error {
   margin: 14px 0 0;
   color: var(--bad);
-  font-size: 12px;
+  font-size: var(--t-sub);
 }
 
 /* panel.css covers .btn/.link; these are the main window's own controls. */
@@ -471,19 +544,48 @@ body.app-window {
   }
 }
 
-/* --- mcp paste config ------------------------------------------------------ */
-/* Overrides the fixed-height row .gate for a taller card holding the config. */
-.app .gate.mcp {
+/* --- sheets (mcp paste config · ask · answer) ------------------------------- */
+/* These three were inline blocks built on .gate, so they inherited its layout
+   from panel.css. Lifted onto a scrim they no longer match .gate at all, and
+   redeclare every property that rule was quietly providing — display, the type
+   treatment, and the .acts row — rather than inheriting a card's shape from an
+   unrelated 36px-tall confirmation bar. */
+.app .scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: start center;
+  padding: 56px var(--gutter) var(--step-5);
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.app .sheet {
+  display: flex;
   flex-direction: column;
   align-items: stretch;
-  height: auto;
-  gap: 10px;
-  padding: 12px 16px;
+  box-sizing: border-box;
+  width: min(560px, 100%);
+  gap: var(--step-3);
+  padding: var(--step-4);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
   color: var(--dim);
+  font-size: var(--t-sub);
+  font-variant-numeric: tabular-nums;
   line-height: 1.5;
 }
 
-.app .gate.mcp strong {
+.app .sheet .acts {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.app .sheet strong {
   color: var(--fg);
   font-weight: 600;
 }
@@ -496,7 +598,7 @@ body.app-window {
   background: var(--sunken);
   color: var(--fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--t-meta);
   line-height: 1.45;
   white-space: pre;
   overflow-x: auto;
@@ -504,7 +606,7 @@ body.app-window {
   overflow-y: auto;
 }
 
-.app .gate.mcp .acts {
+.app .sheet .acts {
   justify-content: flex-end;
 }
 
@@ -520,7 +622,7 @@ body.app-window {
   background: var(--sunken);
   color: var(--fg);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--t-body);
   line-height: 1.45;
 }
 
@@ -534,7 +636,7 @@ body.app-window {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--t-body);
   max-height: 360px;
 }
 
@@ -545,7 +647,7 @@ body.app-window {
 }
 
 .app .notices {
-  margin: 8px 18px 0;
+  margin: var(--step-2) var(--gutter) 0;
   max-height: 440px;
   white-space: pre-wrap;
   word-break: break-word;

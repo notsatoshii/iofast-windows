@@ -135,6 +135,51 @@ First-run chooser; remembered; changeable in settings (locked decision).
 - Pause/resume long crawls (Scrapling checkpoints), scheduled re-scrapes ("keep React docs fresh weekly"). **SHIPPED.** `scrape` gained `resume: bool` — Stop already pauses+checkpoints (`<out>/.crawl/checkpoint.pkl`), and resume replays that frontier while seeding the ledger (including fileless failure/cancelled rows) from the prior manifest so the resumed run's manifest reconciles over the whole crawl; mutually exclusive with `update`. The app shows a per-run Resume button (when a checkpoint exists) and a per-run Auto control (daily/weekly) driven by a resident scheduler thread over the existing `update` conditional-GET path, one scrape at a time.
 - Scheduled re-scrapes when the app was never opened (decision **D3**). **SHIPPED (start at login).** The scheduler is a thread inside the tray app, so it only fires while the app runs; D3 chose "a LaunchAgent launches THE APP" over a second headless scraper, which keeps one scraping process and needs no new cross-process locking. `app/src-tauri/src/autostart.rs` writes `~/Library/LaunchAgents/com.iofast.desktop.plist` (`RunAtLoad`, running `/usr/bin/open -g -a <bundle>`), with a Settings → Startup toggle over `autostart_get`/`autostart_set`; disabling deletes the plist. `tauri-plugin-single-instance` is NOT pulled in: LaunchServices already reuses a running bundle, measured here — `open -g -a` against a running app left its pid unchanged (839 before and after). Deliberately absent: `KeepAlive` (it would fight Quit) and `StartInterval` (the app stays resident, and schedule.rs re-checks after a sleep) — add an interval only if "quit all day, still expected a scrape" becomes a real complaint. Enabling is refused, with a message in the row, for any copy whose path will not survive to the next login: a dev build, a copy still running from the mounted `.dmg`, and a Gatekeeper-translocated copy (this build is unsigned, so a quarantined first run executes from a random temporary mount). Remaining ceiling: macOS 13+ can disable the agent under System Settings → Login Items without touching the plist, and that switch is invisible to the toggle — reading it needs `SMAppService`.
 - Signing/notarization + auto-update when distribution flips on (deferred by decision; structure — config file, CI matrix builds — ready from Phase 2). **STRUCTURE SHIPPED (inert).** `tauri.conf` macOS block (unset `signingIdentity` = no codesign unless `APPLE_SIGNING_IDENTITY` is present), `entitlements.plist` for the frozen-sidecar + downloaded-Chromium model, a tag/dispatch-only unsigned release CI matrix, and `docs/DISTRIBUTION.md`. Auto-update (`tauri-plugin-updater`) intentionally NOT added — it risked the cargo-1.78/edition2024 floor, which has since moved (rust-toolchain.toml pins 1.97.1, D2 2026-08-12); the plugin is now viable and waits only for distribution to flip on. Documented in DISTRIBUTION.md. Sidecar-into-bundle wiring is a documented TODO.
+- UI slice (#7), the last one. **NO NEW FUNCTIONALITY LIVES INSIDE #7** — it moves,
+  groups and restyles what earlier slices already shipped, and anything that would
+  add a capability belongs in its own slice. **SHIPPED (structure + visual pass).**
+  Three things, all in `app/src/`:
+  1. **The human-solve banner.** A challenge handoff opens a browser window and
+     blocks the run on a person for up to three minutes, and the app announced it
+     into the one status-note slot that the very next fetched page overwrites (the
+     crawl runs 4 requests concurrently, `spider.py`). Both surfaces now hold a
+     persistent banner for the whole wait, with an m:ss countdown that turns red in
+     the last 30 seconds. This needed the engine's only change in the slice, and it
+     is additive: `human_required` gained `timeout` (the budget in seconds, so the
+     app does not hardcode a copy of the engine's own default), and a new
+     `human_done` carrying `solved: bool` fires from a `finally` on EVERY exit —
+     solved, timed out, cancelled, or raised — because concurrent page events
+     cannot mark the end of a wait. There is ONE cancel channel per run
+     (`rpc.py` makes a single `cancel_event` per scrape), so the banner's button
+     ends the run exactly as Stop does; letting the wait time out is what abandons
+     just the one page, and the banner says so.
+  2. **Library-row actions, split.** Nine equal-weight links appeared together on
+     hover, which said nothing about which one was wanted. Primary set is Open
+     folder / Resume / Re-scrape / More…; the rest sit behind More… using the same
+     row-state swap the delete confirmation and Open-in picker already used — no
+     popover, no outside-click handling, no change in row height. Schedule state
+     moved into the always-visible facts line, so "is this kept fresh?" no longer
+     requires hovering.
+  3. **Sheets.** The MCP-config, Ask-AI and answer cards were spliced inline above
+     the library and shoved every run down the window; they are now one scrim-backed
+     sheet (Escape and scrim-click close; the Ask card refuses while its request is
+     in flight). They had inherited layout from `.gate` in panel.css, so the sheet
+     redeclares what that rule was silently providing.
+
+  Visual pass: type collapsed from five drifting steps (13/12.5/12/11.5/11 — half-pixel
+  neighbours read as noise, not hierarchy) to three tokens, each site reclassified by
+  what it MEANS rather than by rounding its number, so a settings hint went UP to the
+  secondary step while a timestamp went down to meta. Spacing moved to a 4px rhythm
+  with an explicit `--gutter`; the one 18px that was paragraph rhythm rather than a
+  page edge deliberately kept its own value. Tokens live in `app/src/theme.css`.
+
+  **Deliberately not in #7:** the `interactive` toggle is still NOT exposed in
+  Settings and no scrape sends `interactive: true` — that stays gated on the manual
+  live-Cloudflare smoke below, so the banner is built and unit-covered but cannot
+  yet be triggered by an app-started run. The `tauri-plugin-clipboard-manager` swap
+  was considered and declined (see docs/DISTRIBUTION.md): `pbpaste` is a first-party
+  binary in three lines on a macOS-only panel, so the plugin would add a dependency
+  and no behaviour.
 - Generate `THIRD-PARTY-NOTICES.md` from the lockfile (scrapling BSD-3, playwright Apache-2.0, patchright, curl_cffi, lxml, browserforge, Chromium) and show it in the about panel. **SHIPPED.** `engine/packaging/gen_notices.py` reads real installed license metadata (37 pkgs + a curated Chromium runtime-download note), and the About panel embeds the file via `include_str!`; a direct-dep test guards against a new lib shipping un-noticed.
 
 ## Backlog (explicitly deferred, not dropped)

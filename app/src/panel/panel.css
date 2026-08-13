@@ -270,6 +270,25 @@ body.panel-window {
   font-variant-numeric: tabular-nums;
 }
 
+/* A visible browser window is waiting on the user. Same banner row as the map
+   offer, tinted because this one is a request rather than an option, and it
+   persists for the whole wait — the note line beside it is a single slot that
+   the next fetched page overwrites. */
+.banner.solve {
+  background: rgba(240, 165, 90, 0.13);
+  color: var(--fg);
+}
+
+.banner.solve .solve-left {
+  margin-left: 8px;
+  color: var(--dim);
+  font-weight: 590;
+}
+
+.banner.solve .solve-left[data-low="1"] {
+  color: var(--bad);
+}
+
 .sections {
   max-height: 208px;
   margin: 0;

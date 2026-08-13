@@ -90,7 +90,11 @@ hand-rolled in this codebase:
 pins **1.97.1**, adopted after a throwaway-worktree experiment built the committed
 lockfile `--locked` with all tests green. The edition2024 rejections above are
 historical context — those plugins are viable now, and each gets adopted only when
-its slice needs it (updater at distribution time, clipboard in slice #7). The D3
+its slice needs it (updater at distribution time). **Slice #7 looked at the
+clipboard swap and declined it**: `pbpaste` is a first-party macOS binary called in
+three lines, this panel ships on macOS only, and the plugin would add a dependency
+without changing any behaviour. The portable route becomes worth its cost when
+Windows lands, not before. The D3
 LaunchAgent work shipped without `tauri-plugin-single-instance` — its plist runs
 `/usr/bin/open -g -a <bundle>`, and LaunchServices already activates a running
 bundle instead of starting a second copy (see `src/autostart.rs`). The committed `Cargo.lock` stays

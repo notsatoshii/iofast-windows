@@ -58,6 +58,18 @@ export function tokens(n: number): string {
   return String(n);
 }
 
+/**
+ * Remaining human-solve time as m:ss, for the CAPTCHA banner's countdown.
+ * Clamped at zero: the engine stops waiting at its own deadline, and a banner
+ * counting into negatives would claim the window is still live when it is not.
+ * Rounds up, so the last visible second is 0:01 rather than a premature 0:00.
+ * Checked by scripts/lib.check.ts.
+ */
+export function countdown(msLeft: number): string {
+  const secs = Math.max(0, Math.ceil(msLeft / 1000));
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+}
+
 /** Coarse on purpose — the useful question is "is this stale", not "when". */
 export function when(ms: number, now = Date.now()): string {
   const mins = Math.floor((now - ms) / 60_000);

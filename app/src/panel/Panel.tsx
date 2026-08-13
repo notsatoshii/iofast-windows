@@ -2,11 +2,19 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 
-import { DEFAULT_THRESHOLD, overThreshold, type Boot } from "../lib";
+import { countdown, DEFAULT_THRESHOLD, overThreshold, type Boot } from "../lib";
 import { parseTarget, scopePrefix } from "./scope";
 
 /** docs/RPC.md: `params` of an `event` notification IS the engine event dict. */
-type EngineEvent = { type: string; rid?: number; n?: number; message?: string };
+type EngineEvent = {
+  type: string;
+  rid?: number;
+  n?: number;
+  message?: string;
+  url?: string;
+  /** `human_required` only: the human-solve budget, in seconds. */
+  timeout?: number;
+};
 type ScrapeResult = {
   written: number;
   out_dir: string;
@@ -41,6 +49,9 @@ type Phase =
   | { k: "failed"; message: string; outDir?: string };
 
 type Run = { rid: number; url: string; scope: string; out: string };
+/** A visible browser window is waiting on the user (docs/RPC.md `human_required`).
+ *  Absolute deadline, not a remaining count, so the countdown cannot drift. */
+type Solve = { deadline: number };
 
 const DEBOUNCE_MS = 250;
 /** Client-side abandon. docs/RPC.md: the server's own budget is 800ms. */
@@ -68,6 +79,8 @@ export default function Panel() {
   const [narrowing, setNarrowing] = useState(false);
   /** Set when Enter hit the large-crawl threshold; cleared by either answer. */
   const [gate, setGate] = useState<number | null>(null);
+  const [solve, setSolve] = useState<Solve | null>(null);
+  const [left, setLeft] = useState(0);
   const threshold = useRef(DEFAULT_THRESHOLD);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -198,6 +211,14 @@ export default function Panel() {
     const events = listen<EngineEvent>("engine-event", (e) => {
       const run = runRef.current;
       if (!run || e.payload.rid !== run.rid) return;
+      if (e.payload.type === "human_required") {
+        setSolve({ deadline: Date.now() + (e.payload.timeout ?? 0) * 1000 });
+        return;
+      }
+      if (e.payload.type === "human_done") {
+        setSolve(null);
+        return;
+      }
       if (typeof e.payload.n === "number") setPages(e.payload.n);
       if (typeof e.payload.message === "string") setNote(tidy(e.payload.message));
     });
@@ -208,6 +229,7 @@ export default function Panel() {
       const restart = restartRef.current;
       restartRef.current = null;
       runRef.current = null;
+      setSolve(null);  // a sidecar that dies mid-solve emits no human_done
       if (restart) {
         void startScrape(run.url, restart, run.out);
         return;
@@ -233,6 +255,16 @@ export default function Panel() {
       void all.then((fns) => fns.forEach((f) => f()));
     };
   }, [startScrape]);
+
+  // Tick the human-solve countdown against an absolute deadline, so a slow
+  // paint never reads as more time than the engine actually allows.
+  useEffect(() => {
+    if (!solve) return;
+    const tick = () => setLeft(solve.deadline - Date.now());
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [solve]);
 
   // Transparent window: an oversized one would eat clicks meant for what is
   // behind it, so the window tracks the card instead of the other way round.
@@ -415,6 +447,19 @@ export default function Panel() {
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {solve && (
+        <div className="banner solve" role="status">
+          <span>
+            Solve the challenge in the browser window
+            <span className="solve-left" data-low={left <= 30_000 ? "1" : "0"}>
+              {countdown(left)}
+            </span>
+          </span>
+          {/* No Stop here: the panel's own Cancel is two rows up and does the
+              same thing (one cancel channel per run — see App.tsx). */}
         </div>
       )}
 

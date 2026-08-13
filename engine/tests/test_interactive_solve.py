@@ -162,6 +162,77 @@ def test_solve_and_continue_returns_none_and_warns_on_timeout(monkeypatch):
     assert any(e["type"] == "warning" for e in events)
 
 
+# ---------- the human_required / human_done pair (UI banner contract) ----------
+#
+# A UI banner announcing the visible browser window needs two things the crawl
+# itself cannot supply: how long the human has, and when the wait is over. The
+# crawl fetches other pages throughout the solve, so their events arrive during
+# the wait and cannot mark its end. Both come from this pair.
+
+
+def only(events, kind):
+    matches = [e for e in events if e["type"] == kind]
+    assert len(matches) == 1, f"expected exactly one {kind}, got {len(matches)}"
+    return matches[0]
+
+
+def test_human_required_carries_the_solve_deadline(monkeypatch):
+    """The countdown reads this field. Without it the app would have to hardcode
+    the engine's own default, and drift the day that default moves."""
+    page = FakePage(["<h1>ok</h1>"])
+    monkeypatch.setattr(
+        fetchers, "StealthySession",
+        fake_stealthy([], headed_page=page, continue_resp=FakeResp(body=CLEAN_BODY)),
+    )
+    events = []
+    solve_and_continue(URL, timeout=42, emit=events.append)
+    asked = only(events, "human_required")
+    assert asked["timeout"] == 42
+    assert asked["url"] == URL
+
+
+def test_human_done_reports_a_solve(monkeypatch):
+    page = FakePage(["<h1>ok</h1>"])
+    monkeypatch.setattr(
+        fetchers, "StealthySession",
+        fake_stealthy([], headed_page=page, continue_resp=FakeResp(body=CLEAN_BODY)),
+    )
+    events = []
+    solve_and_continue(URL, timeout=5, emit=events.append)
+    assert only(events, "human_done")["solved"] is True
+    kinds = [e["type"] for e in events]
+    assert kinds.index("human_required") < kinds.index("human_done"), "banner opens before it closes"
+
+
+def test_human_done_reports_an_unsolved_wait(monkeypatch):
+    page = FakePage(["<p>just a moment...</p>"])  # never clears
+    monkeypatch.setattr(
+        fetchers, "StealthySession",
+        fake_stealthy([], headed_page=page, continue_resp=FakeResp(body=CLEAN_BODY)),
+    )
+    events = []
+    solve_and_continue(URL, timeout=0, emit=events.append)
+    assert only(events, "human_done")["solved"] is False
+
+
+def test_human_done_fires_even_when_the_browser_raises(monkeypatch):
+    """The must-fail case for the banner: a headed browser is fragile, and a
+    raised solve is the one path that would otherwise leave the banner stuck on
+    screen for the rest of the run."""
+
+    class Exploding:
+        def __init__(self, **kw):
+            raise RuntimeError("chromium refused to launch")
+
+    monkeypatch.setattr(fetchers, "StealthySession", Exploding)
+    events = []
+    try:
+        solve_and_continue(URL, timeout=5, emit=events.append)
+    except RuntimeError:
+        pass  # the spider catches this; the event must still have been sent
+    assert only(events, "human_done")["solved"] is False
+
+
 # ---------- spider wiring + parse trigger ----------
 
 

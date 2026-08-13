@@ -99,7 +99,12 @@ stealth tier meets a Cloudflare challenge its auto-solver cannot clear, the
 engine opens a VISIBLE browser so the user solves it once, then continues the
 fetch headless — reusing the clearance in a shared browser profile, pinning one
 UA and one non-rotating proxy (cf_clearance binds both). A `human_required`
-event announces the window before the wait. Cancel ends the wait at the next poll (≤1s); the CLI has no cancel channel, so a headed solve there ends only on solve or timeout. Default **false**: unattended and
+event announces the window before the wait, carrying `url` and `timeout` (the
+human-solve budget in seconds); a `human_done` event carrying `url` and
+`solved: bool` closes it on EVERY exit — solved, timed out, cancelled, or
+raised. The pair is what a UI banner brackets on: the crawl fetches other pages
+throughout the solve, so its own events keep arriving during the wait and cannot
+mark its end. Cancel ends the wait at the next poll (≤1s); the CLI has no cancel channel, so a headed solve there ends only on solve or timeout. Default **false**: unattended and
 scheduled runs never block on a human; they record the challenge as
 `failed_fetch` exactly as before. The solved page is treated as a leaf — its
 links are not followed. (Not yet validated against live Cloudflare — the manual
@@ -245,7 +250,7 @@ Every event the engine `emit()`s is forwarded verbatim as a notification:
 
 `params` **is** the engine event dict — the existing shapes (`progress`,
 `page`, `platform`, `warning`, `rescue`, `result`, `push`, `browser_install`,
-`human_required`) are the contract, plus
+`human_required`, `human_done`) are the contract, plus
 one added field: `rid`, the id of the request that produced it (additive; the
 CLI's `--json` stream is untouched — rid is injected by the RPC sink only).
 Events from a `map` carry that map request's rid.

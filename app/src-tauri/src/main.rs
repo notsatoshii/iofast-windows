@@ -241,9 +241,12 @@ fn panel_resize(app: AppHandle, height: f64) {
 /// zune-jpeg / getrandom releases requiring edition2024 into the *macOS* graph,
 /// which cargo 1.78 refused to parse. Pinning arboard and image back just moved
 /// the failure one crate along. `pbpaste` is a macOS built-in, and the panel is
-/// a macOS menubar utility. The toolchain floor moved (rust-toolchain.toml =
-/// 1.97.1, D2 2026-08-12), so a real clipboard crate is now viable — swap in
-/// slice #7 if it earns its place.
+/// a macOS menubar utility. The toolchain floor has since moved
+/// (rust-toolchain.toml = 1.97.1, D2 2026-08-12), so the crate would now build —
+/// and slice #7 declined it anyway: three lines calling a first-party binary do
+/// the whole job on the only platform that ships this panel, so the swap would
+/// buy a dependency and no behaviour. Revisit if and when Windows lands, which
+/// is the case that actually needs a portable route.
 fn clipboard_text() -> Option<String> {
     #[cfg(target_os = "macos")]
     {

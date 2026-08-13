@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -6,6 +6,7 @@ import { parseTarget, scopePrefix } from "../panel/scope";
 import FirstRun from "./FirstRun";
 import Settings from "./Settings";
 import {
+  countdown,
   overThreshold,
   plural,
   reason,
@@ -18,7 +19,16 @@ import {
 } from "../lib";
 
 /** docs/RPC.md: `params` of an `event` notification IS the engine event dict. */
-type EngineEvent = { type: string; rid?: number; n?: number; message?: string; delta?: string };
+type EngineEvent = {
+  type: string;
+  rid?: number;
+  n?: number;
+  message?: string;
+  delta?: string;
+  url?: string;
+  /** `human_required` only: the human-solve budget, in seconds. */
+  timeout?: number;
+};
 type ScrapeResult = { written: number; out_dir: string; exit_code: number; cancelled: boolean };
 type ScrapeDone = { rid: number; result?: ScrapeResult; error?: string };
 type Started = { rid: number; url: string; out: string; update: boolean };
@@ -36,6 +46,10 @@ type AboutInfo = { app_version: string; engine_version: string; notices: string 
 type Active = { rid: number; label: string; update: boolean };
 /** A pending large-crawl confirmation. `go` is what Enter would have done. */
 type Gate = { pages: number; go: () => void };
+/** A visible browser window is open and waiting on the user (docs/RPC.md
+ *  `human_required`). `deadline` is a wall-clock ms stamp, not a remaining
+ *  count, so the countdown stays honest across a re-render or a stalled tick. */
+type Solve = { url: string; deadline: number };
 type Estimate =
   | { k: "none" }
   | { k: "estimating" }
@@ -57,6 +71,38 @@ const labelOf = (href: string) => {
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+/**
+ * The three long-form cards — the MCP paste config, the Ask-AI prompt, and an
+ * answer — used to be spliced into the pane above the library, so opening one
+ * shoved every run down the window and closing it snapped them back. Same card,
+ * lifted onto a scrim instead. Escape and a scrim click close it; `onClose` is
+ * the one place that decides whether closing is allowed at all (the Ask card
+ * refuses while its request is in flight, matching its disabled Cancel button).
+ */
+function Sheet({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    // mousedown, not click: a click that STARTS inside the card and ends on the
+    // scrim is a text selection being dragged out, not a dismissal.
+    <div
+      className="scrim"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="sheet" role="dialog" aria-modal="true">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Boot | null>(null);
   const [tab, setTab] = useState<"library" | "settings" | "about">("library");
@@ -69,9 +115,15 @@ export default function App() {
   const [active, setActive] = useState<Active | null>(null);
   const [pages, setPages] = useState(0);
   const [note, setNote] = useState("");
+  const [solve, setSolve] = useState<Solve | null>(null);
+  const [left, setLeft] = useState(0);
   const [error, setError] = useState("");
   const [doomed, setDoomed] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  /** Row whose secondary actions are showing. Same swap idiom the delete
+   *  confirmation and the Open-in picker already use — no popover to position,
+   *  no outside-click handling, and the row height never changes. */
+  const [more, setMore] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [node, setNode] = useState<string | null>(null);
   const [mcpBusy, setMcpBusy] = useState<string | null>(null);
@@ -179,6 +231,20 @@ export default function App() {
 
     const events = listen<EngineEvent>("engine-event", (e) => {
       if (e.payload.rid !== activeRef.current?.rid) return;
+      // The solve pair owns the banner and must NOT also write the status note:
+      // the note is a single slot that the very next fetched page overwrites,
+      // which is exactly why a three-minute wait needed a home of its own.
+      if (e.payload.type === "human_required") {
+        setSolve({
+          url: e.payload.url ?? "",
+          deadline: Date.now() + (e.payload.timeout ?? 0) * 1000,
+        });
+        return;
+      }
+      if (e.payload.type === "human_done") {
+        setSolve(null);
+        return;
+      }
       if (typeof e.payload.n === "number") setPages(e.payload.n);
       if (typeof e.payload.message === "string") setNote(tidy(e.payload.message));
     });
@@ -187,6 +253,9 @@ export default function App() {
       if (e.payload.rid !== activeRef.current?.rid) return;
       activeRef.current = null;
       setActive(null);
+      // Belt and braces: human_done already closes the banner on every solve
+      // exit, but a sidecar that dies mid-solve emits nothing at all.
+      setSolve(null);
       const { result, error: failure } = e.payload;
       if (failure || !result) setError(failure ?? "the sidecar returned nothing");
       else if (result.cancelled) setNote(`Stopped — ${plural(result.written, "page")} kept`);
@@ -200,6 +269,17 @@ export default function App() {
       void all.then((fns) => fns.forEach((f) => f()));
     };
   }, [refresh]);
+
+  // Tick the human-solve countdown. The deadline is absolute, so a late or
+  // coalesced tick self-corrects rather than accumulating drift — and a window
+  // the app was slow to paint never reads as more time than the engine allows.
+  useEffect(() => {
+    if (!solve) return;
+    const tick = () => setLeft(solve.deadline - Date.now());
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [solve]);
 
   // API-push answer streams in as `push` delta events; append them live while a
   // push is in flight. The final digest arrives on the awaited sidecar_push call.
@@ -317,6 +397,10 @@ export default function App() {
 
   const remove = async (run: Run) => {
     setDoomed(null);
+    // Library folders are derived from host+scope, so re-scraping the same site
+    // later reuses this exact path — a leftover `more` would reopen that new
+    // row's secondary actions for no reason.
+    setMore(null);
     try {
       await invoke("library_delete", { path: run.dir });
     } catch (e) {
@@ -438,6 +522,39 @@ export default function App() {
         </div>
       )}
 
+      {solve && (
+        <div className="solve" role="status">
+          <span className="solve-what">
+            Solve the challenge in the browser window to continue
+            <span className="solve-hint">
+              Left alone, the wait runs out and this one page is skipped — the rest of the
+              crawl carries on.
+            </span>
+          </span>
+          <span className="solve-host" title={solve.url}>
+            {labelOf(solve.url)}
+          </span>
+          <span className="solve-left" data-low={left <= 30_000 ? "1" : "0"}>
+            {countdown(left)}
+          </span>
+          {/* The engine has ONE cancel channel per run (rpc.py creates a single
+              cancel_event per scrape), so there is no skip-this-page lever: this
+              ends the run, exactly as Stop does, keeping the pages already
+              written. Ignoring the banner is the way to abandon just this page —
+              the wait times out and the crawl carries on without it. */}
+          <button
+            type="button"
+            className="btn"
+            title="End the run now — pages already scraped are kept"
+            onClick={() =>
+              active && void invoke("sidecar_cancel", { rid: active.rid }).catch(() => undefined)
+            }
+          >
+            Stop run
+          </button>
+        </div>
+      )}
+
       {tab === "settings" ? (
         <Settings config={config} onChanged={reboot} />
       ) : tab === "about" ? (
@@ -522,7 +639,7 @@ export default function App() {
           {error && <div className="alert">{error}</div>}
 
           {mcpConfig && (
-            <div className="gate mcp">
+            <Sheet onClose={() => setMcpConfig(null)}>
               <span>
                 Indexed <strong>{mcpConfig.library}</strong> for MCP search. Add this to your
                 MCP client (Claude Desktop, Cursor), then restart it. The server runs
@@ -537,11 +654,17 @@ export default function App() {
                   Close
                 </button>
               </div>
-            </div>
+            </Sheet>
           )}
 
           {ask && (
-            <div className="gate mcp ask">
+            <Sheet
+              onClose={() => {
+                // In-flight request: the answer is still streaming into this
+                // card, and its own Cancel is disabled for the same reason.
+                if (!pushBusy) setAsk(null);
+              }}
+            >
               <span>
                 Ask AI about <strong>{ask.host}</strong>. The scraped pages go to the model as
                 untrusted reference — it is told to treat them as data, never as instructions.
@@ -584,11 +707,11 @@ export default function App() {
                   Cancel
                 </button>
               </div>
-            </div>
+            </Sheet>
           )}
 
           {digest && (
-            <div className="gate mcp">
+            <Sheet onClose={() => setDigest(null)}>
               <span>
                 Answer about <strong>{digest.host}</strong> — {digest.model}, over{" "}
                 {plural(digest.files, "file")}
@@ -603,7 +726,7 @@ export default function App() {
                   Close
                 </button>
               </div>
-            </div>
+            </Sheet>
           )}
 
           {runs.length === 0 ? (
@@ -627,6 +750,16 @@ export default function App() {
                   <span className="run-facts">
                     {plural(run.pages, "page")} · {tokens(run.tokens)} tokens
                     {run.cancelled ? " · stopped early" : ""}
+                    {schedules[run.dir]?.every ? (
+                      // Schedule state reads at a glance now. It used to be legible
+                      // only by hovering the row to reveal its button, which meant
+                      // the answer to "is this kept fresh?" was hidden by default.
+                      <span className="run-auto">
+                        {" "}
+                        · auto {schedules[run.dir].every}
+                        {schedules[run.dir]?.proxy === false ? ", no proxy" : ""}
+                      </span>
+                    ) : null}
                   </span>
                   {doomed === run.dir ? (
                     <span className="run-acts asking">
@@ -655,21 +788,13 @@ export default function App() {
                         Cancel
                       </button>
                     </span>
-                  ) : (
-                    <span className="run-acts">
-                      <button
-                        type="button"
-                        className="link"
-                        onClick={() => void invoke("open_path", { path: run.dir })}
-                      >
-                        Open folder
-                      </button>
+                  ) : more === run.dir ? (
+                    // Everything rarer than "open it" or "refresh it". Splitting
+                    // the set was the point: nine equal-weight links revealed at
+                    // once told you nothing about which one you wanted.
+                    <span className="run-acts asking">
                       {agents.length > 0 && (
-                        <button
-                          type="button"
-                          className="link"
-                          onClick={() => setOpening(run.dir)}
-                        >
+                        <button type="button" className="link" onClick={() => setOpening(run.dir)}>
                           Open in…
                         </button>
                       )}
@@ -697,6 +822,40 @@ export default function App() {
                           Ask AI
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="link"
+                        title="Auto re-scrape on a schedule"
+                        onClick={() => void cycleAuto(run.dir)}
+                      >
+                        Auto: {schedules[run.dir]?.every ? cap(schedules[run.dir].every) : "off"}
+                      </button>
+                      {schedules[run.dir]?.every && (
+                        <button
+                          type="button"
+                          className="link"
+                          title="Use the Settings proxy for this run's scheduled re-scrapes"
+                          onClick={() => void toggleProxy(run.dir)}
+                        >
+                          Proxy: {schedules[run.dir]?.proxy === false ? "off" : "on"}
+                        </button>
+                      )}
+                      <button type="button" className="link" onClick={() => setDoomed(run.dir)}>
+                        Delete
+                      </button>
+                      <button type="button" className="link" onClick={() => setMore(null)}>
+                        Done
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="run-acts">
+                      <button
+                        type="button"
+                        className="link"
+                        onClick={() => void invoke("open_path", { path: run.dir })}
+                      >
+                        Open folder
+                      </button>
                       {run.resumable && !active && (
                         <button
                           type="button"
@@ -720,27 +879,10 @@ export default function App() {
                       <button
                         type="button"
                         className="link"
-                        title="Auto re-scrape on a schedule"
-                        onClick={() => void cycleAuto(run.dir)}
+                        title="Schedule, MCP search, Ask AI, delete"
+                        onClick={() => setMore(run.dir)}
                       >
-                        Auto: {schedules[run.dir]?.every ? cap(schedules[run.dir].every) : "off"}
-                      </button>
-                      {schedules[run.dir]?.every && (
-                        <button
-                          type="button"
-                          className="link"
-                          title="Use the Settings proxy for this run's scheduled re-scrapes"
-                          onClick={() => void toggleProxy(run.dir)}
-                        >
-                          Proxy: {schedules[run.dir]?.proxy === false ? "off" : "on"}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="link"
-                        onClick={() => setDoomed(run.dir)}
-                      >
-                        Delete
+                        More…
                       </button>
                     </span>
                   )}
