@@ -19,16 +19,34 @@ def header_lookup(headers: dict, name: str) -> str:
     return ""
 
 
+# Body markers. The script src is the sturdiest of the three — Cloudflare can
+# rebrand the interstitial's copy (a live custom-branded one carried no "just a
+# moment..." at all) but the challenge still has to load /cdn-cgi/challenge-platform/.
+# Checked against Cloudflare's OWN challenge documentation (2026-08-13): those pages
+# describe challenges in prose and contain none of these literals, so scraping the
+# docs that explain the mechanism does not read as the mechanism.
+CHALLENGE_MARKERS = ("just a moment...", "cf_chl_opt", "/cdn-cgi/challenge-platform/")
+# Measured 2026-08-13: a live custom-branded challenge body was 27674 bytes with its
+# first marker at 14866 — invisible to the 8000-char window this replaces. Real docs
+# pages measured 105-208KB, so the cap still avoids lowercasing a whole document;
+# it just has to clear any plausible challenge page.
+CHALLENGE_SCAN_CHARS = 65536
+
+
 def is_challenge(status: int, headers: dict, text: str) -> bool:
     """Cloudflare interstitial detection (header + body markers).
 
     `status` is part of the signature so adapters can key on it later; the
     detection itself is header+body only, exactly as before.
+
+    The body markers carry this alone whenever the caller has no headers to pass —
+    solve.py's headed poll loop reads a live page, and a page cannot see its own
+    response headers. That path is why the scan window has to clear the marker.
     """
     if "challenge" in header_lookup(headers, "cf-mitigated").lower():
         return True
-    head = text[:8000].lower()
-    return "just a moment..." in head or "cf_chl_opt" in head
+    head = text[:CHALLENGE_SCAN_CHARS].lower()
+    return any(marker in head for marker in CHALLENGE_MARKERS)
 
 
 def browsers_available() -> bool:

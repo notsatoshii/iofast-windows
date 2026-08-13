@@ -14,6 +14,7 @@ import scrapling.fetchers as fetchers
 from iofast_engine import solve
 from iofast_engine.solve import _human_solve, solve_and_continue
 from iofast_engine.spider import DocSpider
+from iofast_engine.tiers import is_challenge
 
 START = "https://docs.example.com/docs/"
 URL = "https://docs.example.com/docs/walled"
@@ -97,6 +98,64 @@ def test_human_solve_times_out_without_solve():
     page = FakePage(["<p>just a moment...</p>"])  # never clears
     _human_solve(page, timeout_s=0, cancel_event=None, captured=captured)
     assert captured["solved"] is False
+
+
+# A custom-branded Cloudflare managed challenge, modelled on www.indeed.com as
+# measured live 2026-08-13: body 27674 bytes, title "Security Check - Indeed.com",
+# "just a moment..." absent from the WHOLE body, first cf_chl_opt at byte 14866 and
+# /cdn-cgi/challenge-platform/ at 17209 — both past the old 8000-char scan window.
+# The header said cf-mitigated: challenge, but a page cannot see response headers.
+BRANDED_CHALLENGE = (
+    "<html><head><title>Security Check - Example</title></head><body>"
+    + "<div class='pad'>checking your browser</div>" * 400
+    + "<script>window._cf_chl_opt={cvId:'3'};</script>"
+    + "<script src='/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1'></script>"
+    + "</body></html>"
+)
+
+
+def test_branded_challenge_is_detected_past_the_old_scan_window():
+    """The marker's OFFSET is the defect, not its spelling: the tokens are present,
+    they just sit deeper into the page than detection used to look."""
+    assert "just a moment..." not in BRANDED_CHALLENGE.lower()
+    assert BRANDED_CHALLENGE.lower().index("cf_chl_opt") > 8000, "fixture must reproduce the offset"
+    assert is_challenge(403, {}, BRANDED_CHALLENGE)
+    assert is_challenge(200, {}, BRANDED_CHALLENGE), "_human_solve's call shape: no headers, status 200"
+
+
+def test_rebranded_challenge_is_caught_by_the_script_src_alone():
+    """Covers the marker the branded fixture cannot prove, since that one also carries
+    cf_chl_opt. This is the rotation the old detection would have missed silently:
+    the copy and the cf_chl_* names both change, but the challenge still has to fetch
+    its script from /cdn-cgi/challenge-platform/."""
+    rebranded = (
+        "<html><head><title>Verifying your request</title></head><body>"
+        + "<div class='pad'>one moment</div>" * 400
+        + "<script src='/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1'></script>"
+        + "</body></html>"
+    )
+    assert "cf_chl" not in rebranded.lower() and "just a moment..." not in rebranded.lower()
+    assert is_challenge(200, {}, rebranded)
+
+
+def test_each_body_marker_stands_on_its_own():
+    """One isolating body per marker. Without this the committed fixture — which
+    carries "just a moment..." at byte 77 — masks the other two: deleting either
+    from the marker list left the whole suite green (checked 2026-08-13)."""
+    for marker in ("just a moment...", "cf_chl_opt", "/cdn-cgi/challenge-platform/"):
+        assert is_challenge(200, {}, f"<html><body>{marker}</body></html>"), marker
+    assert not is_challenge(200, {}, "<html><body><article>Real docs.</article></body></html>")
+
+
+def test_human_solve_keeps_waiting_through_a_branded_challenge():
+    """The user-visible failure this guards: miss the marker and the loop marks the
+    page solved on its FIRST poll, so the visible window shuts before the human can
+    touch it and the headless continue walks straight into the live challenge."""
+    captured = {"ua": "", "solved": False}
+    page = FakePage([BRANDED_CHALLENGE])  # never clears
+    _human_solve(page, timeout_s=0.1, cancel_event=None, captured=captured)
+    assert captured["solved"] is False
+    assert page.waits > 0, "must keep polling while the challenge is still up"
 
 
 def test_human_solve_aborts_on_cancel():
