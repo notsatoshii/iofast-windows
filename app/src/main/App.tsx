@@ -339,6 +339,7 @@ export default function App() {
         maxPages: null,
         update: opts.update,
         resume: opts.resume,
+        interactive: config?.interactive ?? false,
       });
     } catch (e) {
       setError(reason(e));

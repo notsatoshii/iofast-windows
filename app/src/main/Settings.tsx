@@ -296,6 +296,28 @@ export default function Settings({
         </div>
       </div>
 
+      <h2>Challenges</h2>
+      <div className="set">
+        <div className="set-label">
+          Solve challenges by hand
+          <span className="set-hint">
+            When a manual scrape hits a Cloudflare challenge the stealth tier can't clear, open a
+            browser window so you can solve it, then continue in the background. Needs the browser
+            tiers above. Scheduled re-scrapes never open a window.
+          </span>
+        </div>
+        <div className="set-control">
+          {config.interactive && <span className="saved">On</span>}
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void write({ ...config, interactive: !config.interactive })}
+          >
+            {config.interactive ? "Turn off" : "Turn on"}
+          </button>
+        </div>
+      </div>
+
       <h2>Rescue</h2>
       {RESCUE_KEYS.map(keyRow)}
 

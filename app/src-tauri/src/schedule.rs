@@ -238,6 +238,7 @@ pub fn spawn_scheduler(app: AppHandle, sc: SidecarManager) {
             true,
             false,
             use_proxy,
+            false, // unattended: no human to clear a challenge
         ) {
             stamp(&app, &dir, "last_attempt_ms", now);
             stamp_on_success(&app, rid, dir);

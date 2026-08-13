@@ -1,7 +1,11 @@
 /** Shapes, formatting and the large-crawl predicate, shared by both windows. */
 
 /** Mirrors `Config` in src-tauri/src/store.rs. */
-export type Config = { library_root: string; large_crawl_threshold: number };
+export type Config = {
+  library_root: string;
+  large_crawl_threshold: number;
+  interactive: boolean;
+};
 /** `config_get`: a null config means first run. */
 export type Boot = { config: Config | null; suggested_root: string };
 

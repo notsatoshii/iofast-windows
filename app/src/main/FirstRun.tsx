@@ -27,7 +27,11 @@ export default function FirstRun({
   };
 
   const save = async () => {
-    const config: Config = { library_root: root, large_crawl_threshold: DEFAULT_THRESHOLD };
+    const config: Config = {
+      library_root: root,
+      large_crawl_threshold: DEFAULT_THRESHOLD,
+      interactive: false,
+    };
     try {
       await invoke("config_set", { config });
       onChosen();

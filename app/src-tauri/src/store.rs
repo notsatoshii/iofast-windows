@@ -21,6 +21,11 @@ pub const KEY_NAMES: [&str; 3] = ["OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL", "
 pub struct Config {
     pub library_root: String,
     pub large_crawl_threshold: u32,
+    // Manual runs open a headed browser for a human to clear a Cloudflare
+    // challenge the stealth tier can't. `default` so pre-existing config files
+    // (no key) read back as off; scheduled runs never honour it (no human).
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {

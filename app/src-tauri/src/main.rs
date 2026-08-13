@@ -80,6 +80,7 @@ pub(crate) fn fire_scrape(
     update: bool,
     resume: bool,
     use_proxy: bool,
+    interactive: bool,
 ) -> Result<u64, String> {
     let mut params = json!({ "url": url, "out": out, "scope": scope });
     // Omitted rather than null: docs/RPC.md types these, and the engine defaults them.
@@ -95,6 +96,10 @@ pub(crate) fn fire_scrape(
     }
     if resume {
         params["resume"] = json!(true);
+    }
+    // Only when the toggle is on AND a human is at the machine (manual runs).
+    if interactive {
+        params["interactive"] = json!(true);
     }
     // docs/RPC.md "API-key handoff": read from the keychain here, send in the
     // request body, per run. Never argv, never the sidecar's spawn environment.
@@ -139,6 +144,7 @@ async fn sidecar_scrape_start(
     max_pages: Option<i64>,
     update: Option<bool>,
     resume: Option<bool>,
+    interactive: Option<bool>,
 ) -> Result<u64, String> {
     fire_scrape(
         &app,
@@ -151,6 +157,7 @@ async fn sidecar_scrape_start(
         update == Some(true),
         resume == Some(true),
         true, // manual runs always honour the Settings proxy
+        interactive == Some(true),
     )
 }
 
