@@ -1,0 +1,37 @@
+{
+  "pages_total": 4,
+  "pages_ok": 4,
+  "chars_median": 3118.0,
+  "chars_min": 2347,
+  "chars_max": 4831,
+  "via_md_twin": 4,
+  "thin_pages": [],
+  "link_ratio": {
+    "value": 0.2359,
+    "cap": 0.5,
+    "ok": true
+  },
+  "flags": [],
+  "verdict": "OK",
+  "hints": {
+    "generator": "Astro v7.2.0",
+    "root_status": 200,
+    "llms_txt": {
+      "status": 200,
+      "content_type": "text/plain"
+    },
+    "twin.md": {
+      "url": "https://developers.cloudflare.com/argo-smart-routing.md",
+      "status": 404,
+      "content_type": "text/html",
+      "plausible": false
+    },
+    "twin.mdx": {
+      "url": "https://developers.cloudflare.com/argo-smart-routing.mdx",
+      "status": 404,
+      "content_type": "text/html",
+      "plausible": false
+    }
+  },
+  "out": "/private/tmp/claude-501/-Users-james-code-iofast--claude-worktrees-resume-audit-scraper-shapes-4f468d/27f044e7-e3ed-45c9-b9bb-609de74e70c2/scratchpad/probes/cf-final"
+}

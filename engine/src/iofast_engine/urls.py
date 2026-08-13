@@ -48,6 +48,11 @@ LOCALE_RE = re.compile(
 # Suffix twins: ant.design serves /docs/react/foo-cn beside /docs/react/foo.
 # "cn" is the observed suffix convention; the language codes cover -de/-ja/… twins.
 SUFFIX_CODES = frozenset(_LOCALE_CODES) | {"cn"}
+# For version-root detection (/en/latest): the locale-exclude list PLUS "en" —
+# English is deliberately absent from _LOCALE_CODES (it's the canonical language
+# we keep, not an i18n duplicate to drop), yet /en/... is the most common
+# Read-the-Docs version-root shape.
+VERSION_ROOT_LOCALES = frozenset(_LOCALE_CODES) | {"en"}
 
 
 def suffix_twin(url: str, url_set, keep: frozenset = frozenset()) -> bool:
@@ -110,6 +115,19 @@ def md_variant(url: str) -> str:
     return parsed._replace(path=f"{path}.md").geturl()
 
 
+def _md_canonical(twin_url: str) -> str:
+    """Canonical page url for a `.md` twin link.
+
+    Strips `.md`, then a trailing `/index` — Cloudflare twins live at
+    `<path>/index.md` while the sitemap lists `<path>`, and without the strip
+    the same page enters the crawl twice under two urls.
+    """
+    page = twin_url[:-3]
+    if page.endswith("/index"):
+        page = page[: -len("/index")]
+    return page
+
+
 def md_twins(llms_urls):
     """Canonical page urls for the `.md` twins in an llms.txt link list.
 
@@ -118,7 +136,17 @@ def md_twins(llms_urls):
     NOT treat the crawl as markdown-capable, so pages fetch their html directly
     instead of double-fetching a twin that 404s.
     """
-    return [u[:-3] for u in llms_urls if u.endswith(".md")]
+    return [_md_canonical(u) for u in llms_urls if u.endswith(".md")]
+
+
+def md_twin_map(llms_urls):
+    """Canonical page url -> the EXACT twin url the llms.txt listed.
+
+    Twin conventions differ per site (`<path>.md` on Mintlify/ReadMe,
+    `<path>/index.md` on Cloudflare) — the llms.txt link is ground truth, so
+    fetch that instead of re-deriving a convention with md_variant.
+    """
+    return {clean_url(_md_canonical(u)): u for u in llms_urls if u.endswith(".md")}
 
 
 def reject_url(url, host, scope, max_depth, keep_locales=frozenset()):

@@ -1,0 +1,37 @@
+{
+  "pages_total": 5,
+  "pages_ok": 5,
+  "chars_median": 5791,
+  "chars_min": 1111,
+  "chars_max": 42103,
+  "via_md_twin": 0,
+  "thin_pages": [],
+  "link_ratio": {
+    "value": 0.1863,
+    "cap": 0.5,
+    "ok": true
+  },
+  "flags": [],
+  "verdict": "OK",
+  "hints": {
+    "generator": null,
+    "root_status": 200,
+    "llms_txt": {
+      "status": 404,
+      "content_type": "text/html"
+    },
+    "twin.md": {
+      "url": "https://requests.readthedocs.io/en/latest.md",
+      "status": 404,
+      "content_type": "text/html",
+      "plausible": false
+    },
+    "twin.mdx": {
+      "url": "https://requests.readthedocs.io/en/latest.mdx",
+      "status": 404,
+      "content_type": "text/html",
+      "plausible": false
+    }
+  },
+  "out": "/private/tmp/claude-501/-Users-james-code-iofast--claude-worktrees-resume-audit-scraper-shapes-4f468d/27f044e7-e3ed-45c9-b9bb-609de74e70c2/scratchpad/probes/requests-rtd"
+}

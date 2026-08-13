@@ -76,6 +76,30 @@ def test_md_twins_only_counts_per_page_md_links():
     assert md_twins([]) == []
 
 
+def test_md_twins_canonicalise_index_convention():
+    # Cloudflare convention (measured 2026-08-13): twins live at `<path>/index.md`
+    # while the sitemap lists `<path>` — canonicalising must strip `/index` or the
+    # same page enters the crawl twice under two urls.
+    assert md_twins(["https://x/docs/get-started/index.md"]) == ["https://x/docs/get-started"]
+    assert md_twins(["https://x/index.md"]) == ["https://x"]
+
+
+def test_md_twin_map_keeps_exact_twin_urls():
+    from iofast_engine.urls import md_twin_map
+
+    # The llms.txt link IS the twin url — re-deriving it with md_variant assumes
+    # the `<path>.md` convention and 404s on `<path>/index.md` sites.
+    twins = [
+        "https://x/docs/a.md",
+        "https://x/docs/get-started/index.md",
+    ]
+    assert md_twin_map(twins) == {
+        "https://x/docs/a": "https://x/docs/a.md",
+        "https://x/docs/get-started": "https://x/docs/get-started/index.md",
+    }
+    assert md_twin_map(["https://x/llms-full.txt"]) == {}
+
+
 def test_clean_url_strips_query_and_fragment():
     assert clean_url("https://x.com/a/b?q=1&r=2#top") == "https://x.com/a/b"
     assert norm_host("WWW.Example.com") == "example.com"

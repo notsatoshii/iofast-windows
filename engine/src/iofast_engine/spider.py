@@ -1,6 +1,7 @@
 """DocSpider — the only module that imports scrapling at module level."""
 
 import os
+import re
 import threading
 import time
 from urllib.parse import urlparse
@@ -14,6 +15,8 @@ from .discovery import (
     _body_text,
     discover_llms,
     discover_sitemap,
+    looks_like_markdown,
+    probe_md_twin,
     resolve_start,
     robots_sitemaps,
 )
@@ -22,8 +25,10 @@ from .ledger import OUTCOMES, Ledger
 from .rescue import rescue_selectors
 from .tiers import THIN_CHARS, TIERS, browsers_available, header_lookup, is_challenge
 from .urls import (
+    VERSION_ROOT_LOCALES,
     bad_href,
     clean_url,
+    md_twin_map,
     md_twins,
     md_variant,
     norm_host,
@@ -42,6 +47,35 @@ from .writer import Writer, write_run
 # would let the 731-char case through). A refused page keeps its old file and is
 # recorded "suspect_shrink"; a false positive costs one flagged, reviewable page.
 UPDATE_SHRINK_RATIO = 0.5
+
+# Below this many in-scope sitemap urls, discovery stays in crawl mode instead
+# of trusting the sitemap as the whole frontier. Measured 2026-08-13: Read the
+# Docs sitemaps list version roots only — sphinx-doc.org/sitemap.xml has exactly
+# 1 <loc>, which used to collapse the crawl to a single landing page. Healthy
+# docs sitemaps probed the same day (docusaurus.io, mkdocs-material, vitepress)
+# all clear this floor by orders of magnitude.
+SITEMAP_MIN_YIELD = 3
+
+# RTD multi-version sitemaps list ONLY version roots — measured 2026-08-13:
+# urllib3.readthedocs.io and docs.celeryq.dev both ship /en/latest, /en/stable,
+# /en/2.7.0, ... (6+ locs, all roots, zero content pages), which clears the
+# yield floor yet still collapses a root-start crawl to landing pages. A path
+# shaped `/<locale>/<one-segment>` is a version root, never a doc page — and
+# the first segment must be a REAL language code (urls.VERSION_ROOT_LOCALES),
+# else healthy two-segment sitemaps like /go/install, /js/install would be
+# misread as roots.
+# Second segment must LOOK like a version too, else a flat /en/<page> docs site
+# would have its whole sitemap misread as roots. Covers every measured RTD loc:
+# latest, stable, dev, main, master, 2.7.0, 1.26.x, v2.
+_VERSION_SEG_RE = re.compile(r"^(?:latest|stable|dev|main|master|v?\d[\w.]*)$")
+
+
+def _version_root(path: str) -> bool:
+    segments = [seg for seg in path.split("/") if seg]
+    if len(segments) != 2:
+        return False
+    base = re.split(r"[-_]", segments[0], maxsplit=1)[0].lower()
+    return base in VERSION_ROOT_LOCALES and bool(_VERSION_SEG_RE.match(segments[1].lower()))
 
 
 def _proxy_kwarg(raw):
@@ -213,6 +247,8 @@ class DocSpider(Spider):
                     ),
                 }
             )
+        self.md_map = {}  # canonical page url -> exact twin url (_discover fills it)
+        self.md_on = False  # run-wide md-twin capability (_discover decides)
         self.seeds, self.discovery = self._discover()
         self.start_urls = [self.start_url]
         # Pause saves a checkpoint under .crawl (Stop must never lose the run);
@@ -386,14 +422,49 @@ class DocSpider(Spider):
         # HTML (which mangles down to a fragment). llms.txt links already point
         # at `.md`; canonicalise to the page url so naming/scope stay clean and
         # md_variant re-derives the same twin.
-        llms_url, found = discover_llms(self.origin, scope_root)
+        llms_url, found = discover_llms(self.origin, scope_root, emit=self.emit)
         # Only per-page `.md` links prove twins exist. A generic llms.txt (bundle
         # files like llms-full.txt, no per-page `.md`) must NOT flip md on: else
         # every page double-fetches a 404ing twin and the bundle urls pollute the
         # crawl. Canonicalise the twins to their page url so naming/scope stay
         # clean and md_variant re-derives the same twin.
         canon = md_twins(found)
+        # The llms.txt link is the ground-truth twin url; md_variant is only the
+        # fallback for pages the llms.txt did not list (twin conventions differ:
+        # `<path>.md` on Mintlify/ReadMe vs `<path>/index.md` on Cloudflare).
+        self.md_map = md_twin_map(found)
         md = bool(canon)
+        if found and not md:
+            # ReadMe-style llms.txt: an index of PLAIN page urls whose `.md`
+            # twins exist anyway (docs.readme.com serves both). Prove the
+            # convention once against a real in-scope page before flipping md
+            # on — a bundle-only llms.txt (svelte.dev) fails the probe and
+            # stays md-off exactly as before.
+            in_scope = [
+                u for u in (clean_url(x) for x in found) if u and not self.reject(u)
+            ]
+            # Sample must have a real twin to probe (md_variant leaves the site
+            # root unchanged — probing it would fetch HTML and wrongly keep md
+            # off for the whole run) and the probe respects robots like any
+            # other page fetch.
+            sample = next(
+                (
+                    md_variant(u)
+                    for u in in_scope
+                    # Same shape rule as the seed twin derivation: an
+                    # extension-bearing path (<page>.html) has no <page>.html.md
+                    # twin — probing one would 404 and wrongly turn md off for
+                    # the whole run.
+                    if "." not in urlparse(u).path.rsplit("/", 1)[-1]
+                    and md_variant(u) != u
+                    and self.robots.allowed(md_variant(u))
+                ),
+                None,
+            )
+            if sample and probe_md_twin(sample):
+                md = True
+                canon = in_scope
+        self.md_on = md
 
         if pages:
             urls = self._reconcile([url for url, _ in pages] + canon)
@@ -406,8 +477,45 @@ class DocSpider(Spider):
                     ),
                 }
             )
-            if urls:
+            roots_only = bool(urls) and all(
+                _version_root(urlparse(u).path) for u in urls
+            )
+            if roots_only:
+                # Any number of version roots is still zero content pages —
+                # same collapse as the sparse case below, just past the floor.
+                self.emit(
+                    {
+                        "type": "progress",
+                        "message": (
+                            f"🔗 sitemap lists only version roots ({len(urls)}) — link crawl tops up"
+                        ),
+                    }
+                )
+                return [(url, md) for url in urls], "crawl"
+            if len(urls) >= SITEMAP_MIN_YIELD:
                 return [(url, md) for url in urls], ("sitemap+llms" if md else "sitemap")
+            if urls:
+                # Accepted gap: with md on, twin pages return before link
+                # extraction, so the crawl top-up only works off HTML-fetched
+                # pages. Sparse sitemap + md twins together hasn't been seen
+                # live; if it shows up, prefer coverage (md off) here.
+                # Degenerate sitemap: Read the Docs sitemaps list VERSION ROOTS
+                # only (measured: sphinx-doc.org sitemap.xml = exactly 1 <loc>),
+                # so trusting it would collapse the crawl to one landing page.
+                # Keep the urls as seeds but stay in crawl mode so link
+                # discovery tops the frontier up.
+                # ponytail: floor catches 1-2 roots; a wide-scoped multi-version
+                # RTD site (>2 version roots in scope) still trusts its sitemap —
+                # detect "all locs are roots" if that ever bites.
+                self.emit(
+                    {
+                        "type": "progress",
+                        "message": (
+                            f"🔗 sitemap too sparse ({len(urls)} urls) — link crawl tops up"
+                        ),
+                    }
+                )
+                return [(url, md) for url in urls], "crawl"
 
         if found:
             # `.md`-twin llms.txt (Mintlify): fetch the twins. Generic llms.txt:
@@ -458,17 +566,39 @@ class DocSpider(Spider):
         return survivors
 
     async def start_requests(self):
-        seeds = self.seeds if self.seeds else [(self.start_url, False)]
+        # The user's start URL is a promise — a sitemap that omits it (RTD
+        # sitemaps list version roots only) must not silently drop the one page
+        # they explicitly asked for. But it is still subject to robots and the
+        # scope filters like every other fetch — including on the empty-seeds
+        # crawl fallback, where a Disallow: / must yield an honest empty run,
+        # not a fetch the receipt claims we never make.
+        start_ok = not self.reject(self.start_url) and self.robots.allowed(self.start_url)
+        seeds = list(self.seeds)
+        if not seeds:
+            seeds = [(self.start_url, False)] if start_ok else []
+        elif self.start_url in {url for url, _ in seeds}:
+            # Front of the frontier, not merely present — a max_pages
+            # truncation must never cut the one page the user asked for.
+            seeds.sort(key=lambda seed: seed[0] != self.start_url)
+        elif start_ok:
+            seeds.insert(0, (self.start_url, seeds[0][1]))
         if self.previous and not self.resume:
             # docs/RPC.md `update`: the previous manifest seeds the url list.
             # Without this, a link-crawl site whose root answers 304 (empty
             # body, so no links to follow) never revisits its child pages, and
             # the rewritten manifest silently drops their validators.
             seeded = {url for url, _ in seeds}
+            # A previous-manifest page keeps its twin when this run is
+            # md-capable — else an update on a twin site would overwrite
+            # markdown-sourced files with HTML extracts (or trip the shrink
+            # guard). md_on, not md_map: the probe-proven class (ReadMe plain
+            # links) has md on with an empty map.
             seeds = seeds + [
-                (url, False)
+                (url, self.md_on)
                 for url, row in sorted(self.previous.items())
-                if row.get("file") and url not in seeded
+                # robots re-checked: the site may have tightened its policy
+                # since the prior run wrote these pages.
+                if row.get("file") and url not in seeded and self.robots.allowed(url)
             ]
         seeds = seeds[: self.max_pages]
         for url, md_capable in seeds:
@@ -476,8 +606,21 @@ class DocSpider(Spider):
                 continue
             self.seen.add(url)
             self._enqueue(url)
-            target = md_variant(url) if md_capable else url
-            yield Request(target, **self._request_kwargs({"depth": 0, "origin_url": url, "md_probe": md_capable}))
+            twin = self.md_map.get(url) if md_capable else None
+            if twin is None and md_capable:
+                # Derive a twin only for extension-less paths the llms.txt did
+                # not list: `<page>.html.md` (Sphinx-shape urls) and the site
+                # root twin-to-itself are guaranteed wasted fetches.
+                last_segment = urlparse(url).path.rsplit("/", 1)[-1]
+                candidate = md_variant(url)
+                if "." not in last_segment and candidate != url:
+                    twin = candidate
+            yield Request(
+                twin or url,
+                **self._request_kwargs(
+                    {"depth": 0, "origin_url": url, "md_probe": twin is not None}
+                ),
+            )
 
     def _request_kwargs(self, meta):
         """Every page request starts at the adapter's tier (static unless it said otherwise).
@@ -543,20 +686,27 @@ class DocSpider(Spider):
         headers = dict(response.headers or {})
         status = response.status
 
-        if meta.get("md_probe"):
-            ctype = header_lookup(headers, "content-type").lower()
+        # 304 FIRST: an unchanged twin on an update run must keep its file, not
+        # fall through the markdown gate (which rejects any 304) into a full
+        # HTML re-scrape that overwrites the markdown-sourced file.
+        if meta.get("md_probe") and not (status == 304 and origin_url in self.previous):
             text = _body_text(response)
-            if (
-                status == 200
-                and ("markdown" in ctype or "text/plain" in ctype)
-                and not text.lstrip().startswith("<")
-                and len(text.strip()) >= THIN_CHARS  # a tiny text/plain body is a soft-404, not a page
-            ):
+            if looks_like_markdown(status, headers, text):
                 self._write(
                     origin_url, text.strip(), tier, "llms.txt .md variant", escalated, status
                 )
                 return
-            yield Request(origin_url, meta={**meta, "md_probe": False})
+            # Re-request through _request_kwargs so the fallback keeps the
+            # adapter's start tier (sid) and the update conditional-GET headers
+            # — a bare Request silently downgrades to the static session while
+            # meta still claims the higher tier. dont_filter: when the twin url
+            # equals the page url, this is a deliberate re-fetch of an
+            # already-seen url and the dedup filter must not drop it.
+            yield Request(
+                origin_url,
+                dont_filter=True,
+                **self._request_kwargs({**meta, "md_probe": False}),
+            )
             return
 
         if status == 304 and origin_url in self.previous:

@@ -1,0 +1,37 @@
+{
+  "pages_total": 3,
+  "pages_ok": 3,
+  "chars_median": 3515,
+  "chars_min": 1523,
+  "chars_max": 6931,
+  "via_md_twin": 3,
+  "thin_pages": [],
+  "link_ratio": {
+    "value": 0.0768,
+    "cap": 0.5,
+    "ok": true
+  },
+  "flags": [],
+  "verdict": "OK",
+  "hints": {
+    "generator": "VitePress v2.0.0-alpha.19",
+    "root_status": 200,
+    "llms_txt": {
+      "status": 200,
+      "content_type": "text/plain"
+    },
+    "twin.md": {
+      "url": "https://vitepress.dev/guide/asset-handling.md",
+      "status": 200,
+      "content_type": "text/markdown",
+      "plausible": true
+    },
+    "twin.mdx": {
+      "url": "https://vitepress.dev/guide/asset-handling.mdx",
+      "status": 404,
+      "content_type": "text/html",
+      "plausible": false
+    }
+  },
+  "out": "/private/tmp/claude-501/-Users-james-code-iofast--claude-worktrees-resume-audit-scraper-shapes-4f468d/27f044e7-e3ed-45c9-b9bb-609de74e70c2/scratchpad/probes/vp-post"
+}

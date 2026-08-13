@@ -73,7 +73,7 @@ def test_map_run_falls_back_to_nav(monkeypatch):
 
     monkeypatch.setattr(discovery, "discover_sitemap", lambda origin, extra, emit=None: [])
     monkeypatch.setattr(discovery, "robots_sitemaps", lambda origin: [])
-    monkeypatch.setattr(discovery, "discover_llms", lambda origin, root: (None, []))
+    monkeypatch.setattr(discovery, "discover_llms", lambda origin, root, emit=None: (None, []))
 
     class FakeResponse:
         status = 200

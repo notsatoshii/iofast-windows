@@ -114,7 +114,7 @@ def map_run(resolved: str, scope: str | None, adapter=None, emit=None) -> dict:
         pages = in_scope([url for url, _ in found])
         discovery = "sitemap" if pages else discovery
     if not pages:
-        _, found = discover_llms(origin, f"{origin}{scope.rstrip('/')}")
+        _, found = discover_llms(origin, f"{origin}{scope.rstrip('/')}", emit=emit)
         pages = in_scope(found)
         discovery = "llms.txt" if pages else discovery
     if not pages:

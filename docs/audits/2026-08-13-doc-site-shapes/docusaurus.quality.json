@@ -1,0 +1,56 @@
+{
+  "pages_total": 4,
+  "pages_ok": 3,
+  "chars_median": 105,
+  "chars_min": 75,
+  "chars_max": 238,
+  "via_md_twin": 0,
+  "thin_pages": [
+    {
+      "url": "https://docusaurus.io/examples/markdownPageExample",
+      "chars": 238,
+      "reason": "selector+markdownify"
+    },
+    {
+      "url": "https://docusaurus.io/showcase",
+      "chars": 105,
+      "reason": "selector+trafilatura"
+    },
+    {
+      "url": "https://docusaurus.io/versions",
+      "chars": 75,
+      "reason": "selector+trafilatura"
+    }
+  ],
+  "link_ratio": {
+    "value": 0.0,
+    "cap": 0.5,
+    "ok": true
+  },
+  "flags": [
+    "thin_html_extract",
+    "uniform_tiny"
+  ],
+  "verdict": "SUSPECT",
+  "hints": {
+    "generator": null,
+    "root_status": 200,
+    "llms_txt": {
+      "status": 0,
+      "content_type": ""
+    },
+    "twin.md": {
+      "url": "https://docusaurus.io/examples/markdownPageExample.md",
+      "status": 0,
+      "content_type": "",
+      "plausible": false
+    },
+    "twin.mdx": {
+      "url": "https://docusaurus.io/examples/markdownPageExample.mdx",
+      "status": 0,
+      "content_type": "",
+      "plausible": false
+    }
+  },
+  "out": "/private/tmp/claude-501/-Users-james-code-iofast--claude-worktrees-resume-audit-scraper-shapes-4f468d/27f044e7-e3ed-45c9-b9bb-609de74e70c2/scratchpad/probes/docusaurus"
+}
