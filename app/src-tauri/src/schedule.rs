@@ -4,8 +4,10 @@
 //!
 //! ponytail: this only runs while the app is running — it is a resident tray
 //! app, not a launchd/cron job. A machine asleep past a run's interval simply
-//! re-scrapes on the next tick after it wakes. Wire a LaunchAgent if true
-//! background scheduling is ever wanted.
+//! re-scrapes on the next tick after it wakes. `autostart.rs` (D3) covers the
+//! "app was never opened" half: a LaunchAgent starts the app at login, so this
+//! thread is up. A user who quits the app still has no scheduler until they
+//! reopen it — deliberate.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

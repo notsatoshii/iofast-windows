@@ -90,8 +90,10 @@ hand-rolled in this codebase:
 pins **1.97.1**, adopted after a throwaway-worktree experiment built the committed
 lockfile `--locked` with all tests green. The edition2024 rejections above are
 historical context — those plugins are viable now, and each gets adopted only when
-its slice needs it (updater at distribution time, single-instance with the D3
-LaunchAgent work, clipboard in slice #7). The committed `Cargo.lock` stays
+its slice needs it (updater at distribution time, clipboard in slice #7). The D3
+LaunchAgent work shipped without `tauri-plugin-single-instance` — its plist runs
+`/usr/bin/open -g -a <bundle>`, and LaunchServices already activates a running
+bundle instead of starting a second copy (see `src/autostart.rs`). The committed `Cargo.lock` stays
 load-bearing: it was resolved under cargo 1.78 and still builds unchanged.
 
 To add `tauri-plugin-updater` later:

@@ -44,6 +44,8 @@ export default function Settings({
   const [confirming, setConfirming] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState("");
+  const [atLogin, setAtLogin] = useState<boolean | null>(null);
+  const [atLoginError, setAtLoginError] = useState("");
 
   const readKeys = () =>
     invoke<Record<string, boolean>>("keychain_status").then(setStored).catch(() => undefined);
@@ -51,6 +53,7 @@ export default function Settings({
   useEffect(() => {
     void readKeys();
     void invoke<BrowserStatus>("sidecar_browser_status").then(setBrowsers).catch(() => undefined);
+    void invoke<boolean>("autostart_get").then(setAtLogin).catch(() => setAtLogin(false));
     // Install progress rides the shared engine-event stream (docs/RPC.md).
     const events = listen<{ type: string; message?: string }>("engine-event", (e) => {
       if (e.payload.type === "browser_install" && e.payload.message) {
@@ -73,6 +76,18 @@ export default function Settings({
     } finally {
       setInstalling(false);
       setInstallMsg("");
+    }
+  };
+
+  // A refusal (dev build, app still on the disk image) is shown in the row, not
+  // in the page-foot error line — that sits below the whole Browser-tiers block,
+  // where a user who just clicked the toggle would never see it.
+  const setAutostart = async (next: boolean) => {
+    setAtLoginError("");
+    try {
+      setAtLogin(await invoke<boolean>("autostart_set", { enabled: next }));
+    } catch (e) {
+      setAtLoginError(reason(e));
     }
   };
 
@@ -211,6 +226,30 @@ export default function Settings({
           <kbd className="key">⌘</kbd>
           <kbd className="key">⇧</kbd>
           <kbd className="key">K</kbd>
+        </div>
+      </div>
+
+      <h2>Startup</h2>
+      <div className="set">
+        <div className="set-label">
+          Start at login
+          <span className="set-hint">
+            Keeps iofast in the menubar from login on, so a run set to Auto re-scrapes without
+            you opening the app first. Takes effect at your next login.
+          </span>
+        </div>
+        <div className="set-control">
+          {atLogin === null ? (
+            <span className="set-hint">…</span>
+          ) : (
+            <>
+              {atLoginError && <span className="set-hint bad">{atLoginError}</span>}
+              {atLogin && <span className="saved">On</span>}
+              <button type="button" className="btn" onClick={() => void setAutostart(!atLogin)}>
+                {atLogin ? "Turn off" : "Turn on"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 

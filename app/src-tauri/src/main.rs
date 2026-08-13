@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod about;
+mod autostart;
 mod schedule;
 mod sidecar;
 mod store;
@@ -374,6 +375,8 @@ fn main() {
             store::keychain_clear,
             schedule::schedule_get,
             schedule::schedule_set,
+            autostart::autostart_get,
+            autostart::autostart_set,
             about::about_info
         ])
         .setup(|app| {

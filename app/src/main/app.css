@@ -392,7 +392,8 @@ body.app-window {
   line-height: 1.55;
 }
 
-.app .foot.bad {
+.app .foot.bad,
+.app .set-hint.bad {
   color: var(--bad);
 }
 
