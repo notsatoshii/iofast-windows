@@ -18,6 +18,9 @@ export type Run = {
   pages: number;
   tokens: number;
   clean: boolean;
+  /** `manifest.quality.verdict`. `clean` asks whether every URL landed; this asks
+   *  whether what landed is real prose. "" on runs written before it existed. */
+  quality: string;
   cancelled: boolean;
   modified_ms: number;
   /** A stopped crawl left `.crawl/checkpoint.pkl` — the Resume action keys on it. */

@@ -751,6 +751,15 @@ export default function App() {
                   <span className="run-facts">
                     {plural(run.pages, "page")} · {tokens(run.tokens)} tokens
                     {run.cancelled ? " · stopped early" : ""}
+                    {run.quality === "SUSPECT" ? (
+                      // Only the bad verdict shows. A badge on every healthy run
+                      // is noise, and noise is what gets ignored. The clean dot
+                      // answers "did every url land"; this answers "is it prose".
+                      <span className="run-suspect" title="pages look thin or nav-only — see report.md">
+                        {" "}
+                        · suspect
+                      </span>
+                    ) : null}
                     {schedules[run.dir]?.every ? (
                       // Schedule state reads at a glance now. It used to be legible
                       // only by hovering the row to reveal its button, which meant

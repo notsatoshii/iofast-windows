@@ -78,14 +78,34 @@ def write_json_atomic(path, data):
 def write_run(out_dir, ledger, info):
     """report.md + manifest.json for a finished run, whatever produced it. Returns the manifest."""
     from .clean import evaluate
+    from .quality import analyse
 
     reconciled = ledger.reconcile()
+    # Built before report.md, not after: quality reads clean's link_ratio, and
+    # the sourcing line it produces has to reach the report as well as the
+    # manifest. `dict(info)` so enriching the copy cannot surprise the caller.
+    manifest = build_manifest(dict(info), ledger, reconciled)
+    manifest["clean"] = evaluate(ledger, out_dir)
+    quality = analyse(manifest)
+    if info.get("known fail") or (info.get("cancelled") and not quality["pages_ok"]):
+        # A refusal and a run cancelled before its first page extracted nothing
+        # BY DESIGN — neither is a suspect corpus. A crawl that fetched pages and
+        # extracted none from them still is, so nothing_extracted survives there.
+        quality["flags"], quality["verdict"] = [], "unrated"
+    # Where the corpus came from. Omitted when neither counter applies (an
+    # api-mode harvest sources pages from neither path, so "0 / 0" would lie).
+    if quality["via_md_twin"] or quality["via_html_fallback"]:
+        manifest["info"]["sourcing"] = (
+            f"{quality['via_md_twin']} via .md twin / "
+            f"{quality['via_html_fallback']} via HTML extract"
+        )
+    # thin_pages is dropped: every field in it already exists per page under
+    # "pages", and store.rs parses this file in full on every library refresh.
+    manifest["quality"] = {k: v for k, v in quality.items() if k != "thin_pages"}
     with open(os.path.join(out_dir, README_FILE), "w", encoding="utf-8") as fh:
         fh.write(README_UNTRUSTED)
     with open(os.path.join(out_dir, LEDGER_FILE), "w", encoding="utf-8") as fh:
-        fh.write(report_md(ledger, info))
-    manifest = build_manifest(info, ledger, reconciled)
-    manifest["clean"] = evaluate(ledger, out_dir)
+        fh.write(report_md(ledger, manifest["info"]))
     write_json_atomic(os.path.join(out_dir, "manifest.json"), manifest)
     return manifest
 

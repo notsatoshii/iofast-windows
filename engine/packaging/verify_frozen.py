@@ -299,6 +299,21 @@ def main(binary):
     expect(scrape.get("exit_code") == 0, f"scrape exit_code 0 (got {scrape.get('exit_code')})")
     expect(scrape.get("written") == 2, f"scrape wrote 2 pages (got {scrape.get('written')})")
     expect(scrape.get("manifest", {}).get("schema") == 1, "manifest schema 1")
+    # quality.py is a new module reached only through writer.write_run — if the
+    # freeze missed it, every scrape this bundle runs would raise at the end.
+    # The verdict itself is not pinned to OK: these fixture pages measure 731
+    # chars, under quality.THIN_FLOOR, so SUSPECT is the correct reading of them.
+    quality = scrape.get("manifest", {}).get("quality", {})
+    expect(
+        quality.get("verdict") in ("OK", "SUSPECT", "unrated")
+        and quality.get("pages_ok") == 2,
+        f"quality verdict present and counted (got {quality.get('verdict')!r}, "
+        f"pages_ok={quality.get('pages_ok')})",
+    )
+    expect(
+        scrape.get("manifest", {}).get("info", {}).get("sourcing", "").endswith("via HTML extract"),
+        "manifest info carries the sourcing counters",
+    )
     expect(
         any(m.get("method") == "event" and m["params"].get("rid") == 4 for m in messages),
         "scrape events carry rid",

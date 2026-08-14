@@ -1,12 +1,13 @@
-"""Pin the quality harness's analyse() — its flags drove the 2026-08-13 audit
-and back the committed discovery constants, so the logic must not drift."""
+"""Pin analyse() — its flags drove the 2026-08-13 audit and back the committed
+discovery constants, so the logic must not drift. It ships inside the engine now
+(every run records its own verdict); the harness re-exports it."""
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tools.scrape_quality import HTML_REASONS, THIN_FLOOR, analyse
+from iofast_engine.quality import HTML_REASONS, THIN_FLOOR, analyse
 
 
 def _manifest(pages, link_ratio_ok=True):
@@ -60,3 +61,23 @@ def test_nothing_extracted_flags():
 def test_constants_are_sane():
     assert THIN_FLOOR == 800
     assert "selector+markdownify" in HTML_REASONS
+
+
+def test_sourcing_counters_split_twin_from_html():
+    report = analyse(
+        _manifest(
+            [
+                _page(5000, reason="llms.txt .md variant", url="https://x/a"),
+                _page(5000, reason="selector+trafilatura", url="https://x/b"),
+                _page(5000, reason="api (docsify)", url="https://x/c"),
+            ]
+        )
+    )
+    assert (report["via_md_twin"], report["via_html_fallback"]) == (1, 1)
+
+
+def test_harness_reexports_the_engine_analyse():
+    # tools/scrape_quality.py must not grow a second copy that drifts.
+    from tools.scrape_quality import analyse as harness_analyse
+
+    assert harness_analyse is analyse

@@ -335,6 +335,10 @@ body.app-window {
   font-variant-numeric: tabular-nums;
 }
 
+.app .run-suspect {
+  color: var(--bad);
+}
+
 /* Whether a run is kept fresh is now readable without hovering it. */
 .app .run-auto {
   color: var(--accent);

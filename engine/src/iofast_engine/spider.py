@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import time
+from collections import deque
 from urllib.parse import urlparse
 
 from scrapling.spiders import Request, Response, Spider
@@ -47,6 +48,17 @@ from .writer import Writer, write_run
 # would let the 731-char case through). A refused page keeps its old file and is
 # recorded "suspect_shrink"; a false positive costs one flagged, reviewable page.
 UPDATE_SHRINK_RATIO = 0.5
+
+# A page the site does not serve costs a fetch, not a page slot. The budget
+# therefore counts pages that can still become FILES (enqueued minus the urls
+# already resolved without one), and a link rejected at the budget is DEFERRED
+# rather than dropped — a dropped link cannot fill the slot its sibling's 404
+# frees. Measured 2026-08-13: redocly.github.io/redoc/3.x publishes real anchors
+# to client-side routes its static host 404s, so a 5-page probe used to spend 3
+# slots on them and write 2 pages. ATTEMPT_RATIO caps how many urls one run may
+# enqueue (3x the pages asked for, i.e. it tolerates a 2:1 failure rate) so a
+# site where EVERY link fails still terminates instead of walking the host.
+ATTEMPT_RATIO = 3
 
 # Below this many in-scope sitemap urls, discovery stays in crawl mode instead
 # of trusting the sitemap as the whole frontier. Measured 2026-08-13: Read the
@@ -127,6 +139,16 @@ class DocSpider(Spider):
     resume = False  # instances set their own; default keeps fresh runs unchanged
     previous: dict = {}  # read-only fallback; instances get their own in __init__
     validators = None  # lazy: written only through _remember_validators
+    # Budget state, class-level so partially-constructed spiders read as a fresh
+    # run with nothing held back (tests build via object.__new__).
+    # Read-only in practice: _defer appends only while len < _defer_cap, and the
+    # 0 default means a spider that skipped __init__ can never mutate the shared
+    # deque. Instances get their own in __init__.
+    deferred: deque = deque()
+    _defer_cap = 0  # instances size it from max_pages; 0 = hold nothing
+    _resume_pending: set = set()  # only ever discarded from, never added to
+    _attempt_cap = 0  # 0 = no run-scoped cap computed yet (partial spiders)
+    _attempt_cap_hit = False
 
     def __init__(
         self,
@@ -221,6 +243,19 @@ class DocSpider(Spider):
                 if row.get("file"):
                     self.seen.add(url)
                     self.writer.names[row["file"].removesuffix(".md")] = url
+        # In-scope urls the budget held back, oldest first; _top_up drains them
+        # as pages resolve without a file. Bounded by _defer rather than by
+        # deque(maxlen=...): a full bounded deque discards from the LEFT, so a
+        # 10k-url sitemap would silently leave the TAIL of the list held and the
+        # head dropped. Keeping the first arrivals matches seeds[:max_pages],
+        # which already takes the head.
+        self.deferred = deque()
+        self._defer_cap = max(1, self.max_pages * ATTEMPT_RATIO)
+        self._seed_resume_pending()
+        self._attempt_cap_hit = False
+        # Per-run ceiling: measured from where this run STARTED, else a few
+        # pause/resume cycles would trip the cap on inherited history alone.
+        self._attempt_cap = len(self.ledger.enqueued) + self.max_pages * ATTEMPT_RATIO
         self.selectors = selectors_for(adapter, CONTENT_SELECTORS)
         self.browsers = browsers_available()
         # The adapter's fetch_strategy is the STARTING tier; the ladder still runs above it.
@@ -404,6 +439,121 @@ class DocSpider(Spider):
     def _enqueue(self, url):
         self.ledger.enqueue(url)
         self.started.setdefault(url, time.monotonic())
+
+    def _seed_resume_pending(self):
+        """The prior-run urls the checkpoint frontier is about to replay.
+
+        Resume is the one case where the ledger already holds urls THIS run has
+        not resolved: scrapling skips start_requests() and replays the checkpoint
+        frontier instead (spiders/engine.py, "Resuming from checkpoint"), while
+        __init__ seeded the ledger from every prior row. Those replayed urls are
+        fetches in flight, not free slots — counting them as free would let a
+        resumed run enqueue a second crawl's worth on top of the frontier it is
+        already draining. Each drops out of the set the moment this run touches it
+        (parse/on_error), so one that fails again does hand its slot back.
+
+        "cancelled" is the exact class, NOT every fileless row: on_close records
+        enqueued-but-never-fetched urls as cancelled, and that is precisely what
+        the frontier holds. A prior failed_fetch WAS fetched, so it is never
+        replayed — treating it as pending would leave it occupying a slot forever
+        and quietly restore the pre-fix behaviour on every resume.
+        """
+        self._resume_pending = (
+            {url for url, row in self.previous.items() if row.get("outcome") == "cancelled"}
+            if self.resume
+            else set()
+        )
+
+    def _budget_spent(self):
+        """True when no further url may be enqueued right now.
+
+        Two independent ceilings. The page budget counts urls that can still
+        become files, so a page resolved WITHOUT one hands its slot back (see
+        ATTEMPT_RATIO); `not r["file"]` is the exact discriminant — every
+        outcome that produces a file keeps its slot, `suspect_shrink` included,
+        because it deliberately keeps the previous run's file. The attempt cap is
+        the anti-spin backstop and is absolute: once it trips, deferral stops too.
+        """
+        if self._attempt_cap and len(self.ledger.enqueued) >= self._attempt_cap:
+            if not self._attempt_cap_hit:
+                self._attempt_cap_hit = True
+                self.emit(
+                    {
+                        "type": "warning",
+                        "message": (
+                            f"🛑 attempt cap: {self._attempt_cap} urls tried for "
+                            f"{self.max_pages} pages — stopping the frontier"
+                        ),
+                    }
+                )
+            return True
+        fileless = sum(
+            1
+            for url, record in self.ledger.records.items()
+            if not record.get("file") and url not in self._resume_pending
+        )
+        return len(self.ledger.enqueued) - fileless >= self.max_pages
+
+    def _defer(self, url, md_capable=False, depth=0):
+        """Hold an in-scope url the budget had no room for. Never drop it here.
+
+        The whole point of freeing a failed page's slot is that something is left
+        to fill it, and the link loop sees each href exactly once — a page that
+        404s is usually discovered on the same nav as the pages that succeed.
+        """
+        if not self._attempt_cap_hit and len(self.deferred) < self._defer_cap:
+            self.deferred.append((url, md_capable, depth))
+
+    async def _top_up(self):
+        """A page resolved without a file — spend the freed slot on a held url.
+
+        Straight to the scheduler, the same door on_error's retry uses: these
+        urls already passed reject() and robots, they only lacked a slot.
+
+        Never while a pause is pending. A paused engine stops dequeuing but still
+        checkpoints its queue, so a top-up here would both manufacture extra
+        "cancelled" rows in on_close's sweep and hand resume a frontier the user
+        stopped before it existed. Both doors are checked: the RPC sets
+        cancel_event, while a CLI Ctrl-C goes through scrapling's own SIGINT
+        handler straight to _engine.request_pause() and never touches ours
+        (spiders/spider.py _setup_signal_handler).
+        """
+        if self._paused_or_cancelled():
+            return
+        while self.deferred and self._engine and not self._budget_spent():
+            url, md_capable, depth = self.deferred.popleft()
+            self._enqueue(url)
+            request = self._page_request(url, md_capable, depth)
+            # The engine normalizes every request it enqueues itself, resolving an
+            # empty sid to the default session. sid feeds Request's fingerprint,
+            # so skipping it would give a topped-up url a different fingerprint
+            # from the engine-routed one — and the scheduler's seen-set, restored
+            # from checkpoint.pkl on resume, would then fetch it twice.
+            self._engine._normalize_request(request)
+            await self._engine.scheduler.enqueue(request)
+
+    def _paused_or_cancelled(self):
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            return True
+        return bool(getattr(self._engine, "_pause_requested", False))
+
+    def _page_request(self, url, md_capable, depth):
+        """One page fetch: the md twin when this run has one, else the page itself."""
+        twin = self.md_map.get(url) if md_capable else None
+        if twin is None and md_capable:
+            # Derive a twin only for extension-less paths the llms.txt did not
+            # list: `<page>.html.md` (Sphinx-shape urls) and the site root
+            # twin-to-itself are guaranteed wasted fetches.
+            last_segment = urlparse(url).path.rsplit("/", 1)[-1]
+            candidate = md_variant(url)
+            if "." not in last_segment and candidate != url:
+                twin = candidate
+        return Request(
+            twin or url,
+            **self._request_kwargs(
+                {"depth": depth, "origin_url": url, "md_probe": twin is not None}
+            ),
+        )
 
     def _elapsed(self, url):
         start = self.started.get(url)
@@ -600,27 +750,19 @@ class DocSpider(Spider):
                 # since the prior run wrote these pages.
                 if row.get("file") and url not in seeded and self.robots.allowed(url)
             ]
-        seeds = seeds[: self.max_pages]
-        for url, md_capable in seeds:
+        for url, md_capable in seeds[: self.max_pages]:
             if url in self.seen:
                 continue
             self.seen.add(url)
             self._enqueue(url)
-            twin = self.md_map.get(url) if md_capable else None
-            if twin is None and md_capable:
-                # Derive a twin only for extension-less paths the llms.txt did
-                # not list: `<page>.html.md` (Sphinx-shape urls) and the site
-                # root twin-to-itself are guaranteed wasted fetches.
-                last_segment = urlparse(url).path.rsplit("/", 1)[-1]
-                candidate = md_variant(url)
-                if "." not in last_segment and candidate != url:
-                    twin = candidate
-            yield Request(
-                twin or url,
-                **self._request_kwargs(
-                    {"depth": 0, "origin_url": url, "md_probe": twin is not None}
-                ),
-            )
+            yield self._page_request(url, md_capable, 0)
+        # The seeds past the budget are HELD, not discarded: on a sitemap or
+        # llms.txt run parse() never reaches the link loop, so this is the only
+        # place those discovery modes can refill a slot a dead url frees.
+        for url, md_capable in seeds[self.max_pages :]:
+            if url not in self.seen:
+                self.seen.add(url)
+                self._defer(url, md_capable)
 
     def _request_kwargs(self, meta):
         """Every page request starts at the adapter's tier (static unless it said otherwise).
@@ -647,6 +789,7 @@ class DocSpider(Spider):
     async def on_error(self, request, error):
         """Upstream never retries raised exceptions — do it once, then record the failure."""
         url = request.meta.get("origin_url", clean_url(request.url))
+        self._resume_pending.discard(url)  # this run has now touched it
         detail = f"{type(error).__name__}: {error}".replace("\n", " ")[:180]
         if request.meta.get("retry", 0) < 1 and self._engine:
             self.emit(
@@ -673,12 +816,14 @@ class DocSpider(Spider):
             elapsed_ms=self._elapsed(url),
         )
         self.emit({"type": "warning", "url": url, "message": f"❌ failed: {url} ({detail})"})
+        await self._top_up()  # this page produced no file — spend its slot
 
     async def parse(self, response: Response):
         if self.cancel_event is not None and self.cancel_event.is_set():
             self.request_cancel()  # backstop: cancel landed before the engine existed
         meta = response.meta
         origin_url = meta.get("origin_url", clean_url(response.url))
+        self._resume_pending.discard(origin_url)  # this run has now touched it
 
         tier = meta.get("tier", "static")
         escalated = bool(meta.get("escalated"))
@@ -771,6 +916,7 @@ class DocSpider(Spider):
                         "message": f"⚠️  {reason}: {response.url}",
                     }
                 )
+                await self._top_up()  # this page produced no file — spend its slot
             return
 
         if self.adapter is None:
@@ -815,6 +961,7 @@ class DocSpider(Spider):
                         "message": f"⚠️  no content: {response.url}",
                     }
                 )
+                await self._top_up()  # this page produced no file — spend its slot
                 return
         else:
             self._write(origin_url, content, tier, how, escalated, status)
@@ -836,13 +983,16 @@ class DocSpider(Spider):
                 self.seen.add(url)
                 self._exclude(reason)
                 continue
-            if len(self.ledger.enqueued) >= self.max_pages:
-                return
+            depth = path_depth(url, self.scope)
             self.seen.add(url)
+            if self._budget_spent():
+                # Held, not dropped. Returning here would throw away every
+                # remaining href on this page, and those are exactly the links
+                # that would fill the slots this page's dead siblings free.
+                self._defer(url, False, depth)
+                continue
             self._enqueue(url)
-            yield Request(
-                url, **self._request_kwargs({"depth": path_depth(url, self.scope), "origin_url": url})
-            )
+            yield self._page_request(url, False, depth)
 
     def _detect_late(self, url, status, headers, html):
         """The start sample missed (challenge/non-200): retry detection on each real page.
@@ -951,6 +1101,10 @@ class DocSpider(Spider):
         if self.rescued:
             # Candidate permanent adapter: surfaced in the manifest, cached on disk.
             info["rescue"] = self.rescued
+        if self._attempt_cap_hit:
+            # Why the crawl stopped short, on the receipt: the frontier ran out
+            # of attempts, not out of pages worth having.
+            info["attempt cap"] = f"{self._attempt_cap} urls tried (reached)"
         cancelled = self.cancel_event is not None and self.cancel_event.is_set()
         if cancelled:
             info["cancelled"] = True

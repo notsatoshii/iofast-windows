@@ -24,14 +24,15 @@ import argparse
 import json
 import os
 import re
-import statistics
 import subprocess
 import sys
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
-THIN_FLOOR = 800  # chars; below this an "ok" doc page is suspect
-HTML_REASONS = {"selector+trafilatura", "selector+markdownify", "trafilatura"}
+# analyse() ships inside the engine now (every run records its own verdict), so
+# the harness reads it from there rather than keeping a second copy that drifts.
+from iofast_engine.quality import analyse
+
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) iofast-quality-probe"
 
 
@@ -75,50 +76,6 @@ def shape_hints(root_url: str, sample_page: str | None) -> dict:
                 "plausible": looks_md,
             }
     return hints
-
-
-def analyse(manifest: dict) -> dict:
-    pages = manifest.get("pages", [])
-    # thin_escalated_ok = written after a browser-tier rescue; still an extracted page
-    ok = [p for p in pages if p.get("outcome") in ("ok", "thin_escalated_ok")]
-    chars = [p["chars"] for p in ok]
-    thin = [p for p in ok if p["chars"] < THIN_FLOOR]
-    suspect = [p for p in thin if p.get("reason") in HTML_REASONS]
-    md_twin = [p for p in ok if p.get("reason") == "llms.txt .md variant"]
-
-    clean = manifest.get("clean", {})
-    link_ratio = clean.get("link_ratio", {})
-
-    uniform_tiny = False
-    if len(chars) >= 3:
-        med = statistics.median(chars)
-        spread = statistics.pstdev(chars)
-        uniform_tiny = med < THIN_FLOOR and spread < THIN_FLOOR / 2
-
-    flags = []
-    if suspect:
-        flags.append("thin_html_extract")
-    if link_ratio and not link_ratio.get("ok", True):
-        flags.append("link_ratio_over_cap")
-    if uniform_tiny:
-        flags.append("uniform_tiny")
-    if not ok and pages:
-        flags.append("nothing_extracted")
-
-    return {
-        "pages_total": len(pages),
-        "pages_ok": len(ok),
-        "chars_median": statistics.median(chars) if chars else 0,
-        "chars_min": min(chars) if chars else 0,
-        "chars_max": max(chars) if chars else 0,
-        "via_md_twin": len(md_twin),
-        "thin_pages": [
-            {"url": p["url"], "chars": p["chars"], "reason": p.get("reason")} for p in thin
-        ],
-        "link_ratio": link_ratio,
-        "flags": flags,
-        "verdict": "SUSPECT" if flags else "OK",
-    }
 
 
 def main() -> int:

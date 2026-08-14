@@ -117,6 +117,9 @@ pub struct Run {
     pages: usize,
     tokens: u64,
     clean: bool,
+    /// `quality.verdict`: "OK", "SUSPECT" or "unrated". Empty for runs written
+    /// before the verdict existed — the row shows no badge rather than guessing.
+    quality: String,
     cancelled: bool,
     modified_ms: u64,
     /// A `Stop`ped crawl leaves `.crawl/checkpoint.pkl`; its presence is what the
@@ -127,6 +130,25 @@ pub struct Run {
 fn host_of(url: &str) -> String {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     rest.split(['/', '?', '#']).next().unwrap_or("").to_string()
+}
+
+/// Pages actually on disk, not enqueued: the row must match the folder.
+///
+/// A fileless ledger row carries `"file": ""`, never null, so testing
+/// `!is_null()` counted every failure as a page. That was nearly invisible while
+/// a failed fetch consumed a page slot; now that the crawl budget frees the slot
+/// instead, a run can carry up to 3x max_pages ledger rows — and a 2-file scrape
+/// of a single-page app on a static host advertised "15 pages".
+fn pages_on_disk(manifest: &Value) -> usize {
+    manifest
+        .get("pages")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter(|r| r.get("file").and_then(Value::as_str).is_some_and(|f| !f.is_empty()))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 fn read_run(dir: &Path) -> Option<Run> {
@@ -146,18 +168,19 @@ fn read_run(dir: &Path) -> Option<Run> {
         host: host_of(&url),
         scope: info.get("scope").and_then(Value::as_str).unwrap_or("/").to_string(),
         url,
-        // Pages actually on disk, not enqueued: the row must match the folder.
-        pages: value
-            .get("pages")
-            .and_then(Value::as_array)
-            .map(|rows| rows.iter().filter(|r| r.get("file").is_some_and(|f| !f.is_null())).count())
-            .unwrap_or(0),
+        pages: pages_on_disk(&value),
         tokens: value.get("token_estimate").and_then(Value::as_u64).unwrap_or(0),
         clean: value
             .get("clean")
             .and_then(|c| c.get("clean"))
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        quality: value
+            .get("quality")
+            .and_then(|q| q.get("verdict"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         cancelled: info.get("cancelled").and_then(Value::as_bool).unwrap_or(false),
         modified_ms,
         resumable: dir.join(".crawl/checkpoint.pkl").is_file(),
@@ -609,6 +632,22 @@ mod tests {
         // The exact version the spike validated, and the store the app indexed into.
         assert!(args.contains(&DOCS_MCP_PKG));
         assert!(args.contains(&"/data/store"), "store path must reach npx");
+    }
+
+    #[test]
+    fn the_page_count_ignores_rows_that_produced_no_file() {
+        // The must-fail input first: a failed fetch carries "file": "", not null.
+        let manifest: Value = serde_json::from_str(
+            r#"{"pages": [
+                 {"url": "a", "file": "a.md"},
+                 {"url": "b", "file": ""},
+                 {"url": "c", "file": null},
+                 {"url": "d"}
+               ]}"#,
+        )
+        .unwrap();
+        assert_eq!(pages_on_disk(&manifest), 1);
+        assert_eq!(pages_on_disk(&serde_json::json!({})), 0);
     }
 
     #[test]
