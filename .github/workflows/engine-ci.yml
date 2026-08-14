@@ -2,8 +2,30 @@ name: engine-ci
 
 # The suite is offline by design: committed fixtures stand in for the live web,
 # so CI installs no browsers and makes no network requests.
+#
+# COST. This repo is private, so every minute here comes out of the account's
+# 2,000 included Actions minutes, and GitHub bills macOS at 10x Linux. Measured
+# over August 2026 (71 runs, 139 jobs): frozen-sidecar burned 1,540 of the
+# repo's 1,648 billed minutes — 93% — off just 123 minutes of wall clock. Three
+# things caused that, all fixed below:
+#
+#   1. Every commit ran the macOS job up to three times: once on the branch
+#      push, once on the pull_request, once on the post-merge push to main.
+#      Push accounted for 1,000 of those 1,540 minutes on its own.
+#   2. Nothing cancelled superseded runs, so a rapid follow-up push left the
+#      previous macOS job running to completion.
+#   3. Every run reinstalled its dependencies from scratch.
+#
+# frozen-sidecar therefore runs on pull_request ONLY — one macOS run per change,
+# gating the merge, which is the moment the bundle actually has to be correct.
+# main keeps the cheap Linux suite. If you need the bundle checked outside a PR,
+# run it by hand: `pyinstaller --noconfirm packaging/iofast.spec` then
+# `python packaging/verify_frozen.py dist/iofast/iofast` from engine/. That local
+# run is free and is the same gate.
 on:
   push:
+    # main only. A branch push is already covered by its PR.
+    branches: [main]
     paths:
       - "engine/**"
       - ".github/workflows/engine-ci.yml"
@@ -12,27 +34,45 @@ on:
       - "engine/**"
       - ".github/workflows/engine-ci.yml"
 
+# One live run per ref. A new push to a PR cancels the run it supersedes instead
+# of paying for a result nobody will read. main is deliberately NOT cancellable:
+# two merges landing close together must each leave a real result behind, and
+# the Linux suite is cheap enough that racing it costs nothing worth saving.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: engine/pyproject.toml
       - run: pip install -e "engine[dev]"
       - run: pytest engine/tests -q
 
   # The frozen sidecar drifts silently (lazy imports, data files) — the RPC
   # layer once shipped a method the bundle didn't have. verify_frozen drives
   # the REAL frozen binary over stdio against a loopback fixture site only.
+  # macOS is not optional here: the bundle it proves is the one that ships
+  # inside the .app. The timeout is the runaway guard — at 10x billing, a job
+  # wedged for an hour costs 600 minutes, nearly a third of the monthly budget.
   frozen-sidecar:
+    if: github.event_name == 'pull_request'
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: engine/pyproject.toml
       - run: pip install -e "engine[dev,build]"
       - run: pyinstaller --noconfirm packaging/iofast.spec
         working-directory: engine
