@@ -87,6 +87,23 @@ TARGETS = {
         "render": ["getting-started"],
         "notes": "Document360's own knowledge base.",
     },
+    "docsify": {
+        "pages": [
+            ("landing", "https://docsify.js.org/"),
+            ("tracy-landing", "https://adrianbj.github.io/TracyDebugger/"),
+        ],
+        "api": [
+            ("_sidebar.md", "https://docsify.js.org/_sidebar.md"),
+            ("quickstart.md", "https://docsify.js.org/quickstart.md"),
+        ],
+        "render": [],
+        "notes": (
+            "Two shells on purpose: docsify.js.org is v5 with a default README.md homepage, "
+            "TracyDebugger is a v4 nightly build that sets homepage: 'introduction.md'. Both "
+            "static bodies are the empty <div id=\"app\"></div> the SPA fills in — the .md "
+            "files next to them are the real content, which is why this adapter is api-mode."
+        ),
+    },
     "readthedocs": {
         "pages": [
             ("landing", "https://docs.readthedocs.io/en/stable/"),

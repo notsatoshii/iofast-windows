@@ -3,6 +3,7 @@
 from .base import Adapter, Ctx, Doc, Fingerprint
 from .confluence import ADAPTER as CONFLUENCE
 from .document360 import ADAPTER as DOCUMENT360
+from .docsify import ADAPTER as DOCSIFY
 from .docusaurus import ADAPTER as DOCUSAURUS
 from .gitbook import ADAPTER as GITBOOK
 from .mintlify import ADAPTER as MINTLIFY
@@ -20,6 +21,7 @@ ADAPTERS: tuple[Adapter, ...] = (
     DOCUSAURUS,
     README,
     REDOCLY,
+    DOCSIFY,
     DOCUMENT360,
     READTHEDOCS,
     SWAGGERHUB,

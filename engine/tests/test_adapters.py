@@ -46,7 +46,7 @@ def test_registry_entries_are_plain_adapters():
 
 
 def test_registry_shape():
-    assert len(ADAPTERS) == 10
+    assert len(ADAPTERS) == 11
     names = [a.name for a in ADAPTERS]
     assert len(set(names)) == len(names), f"duplicate adapter names: {names}"
 
@@ -92,6 +92,8 @@ def test_settings_the_fixtures_justify():
     assert settings["mintlify"].fetch_strategy == "static"
     assert settings["swaggerhub"].fetch_mode == "api"
     assert settings["confluence"].fetch_mode == "api"
+    # The docsify shell extracts 0 chars (static-landing.html) — the .md files are the run.
+    assert settings["docsify"].fetch_mode == "api"
     assert settings["notion"].known_fail and settings["notion"].harvest is None
     # nav_selector is stored for step 4; nothing wires it yet.
     assert settings["docusaurus"].nav_selector == 'nav[aria-label="Docs sidebar"]'

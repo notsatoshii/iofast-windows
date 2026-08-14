@@ -49,3 +49,19 @@ def test_body_text_caps_decompressed_body():
     bomb = gzip.compress(b"\0" * (MAX_BODY + 1024))
     assert len(bomb) < MAX_BODY, "fixture must be small compressed, huge expanded"
     assert _body_text(FakeResponse(bomb)) == ""
+
+
+def test_markdown_may_open_with_an_html_comment():
+    """docsify.js.org/ui-kit.md is 17KB of real markdown behind a markdownlint pragma.
+
+    Rejecting it on a bare "starts with <" filed the whole page as not-markdown
+    (measured live 2026-08-14) — and the same pragma opens its `_sidebar.md`.
+    """
+    from iofast_engine.discovery import looks_like_markdown
+
+    headers = {"content-type": "text/markdown; charset=utf-8"}
+    body = "<!-- markdownlint-disable single-title -->\n\n# UI Kit\n\n" + "prose. " * 60
+    assert looks_like_markdown(200, headers, body)
+    assert not looks_like_markdown(200, headers, "<!-- saved from url -->\n<html>" + "x" * 400)
+    assert not looks_like_markdown(200, headers, "<html><body>" + "x" * 400)
+    assert not looks_like_markdown(200, headers, "<!-- unterminated comment " + "x" * 400)

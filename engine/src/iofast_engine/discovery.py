@@ -200,6 +200,24 @@ def resolve_start(start_url: str, emit=None) -> str:
     return f"{new.scheme}://{new.netloc}{path}"
 
 
+def _past_leading_comments(text: str) -> str:
+    """The body with any leading HTML comments removed.
+
+    A markdown file may legitimately open with one — docsify.js.org's ui-kit.md
+    and its own `_sidebar.md` both start `<!-- markdownlint-disable … -->`, and a
+    naive "starts with <" test files 17KB of real markdown as not-markdown. An
+    HTML document that hides behind a comment (`<!-- saved from … --><html>`)
+    still fails the test after the comments come off.
+    """
+    body = text.lstrip()
+    while body.startswith("<!--"):
+        end = body.find("-->")
+        if end == -1:
+            break
+        body = body[end + 3 :].lstrip()
+    return body
+
+
 def looks_like_markdown(status: int, headers: dict, text: str) -> bool:
     """Shared md-twin accept gate: status, markdown-ish content type, non-HTML
     body, and the THIN_CHARS floor so a tiny text/plain soft-404 never passes.
@@ -213,7 +231,7 @@ def looks_like_markdown(status: int, headers: dict, text: str) -> bool:
     return (
         status == 200
         and ("markdown" in ctype or "text/plain" in ctype)
-        and not text.lstrip().startswith("<")
+        and not _past_leading_comments(text).startswith("<")
         and len(text.strip()) >= THIN_CHARS
     )
 

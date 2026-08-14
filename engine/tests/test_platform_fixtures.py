@@ -20,7 +20,7 @@ ROWS = [(meta, row) for meta in METAS for row in json.loads(meta.read_text())["p
 REQUIRED = {"file", "url", "captured", "status", "headers", "variant", "extracted_chars", "synthetic"}
 EXPECTED_PLATFORMS = {
     "gitbook", "mintlify", "docusaurus", "readme", "redocly",
-    "document360", "readthedocs", "notion", "swaggerhub", "confluence",
+    "document360", "readthedocs", "notion", "swaggerhub", "confluence", "docsify",
 }
 
 
