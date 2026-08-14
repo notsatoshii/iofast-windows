@@ -10,7 +10,7 @@ import os
 import sys
 import threading
 
-from . import __version__
+from . import __build__, __version__
 from .browsers import default_storage_env
 from .estimate import run_estimate
 from .manifest import SCHEMA
@@ -112,7 +112,13 @@ class RpcServer:
 
     def handle_initialize(self, rid, params):
         self.respond(
-            rid, {"protocol": PROTOCOL, "engine": __version__, "manifest_schema": SCHEMA}
+            rid,
+            {
+                "protocol": PROTOCOL,
+                "engine": __version__,
+                "build": __build__,
+                "manifest_schema": SCHEMA,
+            },
         )
 
     def handle_estimate(self, rid, params):

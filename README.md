@@ -111,12 +111,16 @@ app. In dev the shell looks for `engine/dist/iofast/iofast` (or wherever
 the `.app` via `bundle.resources`, so it must exist before `pnpm tauri build`.
 
 ```bash
-cd engine && .venv/bin/pyinstaller --noconfirm packaging/iofast.spec
-.venv/bin/python packaging/verify_frozen.py dist/iofast/iofast
+make freeze
 ```
 
-`verify_frozen.py` is the acceptance gate: it drives the real frozen binary
-over stdio, including a scrape against a local fixture server.
+`verify_frozen.py` (which `make freeze` runs) is the acceptance gate: it
+drives the real frozen binary over stdio, including a scrape against a local
+fixture server, and asserts the bundle's freeze-time git SHA matches the
+tree. `make gate` runs the full pre-merge gate (pytest, cargo, frontend
+build, frozen verify); `make bundle` is the only sanctioned way to produce
+the `.app` — a bare `pnpm tauri build` packages whatever stale `engine/dist`
+is on disk.
 
 **App.**
 
@@ -124,10 +128,13 @@ over stdio, including a scrape against a local fixture server.
 cd app && pnpm install && pnpm tauri dev
 ```
 
-`app/src-tauri/Cargo.lock` is load-bearing and committed: the pinned Rust
-toolchain (1.77.2) has no version-aware dependency resolver, so a fresh
-`cargo update` pulls in crates that need a newer compiler. Only re-resolve on
-a newer toolchain.
+`app/src-tauri/Cargo.lock` is load-bearing and committed. The toolchain pin
+lives in `app/src-tauri/rust-toolchain.toml` (1.97.1); `Cargo.toml`'s
+`rust-version` (1.77.2) is the MSRV floor, not the pin. A fresh
+`cargo update` can pull in crates that need a newer compiler than the floor —
+only re-resolve deliberately, on a toolchain bump, and update
+`rust-toolchain.toml`, `Cargo.toml`'s `rust-version`, `release.yml`'s
+toolchain step, and this paragraph together.
 
 ## Scraped content is untrusted
 

@@ -32,7 +32,12 @@ is `json.dumps(obj, default=str)` — identical to the CLI's NDJSON emitter.
 
 ### `initialize`
 Params: `{}`.
-Result: `{"protocol": 1, "engine": "<__version__>", "manifest_schema": 1}`.
+Result: `{"protocol": 1, "engine": "<__version__>",
+"build": "<git sha | 'dev' | 'unknown'>", "manifest_schema": 1}`. `build` is the freeze-time git SHA stamped by
+`packaging/iofast.spec`; unfrozen (dev) runs always report `"dev"`, and a
+frozen bundle missing its stamp reports `"unknown"`. Field
+order is part of the contract (`tests/fixtures/rpc/session.json` matches the
+serialized reply byte-for-byte).
 The shell calls this first and refuses to proceed on a protocol mismatch.
 
 ### `estimate`

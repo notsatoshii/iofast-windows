@@ -11,9 +11,20 @@ on:
       - "v*"
   workflow_dispatch:
 
+# One release build at a time, across ALL refs: a dispatch racing a tag push
+# (different refs, so a ref-keyed group would run both) must not run two
+# 10x-billed macOS jobs to completion; the newest wins.
+concurrency:
+  group: release
+  cancel-in-progress: true
+
 jobs:
   macos:
     runs-on: macos-latest
+    # macOS minutes bill at 10x. Without a timeout, one hung job on the default
+    # 6h limit bills up to 3,600 min — 1.8x the monthly allowance — from a
+    # single tag push. 45 min is ~2x the measured full build.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -30,11 +41,10 @@ jobs:
       # bundle.resources maps engine/dist/iofast/ into the bundle at
       # Resources/engine/, where sidecar.rs resolves it in release builds.
 
-      # 2. Pin the toolchain to the project's floor. cargo/rustc 1.78 is the known-good
-      # toolchain the committed Cargo.lock was resolved against; a newer default runner
-      # rust risks a surprise resolve into edition2024 crates (see Cargo.toml's lockfile
-      # note, and the clipboard/dialog comments in src/main.rs and src/store.rs).
-      - uses: dtolnay/rust-toolchain@1.78.0
+      # 2. Install the toolchain app/src-tauri/rust-toolchain.toml pins (1.97.1).
+      # The toml wins over any version passed here, so match it — a stale pin
+      # is dead weight with a misleading comment.
+      - uses: dtolnay/rust-toolchain@1.97.1
 
       # 3. Build the Tauri bundle. pnpm 9.15.2 + node 22 to match local dev.
       - uses: pnpm/action-setup@v4

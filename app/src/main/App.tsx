@@ -40,7 +40,7 @@ type McpIndexed = { library: string; config_json: string };
 /** Result of an API push over a run's corpus (engine `push`). */
 type PushResult = { digest: string; model: string; files: number; chars: number; truncated: boolean };
 /** app + engine versions and the compiled-in notices (about.rs `about_info`). */
-type AboutInfo = { app_version: string; engine_version: string; notices: string };
+type AboutInfo = { app_version: string; engine_version: string; engine_build: string; notices: string };
 
 /** The run whose events the progress strip is showing — panel-started too. */
 type Active = { rid: number; label: string; update: boolean };
@@ -573,7 +573,9 @@ export default function App() {
               <span>Engine</span>
               <span className="set-hint">the frozen sidecar</span>
             </div>
-            <span className="saved">{about?.engine_version ?? "…"}</span>
+            <span className="saved">
+              {about ? `${about.engine_version} @ ${about.engine_build.slice(0, 12)}` : "…"}
+            </span>
           </div>
           <h2>Third-party notices</h2>
           <pre className="mcp-config notices">{about?.notices ?? "…"}</pre>

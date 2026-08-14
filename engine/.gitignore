@@ -1,5 +1,7 @@
 .venv/
 __pycache__/
+# freeze-time provenance stamp, written by packaging/iofast.spec
+src/iofast_engine/_build.py
 *.egg-info/
 .pytest_cache/
 build/

@@ -22,7 +22,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
-build = ["pyinstaller==6.16.0"]
+build = [
+    "pyinstaller==6.16.0",
+    # iofast.spec collect_data_files()s these two; both otherwise arrive only
+    # transitively via scrapling[fetchers]. Declared bare on purpose: the
+    # declaration is the point, and an == pin here can deadlock against a
+    # future scrapling range (ResolutionImpossible kills CI at pip install).
+    "browserforge",
+    "apify-fingerprint-datapoints",
+]
 
 [project.scripts]
 iofast = "iofast_engine.cli:main"

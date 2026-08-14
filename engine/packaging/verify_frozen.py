@@ -288,6 +288,40 @@ def main(binary):
 
     r1, r2, r4 = reply(1), reply(2), reply(4)
     expect((r1 or {}).get("result", {}).get("protocol") == 1, "initialize -> protocol 1")
+    # Build provenance: the bundle must be frozen from an ancestor of HEAD with
+    # everything that determines bundle contents unchanged since — including
+    # UNCOMMITTED edits (git diff against the WORKING TREE, not HEAD) and
+    # untracked files. A stale bundle (the F1 failure class) fails HERE by
+    # name instead of on whatever feature drifted.
+    build = (r1 or {}).get("result", {}).get("build") or ""
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    BUNDLE_INPUTS = ("engine/src", "engine/packaging", "engine/pyproject.toml")
+
+    def git_ok(*args):
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True).returncode == 0
+
+    # The stamp is judged against THIS script's repo — so the binary must live
+    # in the same tree, or a bundle copied from another checkout would be
+    # validated against the wrong history and read ok.
+    binary_in_repo = os.path.realpath(os.path.abspath(binary)).startswith(
+        os.path.realpath(repo) + os.sep
+    )
+    untracked = subprocess.run(
+        ["git", "-C", repo, "-c", "status.showUntrackedFiles=normal", "status",
+         "--porcelain", "-uall", "--", *BUNDLE_INPUTS],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    expect(
+        binary_in_repo
+        and re.fullmatch(r"[0-9a-f]{40}", build) is not None
+        and git_ok("merge-base", "--is-ancestor", build, "HEAD")
+        and git_ok("diff", "--quiet", build, "--", *BUNDLE_INPUTS)
+        and not untracked,
+        f"build stamp {build[:12] or None!r} is an ancestor of HEAD with bundle inputs "
+        f"(src/packaging/pyproject) unchanged, tree clean there, binary inside this repo"
+        + ("" if binary_in_repo else f" (binary {binary!r} is OUTSIDE {repo!r})"),
+    )
     expect((r2 or {}).get("error", {}).get("code") == -32602, "bad url -> -32602")
     expect(
         any(m.get("error", {}).get("code") == -32700 for m in messages if m.get("id") is None),

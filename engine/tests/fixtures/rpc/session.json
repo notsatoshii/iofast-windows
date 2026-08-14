@@ -6,7 +6,7 @@
       "method": "initialize"
     },
     "expect": [
-      "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"protocol\": 1, \"engine\": \"{VERSION}\", \"manifest_schema\": 1}}"
+      "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"protocol\": 1, \"engine\": \"{VERSION}\", \"build\": \"dev\", \"manifest_schema\": 1}}"
     ]
   },
   {
