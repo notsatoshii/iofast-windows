@@ -18,6 +18,16 @@ use tokio::sync::oneshot;
 
 pub type Reply = Result<Value, String>;
 
+/// SHA of the last commit that changed the engine's bundle inputs, baked in
+/// by build.rs; "dev" when built without git history (check is skipped).
+pub const APP_BUILD: &str = env!("IOFAST_APP_BUILD");
+
+/// The sidecar is stale (or newer than this app) when its stamp differs from
+/// ours. An app built without a stamp can't judge, so it never raises.
+pub fn engine_stale(app_build: &str, engine_build: &str) -> bool {
+    app_build != "dev" && app_build != engine_build
+}
+
 /// How long a closed stdin gets to land `os._exit(0)` before we kill.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(12);
 
@@ -209,9 +219,25 @@ impl SidecarManager {
         // (store::scrape_env), so they never sit in a long-lived child's
         // environment. IOFAST_CACHE_DIR: the sidecar defaults it itself.
         let app = app.clone();
+        let emit_app = app.clone();
         Inner::start(&self.0, cmd, move |name, payload| {
-            let _ = app.emit(name, payload);
-        })
+            let _ = emit_app.emit(name, payload);
+        })?;
+        // Two-sided provenance handshake on every (re)spawn: the sidecar's
+        // `build` stamp must equal the one baked into this binary (build.rs).
+        // A mismatch is the stale-sidecar class on a machine where no gate
+        // runs; the UI shows it as a banner. Fire-and-forget: the child is up,
+        // the reply lands on the reader thread like any other.
+        let (_, rx) = self.0.send("initialize", json!({}))?;
+        tauri::async_runtime::spawn(async move {
+            if let Ok(Ok(v)) = rx.await {
+                let engine = v.get("build").and_then(Value::as_str).unwrap_or("unknown");
+                if engine_stale(APP_BUILD, engine) {
+                    let _ = app.emit("engine-stale", json!({"app": APP_BUILD, "engine": engine}));
+                }
+            }
+        });
+        Ok(())
     }
 
     /// Send and return immediately with the request id, for calls whose reply
@@ -312,5 +338,17 @@ mod tests {
         mgr.shutdown();
         assert!(block_on(orphan).unwrap().is_err());
         assert!(!mgr.0.alive());
+    }
+
+    #[test]
+    fn stale_fires_on_mismatch_only_when_app_is_stamped() {
+        let a = "0123456789abcdef0123456789abcdef01234567";
+        let b = "89abcdef0123456789abcdef0123456789abcdef";
+        assert!(engine_stale(a, b), "different stamps = stale");
+        assert!(engine_stale(a, "unknown"), "pre-stamp bundle = stale");
+        assert!(!engine_stale(a, a), "equal stamps = fresh");
+        assert!(!engine_stale("dev", b), "unstamped app can't judge");
+        // This binary really carries a stamp shape build.rs can produce.
+        assert!(APP_BUILD == "dev" || APP_BUILD.len() == 40);
     }
 }

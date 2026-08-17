@@ -14,12 +14,18 @@ import subprocess
 
 from PyInstaller.utils.hooks import collect_data_files
 
-# Build provenance: stamp the git SHA into the bundle so verify_frozen.py (and
+# Build provenance: stamp a git SHA into the bundle so verify_frozen.py (and
 # the app<->sidecar handshake) can prove which source this freeze came from.
+# The stamp is the LAST COMMIT THAT CHANGED THE BUNDLE INPUTS (src, packaging,
+# pyproject) — not HEAD — so the app, which bakes the same value in at build
+# time (app/src-tauri/build.rs), can compare by plain equality on any machine:
+# equal = same engine sources; a docs-only commit between freeze and app build
+# does not read as stale. Needs real history: CI checks out with fetch-depth 0.
 # The file is gitignored; unfrozen runs ignore it and report "dev".
 try:
     _rev = subprocess.run(
-        ["git", "-C", SPECPATH, "rev-parse", "HEAD"],
+        ["git", "-C", SPECPATH, "log", "-1", "--format=%H", "--",
+         "../src", "../packaging", "../pyproject.toml"],
         capture_output=True,
         text=True,
     )
@@ -31,7 +37,8 @@ if not _sha:
     # Fail loud at freeze time: a provenance-less bundle can never pass the
     # gate anyway, and this message beats a confusing gate failure later.
     raise SystemExit(
-        f"iofast.spec: no git SHA available — build provenance requires a git checkout ({_git_err})"
+        "iofast.spec: no git SHA available — build provenance requires a git checkout "
+        f"with history (shallow clones: fetch-depth 0) ({_git_err})"
     )
 # Refuse a dirty freeze: HEAD's SHA on a tree with uncommitted bundle-input
 # edits would stamp code that exists in no commit — the gate fails closed in

@@ -27,6 +27,9 @@ pub async fn about_info(app: AppHandle, sc: State<'_, SidecarManager>) -> Result
         // The stamp that makes a stale bundle self-diagnosing from the About
         // panel: "unknown" = pre-stamp bundle, "dev" = unfrozen sidecar.
         "engine_build": engine_build,
+        // The same stamp as baked into this app (build.rs); About shows both
+        // so a mismatch banner can be read against its numbers.
+        "app_build": crate::sidecar::APP_BUILD,
         // ../../../ from app/src-tauri/src/ = the worktree root, where A3 landed it.
         "notices": include_str!("../../../THIRD-PARTY-NOTICES.md"),
     }))

@@ -27,6 +27,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # iofast.spec + build.rs stamp `git log -1 -- engine/…`; a shallow clone breaks it
 
       # 1. Freeze the Python sidecar exactly as engine-ci's frozen-sidecar job does.
       - uses: actions/setup-python@v5

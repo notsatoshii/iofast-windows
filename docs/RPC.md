@@ -33,8 +33,11 @@ is `json.dumps(obj, default=str)` — identical to the CLI's NDJSON emitter.
 ### `initialize`
 Params: `{}`.
 Result: `{"protocol": 1, "engine": "<__version__>",
-"build": "<git sha | 'dev' | 'unknown'>", "manifest_schema": 1}`. `build` is the freeze-time git SHA stamped by
-`packaging/iofast.spec`; unfrozen (dev) runs always report `"dev"`, and a
+"build": "<git sha | 'dev' | 'unknown'>", "manifest_schema": 1}`. `build` is the git SHA of the last commit
+that changed the engine sources (`engine/src`, `engine/packaging`,
+`engine/pyproject.toml`) as of freeze time, stamped by `packaging/iofast.spec`.
+The app bakes the same value in at build time and shows a stale-engine banner
+when the two differ. Unfrozen (dev) runs always report `"dev"`, and a
 frozen bundle missing its stamp reports `"unknown"`. Field
 order is part of the contract (`tests/fixtures/rpc/session.json` matches the
 serialized reply byte-for-byte).
