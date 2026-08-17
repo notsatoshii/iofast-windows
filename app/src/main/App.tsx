@@ -40,7 +40,15 @@ type McpIndexed = { library: string; config_json: string };
 /** Result of an API push over a run's corpus (engine `push`). */
 type PushResult = { digest: string; model: string; files: number; chars: number; truncated: boolean };
 /** app + engine versions and the compiled-in notices (about.rs `about_info`). */
-type AboutInfo = { app_version: string; engine_version: string; engine_build: string; notices: string };
+type AboutInfo = {
+  app_version: string;
+  engine_version: string;
+  engine_build: string;
+  app_build: string;
+  notices: string;
+};
+/** sidecar.rs `engine-stale`: the sidecar's build stamp differs from the app's own. */
+type Stale = { app: string; engine: string };
 
 /** The run whose events the progress strip is showing — panel-started too. */
 type Active = { rid: number; label: string; update: boolean };
@@ -118,6 +126,7 @@ export default function App() {
   const [solve, setSolve] = useState<Solve | null>(null);
   const [left, setLeft] = useState(0);
   const [error, setError] = useState("");
+  const [stale, setStale] = useState<Stale | null>(null);
   const [doomed, setDoomed] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   /** Row whose secondary actions are showing. Same swap idiom the delete
@@ -289,8 +298,13 @@ export default function App() {
         setStream((s) => s + e.payload.delta);
       }
     });
+    // Fired by the sidecar handshake on every spawn; a fresh spawn that matches
+    // never fires, so a stale banner is never cleared by a later good spawn —
+    // that can only happen after a reinstall/rebuild, i.e. an app restart.
+    const stale = listen<Stale>("engine-stale", (e) => setStale(e.payload));
     return () => {
       void chunks.then((f) => f());
+      void stale.then((f) => f());
     };
   }, []);
 
@@ -506,6 +520,13 @@ export default function App() {
         </nav>
       </header>
 
+      {stale && (
+        <div className="alert" role="alert">
+          Engine does not match this app: engine built from {stale.engine.slice(0, 12)}, app from{" "}
+          {stale.app.slice(0, 12)}. Reinstall iofast — scrapes may misbehave until you do.
+        </div>
+      )}
+
       {active && (
         <div className="strip">
           <span className="strip-what">
@@ -566,7 +587,9 @@ export default function App() {
               <span>iofast</span>
               <span className="set-hint">the desktop app</span>
             </div>
-            <span className="saved">{about?.app_version ?? "…"}</span>
+            <span className="saved">
+              {about ? `${about.app_version} @ ${about.app_build.slice(0, 12)}` : "…"}
+            </span>
           </div>
           <div className="set">
             <div className="set-label">
