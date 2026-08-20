@@ -25,7 +25,9 @@
   --step-5: 24px;
 
   --fg: #f3f3f5;
-  --dim: rgba(243, 243, 245, 0.52);
+  /* 0.54, not 0.52: secondary text also sits on the --attention wash, whose
+     lighter ground drops 0.52 to 4.44:1 — measured, just under AA. */
+  --dim: rgba(243, 243, 245, 0.54);
   /* Decoration and disabled controls only (WCAG exempts those) — real text
      needs --dim or stronger; 0.3 composites to ~2.6:1 and fails AA. */
   --dimmer: rgba(243, 243, 245, 0.3);
