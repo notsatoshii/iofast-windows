@@ -32,7 +32,9 @@ html[data-variant="b"] .app {
 @media (prefers-color-scheme: light) {
   html[data-variant="b"] .app {
     --bg: #eef0f1;
-    --bg-elevated: #e2e2e6;
+    /* Raised means LIGHTER in light mode too — #e2e2e6 read as sunken,
+       flipping the elevation direction between themes. */
+    --bg-elevated: #f7f7f9;
     --sunken: rgba(0, 0, 0, 0.05);
     --hairline: rgba(0, 0, 0, 0.12);
     --hairline-strong: rgba(0, 0, 0, 0.22);
@@ -253,13 +255,9 @@ html[data-variant="b"] .app .run-acts {
   flex-wrap: nowrap;
 }
 
-/* Audit fix, restated for this register: at rest every action is invisible
-   except a faint "More…" — the row still reads as actionable without a hover. */
+/* Audit fix, restated for this register: every action stays faintly visible
+   at rest, so the row reads as actionable without a hover. */
 html[data-variant="b"] .app .run-acts > .link {
-  opacity: 0;
-}
-
-html[data-variant="b"] .app .run-acts > .link:last-child {
   opacity: 0.4;
 }
 
@@ -369,7 +367,11 @@ html[data-variant="b"] .app .ask-prompt {
    against an otherwise achromatic-chrome, amber-only-for-state surface. */
 html[data-variant="b"] .app .ask-prompt:focus {
   border-color: var(--hairline-strong);
-  outline: none;
+}
+
+html[data-variant="b"] .app .ask-prompt:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* --- focus-visible: crisper, matching the flat 1px hairline vocabulary ---------- */

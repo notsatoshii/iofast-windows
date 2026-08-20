@@ -104,6 +104,9 @@ body.app-window {
   padding: 0 var(--gutter);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--t-sub);
+  /* The sweep's ::after translates past the right edge; unclipped it grows the
+     page's scrollable width and flashes a horizontal scrollbar mid-animation. */
+  overflow: hidden;
 }
 
 .app .strip-what {
@@ -134,7 +137,7 @@ body.app-window {
   content: "";
   position: absolute;
   left: 0;
-  bottom: -1px;
+  bottom: 0;
   width: 28%;
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);

@@ -120,7 +120,13 @@ function Sheet({
     const onTab = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
       const list = focusables();
-      if (list.length === 0) return;
+      if (list.length === 0) {
+        // Nothing enabled to cycle to — hold focus on the card so the trap
+        // never silently opens.
+        e.preventDefault();
+        card.current?.focus();
+        return;
+      }
       const first = list[0];
       const last = list[list.length - 1];
       if (e.shiftKey && document.activeElement === first) {
@@ -568,6 +574,7 @@ export default function App() {
               className="tab"
               role="tab"
               id={`tab-${name}`}
+              aria-controls={`panel-${name}`}
               aria-selected={tab === name}
               tabIndex={tab === name ? 0 : -1}
               onClick={() => setTab(name)}
@@ -603,8 +610,10 @@ export default function App() {
       )}
 
       {solve && (
-        <div className="solve" role="status">
-          <span className="solve-what">
+        // role=status sits on the static text, NOT the whole banner — the
+        // countdown ticks every second and would re-announce endlessly.
+        <div className="solve">
+          <span className="solve-what" role="status">
             Solve the challenge in the browser window to continue
             <span className="solve-hint">
               Left alone, the wait runs out and this one page is skipped — the rest of the
@@ -638,7 +647,7 @@ export default function App() {
       {tab === "settings" ? (
         <Settings config={config} onChanged={reboot} />
       ) : tab === "about" ? (
-        <div className="pane about" role="tabpanel" aria-labelledby="tab-about">
+        <div className="pane about" role="tabpanel" id="panel-about" aria-labelledby="tab-about" tabIndex={0}>
           <h2>Version</h2>
           <div className="set">
             <div className="set-label">
@@ -659,10 +668,12 @@ export default function App() {
             </span>
           </div>
           <h2>Third-party notices</h2>
-          <pre className="mcp-config notices">{about?.notices ?? "…"}</pre>
+          <pre className="mcp-config notices" tabIndex={0} aria-label="Third-party notices">
+            {about?.notices ?? "…"}
+          </pre>
         </div>
       ) : (
-        <div className="pane" role="tabpanel" aria-labelledby="tab-library">
+        <div className="pane" role="tabpanel" id="panel-library" aria-labelledby="tab-library" tabIndex={0}>
           <div className="add">
             <input
               className="add-url"
@@ -720,7 +731,11 @@ export default function App() {
             </div>
           )}
 
-          {error && <div className="alert">{error}</div>}
+          {error && (
+            <div className="alert" role="alert">
+              {error}
+            </div>
+          )}
 
           {mcpConfig && (
             <Sheet label="MCP search configuration" onClose={() => setMcpConfig(null)}>
@@ -729,7 +744,9 @@ export default function App() {
                 MCP client (Claude Desktop, Cursor), then restart it. The server runs
                 read-only — search only, over untrusted docs.
               </span>
-              <pre className="mcp-config">{mcpConfig.config_json}</pre>
+              <pre className="mcp-config" tabIndex={0} aria-label="MCP configuration">
+                {mcpConfig.config_json}
+              </pre>
               <div className="acts">
                 <button type="button" className="btn go" onClick={() => copyMcp(mcpConfig.config_json)}>
                   {copied ? "Copied" : "Copy"}
@@ -803,7 +820,9 @@ export default function App() {
                 {plural(digest.files, "file")}
                 {digest.truncated ? " (corpus truncated to fit)" : ""}.
               </span>
-              <pre className="mcp-config digest">{digest.digest}</pre>
+              <pre className="mcp-config digest" tabIndex={0} aria-label="Answer">
+                {digest.digest}
+              </pre>
               <div className="acts">
                 <button type="button" className="btn go" onClick={() => copyMcp(digest.digest)}>
                   {copied ? "Copied" : "Copy"}

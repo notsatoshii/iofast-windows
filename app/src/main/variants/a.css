@@ -12,7 +12,9 @@ html[data-variant="a"] .app {
   --bg: #19191c;
   --a-card: #232327;
   --a-tab-track: rgba(255, 255, 255, 0.06);
-  --a-toolbar: rgba(25, 25, 28, 0.72);
+  /* 0.82, not 0.72: text sits on this while arbitrary content scrolls under
+     the blur — the higher floor keeps worst-case contrast honest. */
+  --a-toolbar: rgba(25, 25, 28, 0.82);
   --a-go-fill: rgba(255, 159, 10, 0.16);
   --a-go-fill-hover: rgba(255, 159, 10, 0.24);
   --a-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
@@ -31,7 +33,7 @@ html[data-variant="a"] .app {
     --bg: #eef0f3;
     --a-card: #ffffff;
     --a-tab-track: rgba(0, 0, 0, 0.05);
-    --a-toolbar: rgba(238, 240, 243, 0.72);
+    --a-toolbar: rgba(238, 240, 243, 0.82);
     --a-go-fill: rgba(179, 90, 13, 0.1);
     --a-go-fill-hover: rgba(179, 90, 13, 0.17);
     --a-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.12);
@@ -392,9 +394,28 @@ html[data-variant="a"] .app .first-acts {
    fires for elements this file doesn't touch; these restate it wherever a
    plain-selector rule above would otherwise outrank the shared focus rule. */
 
-html[data-variant="a"] .app :where(.tab, .btn, .add-url, .text-input, .num-input, .ask-prompt, .ask-model):focus-visible {
+html[data-variant="a"] .app :where(.tab, .btn, .link, .add-url, .text-input, .num-input, .ask-prompt, .ask-model):focus-visible {
   outline: 1.5px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Accent is a signal, not a text color: row actions are chrome, so they go
+   neutral — the accent stays reserved for selection, go-buttons, and the
+   auto badge, which is what this file's header promises. */
+html[data-variant="a"] .app .link {
+  color: var(--dim);
+}
+
+html[data-variant="a"] .app .link:hover {
+  color: var(--fg);
+}
+
+html[data-variant="a"] .app .link.bad {
+  color: var(--bad);
+}
+
+html[data-variant="a"] .app .link:disabled {
+  color: var(--dimmer);
 }
 
 @media (prefers-reduced-motion: reduce) {
