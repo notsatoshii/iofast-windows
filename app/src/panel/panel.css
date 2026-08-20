@@ -81,7 +81,7 @@ body.panel-window {
 }
 
 .url::placeholder {
-  color: var(--dimmer);
+  color: var(--dim);
 }
 
 .enter {
@@ -275,7 +275,7 @@ body.panel-window {
    persists for the whole wait — the note line beside it is a single slot that
    the next fetched page overwrites. */
 .banner.solve {
-  background: rgba(240, 165, 90, 0.13);
+  background: var(--attention);
   color: var(--fg);
 }
 

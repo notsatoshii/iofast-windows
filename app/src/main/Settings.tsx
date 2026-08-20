@@ -180,7 +180,7 @@ export default function Settings({
   );
 
   return (
-    <div className="pane">
+    <div className="pane" role="tabpanel" aria-labelledby="tab-settings">
       <h2>Library</h2>
       <div className="set">
         <div className="set-label">
@@ -223,9 +223,12 @@ export default function Settings({
           <span className="set-hint">Not editable yet.</span>
         </div>
         <div className="set-control">
-          <kbd className="key">⌘</kbd>
-          <kbd className="key">⇧</kbd>
-          <kbd className="key">K</kbd>
+          <span aria-hidden="true">
+            <kbd className="key">⌘</kbd>
+            <kbd className="key">⇧</kbd>
+            <kbd className="key">K</kbd>
+          </span>
+          <span className="visually-hidden">Command Shift K</span>
         </div>
       </div>
 

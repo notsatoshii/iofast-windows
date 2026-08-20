@@ -26,11 +26,15 @@
 
   --fg: #f3f3f5;
   --dim: rgba(243, 243, 245, 0.52);
+  /* Decoration and disabled controls only (WCAG exempts those) — real text
+     needs --dim or stronger; 0.3 composites to ~2.6:1 and fails AA. */
   --dimmer: rgba(243, 243, 245, 0.3);
   --hairline: rgba(255, 255, 255, 0.09);
   --hairline-strong: rgba(255, 255, 255, 0.16);
   --hover: rgba(255, 255, 255, 0.055);
   --accent: #f0a55a;
+  /* A wash of the accent, for the one banner that asks the user to act. */
+  --attention: rgba(240, 165, 90, 0.13);
   --good: #62c07a;
   --bad: #ff8577;
 }
@@ -39,12 +43,16 @@
   .panel,
   .app {
     --fg: #17171a;
-    --dim: rgba(23, 23, 26, 0.56);
+    /* 0.56 composited over the light ground was 4.07:1 — just under AA. */
+    --dim: rgba(23, 23, 26, 0.62);
     --dimmer: rgba(23, 23, 26, 0.34);
     --hairline: rgba(0, 0, 0, 0.1);
     --hairline-strong: rgba(0, 0, 0, 0.18);
     --hover: rgba(0, 0, 0, 0.045);
     --accent: #a4570e;
+    /* Light mode's accent is a dark bronze, so the wash keeps the dark
+       scheme's amber — tinting with #a4570e reads as mud, not a highlight. */
+    --attention: rgba(240, 165, 90, 0.22);
     --good: #1f7a3d;
     --bad: #b3271b;
   }
