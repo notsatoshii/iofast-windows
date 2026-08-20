@@ -7,8 +7,6 @@
 .app {
   --bg: #1c1c1f;
   --sunken: rgba(0, 0, 0, 0.22);
-  /* A wash of the accent, for the one banner that asks the user to act. */
-  --attention: rgba(240, 165, 90, 0.13);
   min-height: 100vh;
   background: var(--bg);
   color: var(--fg);
@@ -20,11 +18,20 @@
   .app {
     --bg: #fbfbfc;
     --sunken: rgba(0, 0, 0, 0.03);
-    /* Light mode's accent is a dark bronze, so the wash is mixed from the dark
-       scheme's amber instead — tinting with #a4570e reads as mud, not as a
-       highlight. */
-    --attention: rgba(240, 165, 90, 0.22);
   }
+}
+
+/* Text a screen reader needs that sighted users get from layout or glyphs. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 body.app-window {
@@ -53,6 +60,8 @@ body.app-window {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* The brand is the window's h1 — strip the UA heading box. */
+  margin: 0;
   font-size: var(--t-body);
   font-weight: 590;
   letter-spacing: -0.01em;
@@ -79,7 +88,7 @@ body.app-window {
   background: var(--hover);
 }
 
-.app .tab[aria-current="true"] {
+.app .tab[aria-selected="true"] {
   background: var(--hover);
   color: var(--fg);
 }
@@ -95,6 +104,9 @@ body.app-window {
   padding: 0 var(--gutter);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--t-sub);
+  /* The sweep's ::after translates past the right edge; unclipped it grows the
+     page's scrollable width and flashes a horizontal scrollbar mid-animation. */
+  overflow: hidden;
 }
 
 .app .strip-what {
@@ -125,7 +137,7 @@ body.app-window {
   content: "";
   position: absolute;
   left: 0;
-  bottom: -1px;
+  bottom: 0;
   width: 28%;
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
@@ -237,7 +249,7 @@ body.app-window {
 }
 
 .app .add-url::placeholder {
-  color: var(--dimmer);
+  color: var(--dim);
 }
 
 .app .add-hint {
@@ -322,7 +334,7 @@ body.app-window {
 
 .app .run-when {
   grid-area: when;
-  color: var(--dimmer);
+  color: var(--dim);
   font-size: var(--t-meta);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -464,7 +476,7 @@ body.app-window {
 .app .foot {
   margin: 14px var(--gutter) var(--step-5);
   max-width: 560px;
-  color: var(--dimmer);
+  color: var(--dim);
   font-size: var(--t-sub);
   line-height: 1.55;
 }
@@ -655,4 +667,434 @@ body.app-window {
   max-height: 440px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* === Aqua Utility identity (bold-revamp winner, folded from variants/a.css) =
+   Later-in-file rules override the base rules above at equal specificity —
+   the base block is kept intact so the diff stays reviewable; a future pass
+   may dedupe. Scoped to .app only: the quick panel keeps its own surface. */
+/* 
+   recessed window ground carries grouped inset cards (the .set rows, the
+   .runs list), the tab strip becomes a segmented control, and the sticky
+   header becomes a blurred toolbar. Same amber family, tuned toward a
+   saturated system orange and used sparingly — selection, go-buttons, the
+   auto badge. Everything here is scoped under .app;
+   panel.css and the base app.css are untouched. */
+
+.app {
+  /* Window ground sits a step below the grouped cards, like a Settings
+     window behind its section groups. */
+  --bg: #19191c;
+  --a-card: #232327;
+  --a-tab-track: rgba(255, 255, 255, 0.06);
+  /* 0.82, not 0.72: text sits on this while arbitrary content scrolls under
+     the blur — the higher floor keeps worst-case contrast honest. */
+  --a-toolbar: rgba(25, 25, 28, 0.82);
+  --a-go-fill: rgba(255, 159, 10, 0.16);
+  --a-go-fill-hover: rgba(255, 159, 10, 0.24);
+  --a-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --a-shadow-2: 0 1px 1px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.5);
+  --a-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --sunken: rgba(0, 0, 0, 0.32);
+  /* A more saturated system orange than the base amber; still the same
+     family, just tuned for a native-utility register. Both check out
+     against --a-card and --bg at >7:1. */
+  --accent: #ff9f0a;
+  --attention: rgba(255, 159, 10, 0.15);
+}
+
+@media (prefers-color-scheme: light) {
+  .app {
+    --bg: #eef0f3;
+    --a-card: #ffffff;
+    --a-tab-track: rgba(0, 0, 0, 0.05);
+    --a-toolbar: rgba(238, 240, 243, 0.82);
+    --a-go-fill: rgba(179, 90, 13, 0.1);
+    --a-go-fill-hover: rgba(179, 90, 13, 0.17);
+    --a-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.12);
+    --a-shadow-2: 0 1px 1px rgba(0, 0, 0, 0.06), 0 16px 40px rgba(0, 0, 0, 0.18);
+    --a-inset: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+    --sunken: rgba(0, 0, 0, 0.05);
+    /* A dark bronze-orange. #b35a0d measured 4.2:1 on the go-button's tinted
+       fill; #a4570e clears 4.66:1 there and 5.1:1 on the card. The attention
+       wash at 0.16 dropped --dim to 4.42:1 — 0.12 keeps the tint and passes. */
+    --accent: #a4570e;
+    --attention: rgba(179, 90, 13, 0.12);
+  }
+}
+
+/* --- toolbar (was: sticky header) ------------------------------------------ */
+
+.app .top {
+  height: 50px;
+  padding: 0 calc(var(--gutter) + 2px);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--a-toolbar);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+.app .brand {
+  font-weight: 600;
+  letter-spacing: -0.014em;
+}
+
+.app .brand .mark {
+  color: var(--accent);
+}
+
+/* --- segmented control (was: plain tab row) -------------------------------- */
+
+.app .tabs {
+  gap: 0;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--a-tab-track);
+}
+
+.app .tab {
+  padding: 4px 12px;
+  border-radius: 6px;
+  color: var(--dim);
+  font-weight: 500;
+  transition: color 120ms ease-out, background-color 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+.app .tab:hover {
+  background: transparent;
+  color: var(--fg);
+}
+
+.app .tab[aria-selected="true"] {
+  background: var(--a-card);
+  box-shadow: var(--a-shadow-1);
+  color: var(--fg);
+}
+
+.app .tab[aria-selected="true"]:hover {
+  background: var(--a-card);
+}
+
+/* --- live progress strip ---------------------------------------------------- */
+/* Motion (.strip::after sweep) is untouched — base app.css already owns the
+   animation and its reduced-motion fallback; only the resting chrome here. */
+
+.app .strip {
+  padding: 0 calc(var(--gutter) + 2px);
+  background: var(--a-card);
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* --- human-solve banner ------------------------------------------------------ */
+
+.app .solve {
+  padding: 11px calc(var(--gutter) + 2px);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--attention);
+}
+
+.app .solve-left {
+  font-weight: 600;
+}
+
+/* The shared .btn is quiet by design; on the tinted solve band it needs the
+   strongest edge in the row so it doesn't read as the faintest thing under a
+   running clock. Restated at this scope because a plain .btn override below
+   would otherwise outrank this nested rule (see header note on specificity). */
+.app .solve .btn {
+  border-color: var(--accent);
+  background: var(--a-card);
+  color: var(--fg);
+}
+
+/* --- add a URL --------------------------------------------------------------- */
+
+.app .add {
+  gap: 10px;
+  padding: var(--step-3) calc(var(--gutter) + 2px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.app :where(.add-url, .text-input, .num-input) {
+  height: 30px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--sunken);
+  box-shadow: var(--a-inset);
+}
+
+.app :where(.add-url, .text-input, .num-input):focus {
+  border-color: var(--accent);
+}
+
+.app .alert {
+  padding: 10px calc(var(--gutter) + 2px);
+  background: var(--attention);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--bad);
+}
+
+/* --- large-crawl gate --------------------------------------------------------- */
+/* An inline confirmation, styled like a compact system alert row rather than
+   the bare bar it was — it interrupts the same way a Settings sheet would. */
+
+.app .gate {
+  height: auto;
+  margin: 0 var(--gutter);
+  padding: 10px 14px;
+  border-top: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--a-card);
+  box-shadow: var(--a-shadow-1);
+}
+
+/* --- buttons ------------------------------------------------------------------ */
+/* macOS push-button: a filled surface, a hairline edge, and a slight
+   downward nudge on press instead of a color flash. */
+
+.app .btn {
+  padding: 4px 11px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  background: var(--a-card);
+  box-shadow: var(--a-shadow-1);
+  color: var(--fg);
+}
+
+.app .btn:hover {
+  border-color: var(--accent);
+  background: var(--a-card);
+}
+
+.app .btn:active {
+  box-shadow: none;
+  transform: translateY(0.5px);
+}
+
+.app .btn:disabled {
+  box-shadow: none;
+  opacity: 0.4;
+}
+
+.app .btn.go {
+  border-color: var(--accent);
+  background: var(--a-go-fill);
+  color: var(--accent);
+}
+
+.app .btn.go:hover {
+  background: var(--a-go-fill-hover);
+}
+
+/* --- library rows: grouped inset card --------------------------------------- */
+
+.app .empty {
+  padding: 88px var(--gutter);
+}
+
+.app .runs {
+  margin: 0 var(--gutter) var(--step-4);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.app .run {
+  margin: 0;
+  padding: 11px 14px 12px;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  background: var(--a-card);
+}
+
+.app .run:first-child {
+  border-top: 0;
+}
+
+.app .run:hover {
+  background: var(--hover);
+}
+
+.app .run-auto {
+  color: var(--accent);
+}
+
+/* Resting affordance: the audit's spirit — More… stays faintly visible at
+   rest instead of fully hidden, so a row reads as actionable before you
+   even hover it. */
+.app .run-acts {
+  opacity: 0.42;
+}
+
+.app .run:hover .run-acts,
+.app .run:focus-within .run-acts,
+.app .run-acts.asking {
+  opacity: 1;
+}
+
+/* --- settings & about: grouped sections -------------------------------------- */
+/* The DOM is a flat run of h2 / .set siblings (no wrapping div per group), so
+   the group boundary is read from adjacency: the .set right after an h2
+   starts a group, and a .set with no following .set ends one. :has() is safe
+   here — this ships against a modern WKWebView. */
+
+.app .pane h2 {
+  margin: var(--step-5) calc(var(--gutter) + 2px) 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.app .set {
+  gap: 24px;
+  margin: 0 var(--gutter);
+  padding: 11px 14px;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  background: var(--a-card);
+}
+
+.app .pane > h2 + .set {
+  border-top: 0;
+  border-radius: 10px 10px 0 0;
+}
+
+.app .pane .set:not(:has(+ .set)) {
+  border-radius: 0 0 10px 10px;
+  margin-bottom: var(--step-4);
+}
+
+.app .pane > h2 + .set:not(:has(+ .set)) {
+  border-radius: 10px;
+}
+
+.app .num-input {
+  width: 74px;
+}
+
+.app .key {
+  padding: 2px 6px 3px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 5px;
+  background: var(--sunken);
+  box-shadow: 0 1px 0 var(--hairline-strong);
+}
+
+.app .foot {
+  margin: 14px calc(var(--gutter) + 2px) var(--step-5);
+}
+
+/* --- about -------------------------------------------------------------------- */
+
+.app .notices {
+  margin: var(--step-2) var(--gutter) 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--a-card);
+}
+
+/* --- sheets (mcp paste config · ask · answer) --------------------------------- */
+
+.app .scrim {
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.app .sheet {
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: var(--a-card);
+  box-shadow: var(--a-shadow-2);
+}
+
+.app .mcp-config {
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--sunken);
+}
+
+.app .ask-prompt {
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--sunken);
+  box-shadow: var(--a-inset);
+}
+
+.app .ask-prompt:focus,
+.app .ask-model:focus {
+  border-color: var(--accent);
+}
+
+/* --- first run: a centered setup-assistant card -------------------------------- */
+
+.app .first-card {
+  padding: 32px 30px 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--a-card);
+  box-shadow: var(--a-shadow-2);
+  text-align: center;
+}
+
+.app .first-mark {
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+  border-radius: 9px;
+  background: var(--attention);
+  box-sizing: content-box;
+}
+
+.app .first h1 {
+  font-weight: 650;
+}
+
+.app .first-path {
+  border-radius: 7px;
+  background: var(--sunken);
+  box-shadow: var(--a-inset);
+  text-align: left;
+}
+
+.app .first-acts {
+  justify-content: center;
+}
+
+/* --- focus rings --------------------------------------------------------------- */
+/* 2px offset, per the register brief — the base app.css rule (1px) still
+   fires for elements this file doesn't touch; these restate it wherever a
+   plain-selector rule above would otherwise outrank the shared focus rule. */
+
+.app :where(.tab, .btn, .link, .add-url, .text-input, .num-input, .ask-prompt, .ask-model):focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Accent is a signal, not a text color: row actions are chrome, so they go
+   neutral — the accent stays reserved for selection, go-buttons, and the
+   auto badge, which is what this file's header promises. */
+.app .link {
+  color: var(--dim);
+}
+
+.app .link:hover {
+  color: var(--fg);
+}
+
+.app .link.bad {
+  color: var(--bad);
+}
+
+.app .link:disabled {
+  color: var(--dimmer);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app .btn:active {
+    transform: none;
+  }
 }

@@ -87,7 +87,16 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * the one place that decides whether closing is allowed at all (the Ask card
  * refuses while its request is in flight, matching its disabled Cancel button).
  */
-function Sheet({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+function Sheet({
+  label,
+  onClose,
+  children,
+}: {
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -95,6 +104,45 @@ function Sheet({ onClose, children }: { onClose: () => void; children: ReactNode
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  // aria-modal declares the page behind inert, so keyboard focus must actually
+  // live inside: focus the first control on open, wrap Tab at the edges, and
+  // hand focus back to the opener on close. Mount-only — a re-render while the
+  // user types must never re-steal focus.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const focusables = () =>
+      Array.from(
+        card.current?.querySelectorAll<HTMLElement>(
+          "button:not(:disabled), input:not(:disabled), textarea:not(:disabled)",
+        ) ?? [],
+      );
+    (focusables()[0] ?? card.current)?.focus();
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const list = focusables();
+      if (list.length === 0) {
+        // Nothing enabled to cycle to — hold focus on the card so the trap
+        // never silently opens.
+        e.preventDefault();
+        card.current?.focus();
+        return;
+      }
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onTab);
+    return () => {
+      window.removeEventListener("keydown", onTab);
+      opener?.focus();
+    };
+  }, []);
   return (
     // mousedown, not click: a click that STARTS inside the card and ends on the
     // scrim is a text selection being dragged out, not a dismissal.
@@ -104,7 +152,7 @@ function Sheet({ onClose, children }: { onClose: () => void; children: ReactNode
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="sheet" role="dialog" aria-modal="true">
+      <div className="sheet" role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} ref={card}>
         {children}
       </div>
     </div>
@@ -498,20 +546,37 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <div className="brand">
+        <h1 className="brand">
           <svg className="mark" viewBox="0 0 16 16" aria-hidden="true">
             <rect x="1.75" y="1.75" width="12.5" height="12.5" rx="3.25" />
             <path d="M8 4.75v5.5m0 0L5.9 8.2M8 10.25l2.1-2.05" />
           </svg>
           iofast
-        </div>
-        <nav className="tabs">
+        </h1>
+        <nav
+          className="tabs"
+          role="tablist"
+          aria-label="Sections"
+          onKeyDown={(e) => {
+            // Roving arrows, the tablist convention: Left/Right move AND select.
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            const order = ["library", "settings", "about"] as const;
+            const at = order.indexOf(tab);
+            const next = order[(at + (e.key === "ArrowRight" ? 1 : order.length - 1)) % order.length];
+            setTab(next);
+            document.getElementById(`tab-${next}`)?.focus();
+          }}
+        >
           {(["library", "settings", "about"] as const).map((name) => (
             <button
               key={name}
               type="button"
               className="tab"
-              aria-current={tab === name}
+              role="tab"
+              id={`tab-${name}`}
+              aria-controls={`panel-${name}`}
+              aria-selected={tab === name}
+              tabIndex={tab === name ? 0 : -1}
               onClick={() => setTab(name)}
             >
               {name === "library" ? "Library" : name === "settings" ? "Settings" : "About"}
@@ -545,8 +610,10 @@ export default function App() {
       )}
 
       {solve && (
-        <div className="solve" role="status">
-          <span className="solve-what">
+        // role=status sits on the static text, NOT the whole banner — the
+        // countdown ticks every second and would re-announce endlessly.
+        <div className="solve">
+          <span className="solve-what" role="status">
             Solve the challenge in the browser window to continue
             <span className="solve-hint">
               Left alone, the wait runs out and this one page is skipped — the rest of the
@@ -580,7 +647,7 @@ export default function App() {
       {tab === "settings" ? (
         <Settings config={config} onChanged={reboot} />
       ) : tab === "about" ? (
-        <div className="pane about">
+        <div className="pane about" role="tabpanel" id="panel-about" aria-labelledby="tab-about" tabIndex={0}>
           <h2>Version</h2>
           <div className="set">
             <div className="set-label">
@@ -601,10 +668,12 @@ export default function App() {
             </span>
           </div>
           <h2>Third-party notices</h2>
-          <pre className="mcp-config notices">{about?.notices ?? "…"}</pre>
+          <pre className="mcp-config notices" tabIndex={0} aria-label="Third-party notices">
+            {about?.notices ?? "…"}
+          </pre>
         </div>
       ) : (
-        <div className="pane">
+        <div className="pane" role="tabpanel" id="panel-library" aria-labelledby="tab-library" tabIndex={0}>
           <div className="add">
             <input
               className="add-url"
@@ -662,16 +731,22 @@ export default function App() {
             </div>
           )}
 
-          {error && <div className="alert">{error}</div>}
+          {error && (
+            <div className="alert" role="alert">
+              {error}
+            </div>
+          )}
 
           {mcpConfig && (
-            <Sheet onClose={() => setMcpConfig(null)}>
+            <Sheet label="MCP search configuration" onClose={() => setMcpConfig(null)}>
               <span>
                 Indexed <strong>{mcpConfig.library}</strong> for MCP search. Add this to your
                 MCP client (Claude Desktop, Cursor), then restart it. The server runs
                 read-only — search only, over untrusted docs.
               </span>
-              <pre className="mcp-config">{mcpConfig.config_json}</pre>
+              <pre className="mcp-config" tabIndex={0} aria-label="MCP configuration">
+                {mcpConfig.config_json}
+              </pre>
               <div className="acts">
                 <button type="button" className="btn go" onClick={() => copyMcp(mcpConfig.config_json)}>
                   {copied ? "Copied" : "Copy"}
@@ -685,6 +760,7 @@ export default function App() {
 
           {ask && (
             <Sheet
+              label={`Ask AI about ${ask.host}`}
               onClose={() => {
                 // In-flight request: the answer is still streaming into this
                 // card, and its own Cancel is disabled for the same reason.
@@ -715,11 +791,12 @@ export default function App() {
                 placeholder="model (optional — defaults to your rescue model)"
                 onChange={(e) => setAskModel(e.target.value)}
               />
-              {pushBusy && (
-                <pre className="mcp-config digest" aria-live="polite">
-                  {stream || "…"}
-                </pre>
-              )}
+              {/* Announce the wait once — a live region on the stream itself
+                  would read every appended chunk aloud. */}
+              <span className="visually-hidden" role="status">
+                {pushBusy ? "Waiting for the answer" : ""}
+              </span>
+              {pushBusy && <pre className="mcp-config digest">{stream || "…"}</pre>}
               <div className="acts">
                 <button
                   type="button"
@@ -737,13 +814,15 @@ export default function App() {
           )}
 
           {digest && (
-            <Sheet onClose={() => setDigest(null)}>
+            <Sheet label={`Answer about ${digest.host}`} onClose={() => setDigest(null)}>
               <span>
                 Answer about <strong>{digest.host}</strong> — {digest.model}, over{" "}
                 {plural(digest.files, "file")}
                 {digest.truncated ? " (corpus truncated to fit)" : ""}.
               </span>
-              <pre className="mcp-config digest">{digest.digest}</pre>
+              <pre className="mcp-config digest" tabIndex={0} aria-label="Answer">
+                {digest.digest}
+              </pre>
               <div className="acts">
                 <button type="button" className="btn go" onClick={() => copyMcp(digest.digest)}>
                   {copied ? "Copied" : "Copy"}
@@ -757,9 +836,13 @@ export default function App() {
 
           {runs.length === 0 ? (
             <p className="empty">
-              Nothing here yet. Paste a URL above, or press <kbd className="key">⌘</kbd>
-              <kbd className="key">⇧</kbd>
-              <kbd className="key">K</kbd> anywhere.
+              Nothing here yet. Paste a URL above, or press{" "}
+              <span aria-hidden="true">
+                <kbd className="key">⌘</kbd>
+                <kbd className="key">⇧</kbd>
+                <kbd className="key">K</kbd>
+              </span>
+              <span className="visually-hidden">Command Shift K</span> anywhere.
             </p>
           ) : (
             <ul className="runs">
@@ -767,7 +850,9 @@ export default function App() {
                 <li className="run" key={run.dir}>
                   <span
                     className="dot"
+                    role="img"
                     data-clean={run.clean ? "1" : "0"}
+                    aria-label={run.clean ? "clean run" : "run has gaps"}
                     title={run.clean ? "clean run" : "run has gaps — see report.md"}
                   />
                   <span className="run-host">{run.host}</span>

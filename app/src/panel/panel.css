@@ -81,7 +81,7 @@ body.panel-window {
 }
 
 .url::placeholder {
-  color: var(--dimmer);
+  color: var(--dim);
 }
 
 .enter {
@@ -211,6 +211,13 @@ body.panel-window {
   color: var(--fg);
 }
 
+/* A disabled button must read as disabled without color vision — the shared
+   quiet style is otherwise pixel-identical enabled vs not. */
+.btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 /* The one accented button in the panel: committing to a big crawl. */
 .btn.go {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -275,7 +282,7 @@ body.panel-window {
    persists for the whole wait — the note line beside it is a single slot that
    the next fetched page overwrites. */
 .banner.solve {
-  background: rgba(240, 165, 90, 0.13);
+  background: var(--attention);
   color: var(--fg);
 }
 
