@@ -2,23 +2,38 @@
 // TEMP: the reference above exists for import.meta.env below — remove at collapse.
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import App from "./main/App";
 import Panel from "./panel/Panel";
 import "./theme.css";
 import "./panel/panel.css";
 import "./main/app.css";
-// TEMP: bold-revamp variant sheets — the winner folds into app.css at collapse.
-import "./main/variants/a.css";
-import "./main/variants/b.css";
-import "./main/variants/c.css";
+
+// Both windows load index.html; the label picks the surface. The panel is the
+// fast path, `main` is the library, run progress and settings.
+function mount() {
+  const isPanel = getCurrentWindow().label === "panel";
+  document.body.classList.add(isPanel ? "panel-window" : "app-window");
+
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>{isPanel ? <Panel /> : <App />}</React.StrictMode>,
+  );
+}
 
 // TEMP: bold-revamp preview scaffold — remove at collapse, restoring the
-// original synchronous module body. In the Tauri shell nothing changes; in a
-// plain DEV browser the mock boots first so the window renders fixture data.
-async function boot() {
-  if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
+// synchronous mount above as the whole module body. The Tauri shell takes the
+// else branch, which is byte-for-byte the old startup path; only a plain DEV
+// browser pays the async hop, and the variant sheets load only there too.
+if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
+  void (async () => {
     await import("./main/devmock");
+    // TEMP: variant sheets — the winner folds into app.css at collapse.
+    await Promise.all([
+      import("./main/variants/a.css"),
+      import("./main/variants/b.css"),
+      import("./main/variants/c.css"),
+    ]);
     // TEMP: variant picker — ?variant=a|b|c scopes the candidate token sets.
     const params = new URLSearchParams(window.location.search);
     const variant = params.get("variant");
@@ -38,17 +53,8 @@ async function boot() {
       bar.appendChild(link);
     }
     document.body.appendChild(bar);
-  }
-
-  // Both windows load index.html; the label picks the surface. The panel is the
-  // fast path, `main` is the library, run progress and settings.
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const isPanel = getCurrentWindow().label === "panel";
-  document.body.classList.add(isPanel ? "panel-window" : "app-window");
-
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-    <React.StrictMode>{isPanel ? <Panel /> : <App />}</React.StrictMode>,
-  );
+    mount();
+  })();
+} else {
+  mount();
 }
-
-void boot();

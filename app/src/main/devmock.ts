@@ -104,7 +104,13 @@ mockIPC((cmd, args) => {
         config_json: '{\n  "mcpServers": {\n    "iofast-docs": {\n      "command": "npx",\n      "args": ["docs-mcp", "--store", "/lib"]\n    }\n  }\n}',
       };
     case "sidecar_push":
-      return { digest: "Use a secret key in the Authorization header:\n\n  curl https://api.stripe.com/v1/charges \\\n    -u sk_test_xxx:\n\nEvery request must be TLS. (fixture answer)", model: "anthropic/claude-sonnet-5", files: 412, chars: 92_000, truncated: true };
+      // Stream two deltas before resolving, so the busy/streaming state is
+      // actually reviewable in the preview (the real engine streams).
+      return new Promise((resolve) => {
+        window.setTimeout(() => emitMock("engine-event", { type: "push", delta: "Use a secret key in the Authorization header:\n\n" }), 250);
+        window.setTimeout(() => emitMock("engine-event", { type: "push", delta: "  curl https://api.stripe.com/v1/charges \\\n    -u sk_test_xxx:\n" }), 600);
+        window.setTimeout(() => resolve({ digest: "Use a secret key in the Authorization header:\n\n  curl https://api.stripe.com/v1/charges \\\n    -u sk_test_xxx:\n\nEvery request must be TLS. (fixture answer)", model: "anthropic/claude-sonnet-5", files: 412, chars: 92_000, truncated: true }), 1200);
+      });
     case "open_in_agent":
     case "open_path":
     case "library_delete":

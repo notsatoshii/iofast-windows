@@ -558,7 +558,7 @@ export default function App() {
             const at = order.indexOf(tab);
             const next = order[(at + (e.key === "ArrowRight" ? 1 : order.length - 1)) % order.length];
             setTab(next);
-            (e.currentTarget.children[order.indexOf(next)] as HTMLElement)?.focus();
+            document.getElementById(`tab-${next}`)?.focus();
           }}
         >
           {(["library", "settings", "about"] as const).map((name) => (
