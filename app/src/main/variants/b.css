@@ -1,1 +1,380 @@
-/* TEMP: bold-revamp variant b — filled by its builder; folds into app.css or dies at collapse. */
+/* Variant B — "Pro Instrument". Apple pro-app density: Xcode/Instruments/Final
+   Cut inspector chrome. Dark-first, both themes fully designed. Flat, hairline
+   everywhere, no card grouping, sharper 5px radii, near-black/light-gray
+   grounds, tabular mono readouts for every count and timestamp. The amber
+   accent is demoted from decoration to a functional state color only
+   (running/auto/attention) — chrome itself (tabs, brand, links, borders) is
+   achromatic. Scope: html[data-variant="b"] .app */
+
+/* --- identity tokens -------------------------------------------------------- */
+
+html[data-variant="b"] .app {
+  --bg: #1a1a1c;
+  --bg-elevated: #202023;
+  --sunken: rgba(0, 0, 0, 0.35);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.18);
+  --hover: rgba(255, 255, 255, 0.06);
+  /* Explicit re-declaration (unchanged from theme.css) — needed so the light
+     block below can safely tighten it against the new panel ground. */
+  --dim: rgba(243, 243, 245, 0.52);
+  /* Same amber family, restated so the light block can darken it a touch for
+     the new #ececee-family ground without the two blocks drifting apart. */
+  --accent: #f0a55a;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 5px;
+  --radius-lg: 8px;
+  --t-body: 12px;
+  --t-sub: 11px;
+  --t-meta: 10px;
+}
+
+@media (prefers-color-scheme: light) {
+  html[data-variant="b"] .app {
+    --bg: #eef0f1;
+    --bg-elevated: #e2e2e6;
+    --sunken: rgba(0, 0, 0, 0.05);
+    --hairline: rgba(0, 0, 0, 0.12);
+    --hairline-strong: rgba(0, 0, 0, 0.22);
+    --hover: rgba(0, 0, 0, 0.05);
+    /* 0.62 (theme.css base) measures ~4.7:1 on this slightly darker panel
+       ground; 0.66 gives real headroom instead of riding the AA line. */
+    --dim: rgba(23, 23, 26, 0.66);
+    /* theme.css's #a4570e measures ~4.5:1 here — right on the line. This is
+       one step darker in the same bronze family, ~5.5:1, still unmistakably
+       "amber accent" but safe as running text on the new lighter ground. */
+    --accent: #954d0c;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --radius: 5px;
+    --radius-lg: 8px;
+    --t-body: 12px;
+    --t-sub: 11px;
+    --t-meta: 10px;
+  }
+}
+
+/* --- window + toolbar -------------------------------------------------------- */
+
+html[data-variant="b"] .app {
+  background: var(--bg);
+  font-size: var(--t-body);
+}
+
+html[data-variant="b"] .app .top {
+  height: 40px;
+  border-bottom: 0;
+  background: var(--bg-elevated);
+  /* "1px inset toolbar bottom border" — a recessed line, not an applied one. */
+  box-shadow: inset 0 -1px 0 var(--hairline-strong);
+}
+
+html[data-variant="b"] .app .brand {
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+
+html[data-variant="b"] .app .tabs {
+  gap: 2px;
+}
+
+html[data-variant="b"] .app .tab {
+  padding: 4px 8px 2px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .tab:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/* Selected = fg-strength text + underline, never a filled pill. Achromatic —
+   tab selection is chrome, not a running/auto/attention state. */
+html[data-variant="b"] .app .tab[aria-selected="true"] {
+  background: transparent;
+  border-bottom-color: var(--fg);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* --- live progress strip ----------------------------------------------------- */
+
+html[data-variant="b"] .app .strip {
+  height: 30px;
+  background: var(--bg-elevated);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .strip-count {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+/* --- human-solve banner -------------------------------------------------------- */
+
+html[data-variant="b"] .app .solve {
+  padding: 8px var(--gutter);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .solve-left {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+html[data-variant="b"] .app .solve .btn {
+  border-radius: var(--radius);
+}
+
+/* --- add a URL ----------------------------------------------------------------- */
+
+html[data-variant="b"] .app .add {
+  padding: 8px var(--gutter);
+}
+
+html[data-variant="b"] .app :where(.add-url, .text-input, .num-input) {
+  height: 27px;
+  border-radius: var(--radius);
+}
+
+html[data-variant="b"] .app .num-input {
+  font-family: var(--mono);
+}
+
+html[data-variant="b"] .app .add-hint {
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .alert {
+  padding: 8px var(--gutter);
+  font-size: var(--t-sub);
+}
+
+/* --- large-crawl gate ------------------------------------------------------------ */
+
+html[data-variant="b"] .app .gate {
+  height: 30px;
+  font-size: var(--t-sub);
+}
+
+/* --- buttons (overriding panel.css's shared .btn/.btn.go/.link for this window) - */
+/* Xcode toolbar style: quiet and borderless at rest, a hairline border + fill
+   only appears on hover. .go keeps a standing accent outline — it is the one
+   functional "this commits to something" affordance in the row. */
+
+html[data-variant="b"] .app .btn {
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .btn:hover {
+  border-color: var(--hairline-strong);
+  background: var(--hover);
+  color: var(--fg);
+}
+
+html[data-variant="b"] .app .btn.go {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent);
+}
+
+html[data-variant="b"] .app .btn.go:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+/* Links are chrome (row actions), not state — desaturated to dim/fg instead of
+   the base's accent tint. .link.bad keeps --bad: that is a real warning state. */
+html[data-variant="b"] .app .link {
+  color: var(--dim);
+  font-size: var(--t-meta);
+}
+
+html[data-variant="b"] .app .link:hover {
+  color: var(--fg);
+}
+
+/* --- library rows: single-line 32px rhythm ---------------------------------------- */
+
+html[data-variant="b"] .app .empty {
+  padding: 48px var(--gutter);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .empty .key {
+  font-family: var(--mono);
+}
+
+html[data-variant="b"] .app .run {
+  grid-template-areas: "dot host scope facts when acts";
+  grid-template-columns: 8px minmax(70px, 150px) minmax(50px, 130px) minmax(0, 1fr) 56px auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 0;
+  min-height: 32px;
+  padding: 0 var(--gutter);
+}
+
+html[data-variant="b"] .app .run-host {
+  overflow: hidden;
+  font-size: var(--t-sub);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="b"] .app .run-scope {
+  font-size: var(--t-meta);
+}
+
+html[data-variant="b"] .app .run-when {
+  font-family: var(--mono);
+  font-size: var(--t-meta);
+  font-weight: 500;
+}
+
+html[data-variant="b"] .app .run-facts {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="b"] .app .run-acts {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+/* Audit fix, restated for this register: at rest every action is invisible
+   except a faint "More…" — the row still reads as actionable without a hover. */
+html[data-variant="b"] .app .run-acts > .link {
+  opacity: 0;
+}
+
+html[data-variant="b"] .app .run-acts > .link:last-child {
+  opacity: 0.4;
+}
+
+html[data-variant="b"] .app .run:hover .run-acts > .link,
+html[data-variant="b"] .app .run:focus-within .run-acts > .link,
+html[data-variant="b"] .app .run-acts.asking > .link {
+  opacity: 1;
+}
+
+/* --- settings: ~40px rows, uppercase instrument-panel section labels ------------- */
+
+html[data-variant="b"] .app .pane h2 {
+  margin: var(--step-4) var(--gutter) 4px;
+  color: var(--dim);
+  font-size: var(--t-meta);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html[data-variant="b"] .app .set {
+  gap: 20px;
+  padding: 8px var(--gutter);
+}
+
+html[data-variant="b"] .app .set-hint {
+  font-size: var(--t-meta);
+}
+
+html[data-variant="b"] .app .set-unit,
+html[data-variant="b"] .app .saved {
+  font-size: var(--t-meta);
+}
+
+html[data-variant="b"] .app .key {
+  font-family: var(--mono);
+}
+
+html[data-variant="b"] .app .foot {
+  margin: 10px var(--gutter) var(--step-4);
+  font-size: var(--t-meta);
+}
+
+/* --- about panel: version/build readouts go mono, like an Instruments stamp ------ */
+
+html[data-variant="b"] .app .pane.about .set .saved {
+  font-family: var(--mono);
+}
+
+/* --- first run: a self-contained utility-panel card ------------------------------ */
+
+html[data-variant="b"] .app .first-card {
+  padding: 24px 22px 22px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+/* Chrome, not state — achromatic like the brand mark. */
+html[data-variant="b"] .app .first-mark {
+  color: var(--dim);
+}
+
+html[data-variant="b"] .app .first h1 {
+  font-size: 18px;
+  letter-spacing: -0.018em;
+}
+
+html[data-variant="b"] .app .first p {
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .first-path {
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  font-size: var(--t-meta);
+}
+
+/* --- sheets: utility-window feel, tighter, flatter ------------------------------- */
+
+html[data-variant="b"] .app .sheet {
+  gap: var(--step-2);
+  padding: var(--step-3);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .mcp-config {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: var(--t-meta);
+}
+
+html[data-variant="b"] .app .mcp-config.digest {
+  font-size: var(--t-sub);
+}
+
+html[data-variant="b"] .app .ask-prompt {
+  border-radius: var(--radius);
+  font-size: var(--t-body);
+}
+
+/* Base gives every other field a hairline focus treatment but misses this
+   textarea, so it falls through to the browser's native blue ring — jarring
+   against an otherwise achromatic-chrome, amber-only-for-state surface. */
+html[data-variant="b"] .app .ask-prompt:focus {
+  border-color: var(--hairline-strong);
+  outline: none;
+}
+
+/* --- focus-visible: crisper, matching the flat 1px hairline vocabulary ---------- */
+
+html[data-variant="b"] .app :where(.tab, .btn, .link, .add-url, .text-input, .num-input, .ask-prompt):focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}

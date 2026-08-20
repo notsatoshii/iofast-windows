@@ -1,1 +1,790 @@
-/* TEMP: bold-revamp variant c — filled by its builder; folds into app.css or dies at collapse. */
+/* Variant C — "Glass". macOS Sonoma/Sequoia materials: layered translucency,
+   soft floating cards, one deliberate accent glow. Dark-first; light mode is
+   milky rather than dark-inverted. Scope: html[data-variant="c"] .app only —
+   panel.css and the baseline app.css are untouched.
+
+   Five identity decisions: (1) a radial-tinted window ground instead of a flat
+   fill, so every translucent layer above has something to refract; (2) header
+   + banners become real vibrancy (backdrop-filter blur+saturate), not just a
+   solid bar; (3) the runs list and settings rows float as 14px-radius cards
+   with a two-layer shadow, not hairline-divided rows; (4) one glow moment —
+   the strip sweep and .btn.go carry a soft accent halo, everything else stays
+   restrained; (5) roomier rhythm — 14px body text, more line-height, 16-20px
+   card padding. */
+
+html[data-variant="c"] .app {
+  --t-body: 14px;
+  --t-sub: 12.5px;
+  --t-meta: 11.5px;
+  --gutter: 20px;
+
+  --bg: #17171b;
+  --card: rgba(255, 255, 255, 0.055);
+  --card-strong: rgba(255, 255, 255, 0.08);
+  --card-border: rgba(255, 255, 255, 0.09);
+  --card-border-strong: rgba(255, 255, 255, 0.16);
+  --sunken: rgba(0, 0, 0, 0.28);
+  --header-bg: rgba(23, 23, 27, 0.66);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.34);
+  --top-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glow: 0 0 0 1px rgba(240, 165, 90, 0.22), 0 0 18px rgba(240, 165, 90, 0.28);
+
+  min-height: 100vh;
+  background:
+    radial-gradient(120% 90% at 18% -10%, rgba(240, 165, 90, 0.07), transparent 55%),
+    radial-gradient(90% 70% at 100% 0%, rgba(255, 255, 255, 0.04), transparent 60%),
+    var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-size: var(--t-body);
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: light) {
+  html[data-variant="c"] .app {
+    --t-body: 14px;
+    --t-sub: 12.5px;
+    --t-meta: 11.5px;
+    --gutter: 20px;
+    --bg: #eef0f3;
+    --card: rgba(255, 255, 255, 0.62);
+    --card-strong: rgba(255, 255, 255, 0.82);
+    --card-border: rgba(20, 20, 30, 0.07);
+    --card-border-strong: rgba(20, 20, 30, 0.14);
+    --sunken: rgba(20, 20, 30, 0.05);
+    --header-bg: rgba(238, 240, 243, 0.66);
+    --shadow-1: 0 1px 2px rgba(30, 30, 40, 0.06);
+    --shadow-2: 0 10px 26px rgba(30, 30, 40, 0.1);
+    --top-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    --glow: 0 0 0 1px rgba(164, 87, 14, 0.22), 0 0 16px rgba(164, 87, 14, 0.18);
+
+    background:
+      radial-gradient(120% 90% at 18% -10%, rgba(164, 87, 14, 0.06), transparent 55%),
+      radial-gradient(90% 70% at 100% 0%, rgba(20, 20, 30, 0.03), transparent 60%),
+      var(--bg);
+  }
+}
+
+/* --- chrome: floating translucent header ----------------------------------- */
+
+html[data-variant="c"] .app .top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 54px;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--card-border);
+  background: var(--header-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+}
+
+html[data-variant="c"] .app .brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+
+html[data-variant="c"] .app .mark {
+  color: var(--accent);
+  filter: drop-shadow(0 0 6px rgba(240, 165, 90, 0.35));
+}
+
+html[data-variant="c"] .app .tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--card-border);
+  border-radius: 11px;
+  background: var(--sunken);
+}
+
+html[data-variant="c"] .app .tab {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  cursor: default;
+  font: inherit;
+  font-size: var(--t-sub);
+  transition: color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+html[data-variant="c"] .app .tab:hover {
+  color: var(--fg);
+}
+
+html[data-variant="c"] .app .tab[aria-selected="true"] {
+  background: var(--card-strong);
+  box-shadow: var(--shadow-1);
+  color: var(--fg);
+}
+
+/* --- live progress strip: translucent band, one glow moment ---------------- */
+
+html[data-variant="c"] .app .strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 44px;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--card-border);
+  background: var(--header-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="c"] .app .strip-what {
+  flex: none;
+  overflow: hidden;
+  max-width: 46%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="c"] .app .strip-count {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+html[data-variant="c"] .app .strip-note {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+  color: var(--dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="c"] .app .strip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 28%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 10px 1px rgba(240, 165, 90, 0.45);
+  opacity: 0.9;
+  animation: c-sweep 1.7s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes c-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(357%);
+  }
+}
+
+/* --- human-solve banner: tinted glass, accent glow on the one action ------- */
+
+html[data-variant="c"] .app .solve {
+  display: flex;
+  align-items: center;
+  gap: var(--step-3);
+  padding: 12px var(--gutter);
+  border-bottom: 1px solid var(--card-border);
+  background: linear-gradient(var(--attention), var(--attention)), var(--header-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="c"] .app .solve-what {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+html[data-variant="c"] .app .solve-hint {
+  color: var(--dim);
+  font-size: var(--t-meta);
+}
+
+html[data-variant="c"] .app .solve-host {
+  flex: none;
+  overflow: hidden;
+  max-width: 30%;
+  color: var(--dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="c"] .app .solve-left {
+  flex: none;
+  font-size: var(--t-body);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+html[data-variant="c"] .app .solve-left[data-low="1"] {
+  color: var(--bad);
+}
+
+html[data-variant="c"] .app .solve .btn {
+  border-color: var(--card-border-strong);
+  background: var(--card-strong);
+  color: var(--fg);
+}
+
+/* --- add row: sunken filled field ------------------------------------------ */
+
+html[data-variant="c"] .app .add {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--step-4) var(--gutter);
+  border-bottom: 1px solid var(--card-border);
+}
+
+html[data-variant="c"] .app :where(.add-url, .text-input, .num-input) {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--sunken);
+  color: var(--fg);
+  caret-color: var(--accent);
+  font: inherit;
+  font-size: var(--t-body);
+  outline: none;
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+html[data-variant="c"] .app :where(.add-url, .text-input, .num-input):focus {
+  border-color: transparent;
+  box-shadow: var(--glow);
+}
+
+html[data-variant="c"] .app .add-url {
+  flex: 1;
+  min-width: 0;
+}
+
+html[data-variant="c"] .app .add-url::placeholder {
+  color: var(--dim);
+}
+
+html[data-variant="c"] .app .add-hint {
+  flex: 0 1 auto;
+  overflow: hidden;
+  max-width: 40%;
+  color: var(--dim);
+  font-size: var(--t-sub);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="c"] .app .alert {
+  padding: 12px var(--gutter);
+  border-bottom: 1px solid var(--card-border);
+  color: var(--bad);
+  font-size: var(--t-sub);
+}
+
+/* --- library: floating glass cards, not hairline rows ----------------------- */
+
+html[data-variant="c"] .app .empty {
+  margin: var(--step-4) var(--gutter);
+  padding: 72px var(--gutter);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-1), var(--shadow-2);
+  color: var(--dim);
+  font-size: var(--t-body);
+  text-align: center;
+  text-wrap: balance;
+}
+
+html[data-variant="c"] .app .runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--step-2);
+  margin: 0;
+  padding: var(--step-4) var(--gutter) var(--step-5);
+  list-style: none;
+}
+
+html[data-variant="c"] .app .run {
+  display: grid;
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 4px;
+  grid-template-areas:
+    "dot host scope when"
+    ".   facts facts acts";
+  grid-template-columns: 7px auto minmax(0, 1fr) auto;
+  padding: 14px 16px 15px;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-1), var(--shadow-2);
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+html[data-variant="c"] .app .run:hover {
+  border-color: var(--card-border-strong);
+  background: var(--card-strong);
+}
+
+html[data-variant="c"] .app .dot {
+  grid-area: dot;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 5px 1px rgba(240, 165, 90, 0.4);
+}
+
+html[data-variant="c"] .app .dot[data-clean="1"] {
+  background: var(--good);
+  box-shadow: none;
+}
+
+html[data-variant="c"] .app .run-host {
+  grid-area: host;
+  font-size: var(--t-body);
+  font-weight: 550;
+  letter-spacing: -0.006em;
+}
+
+html[data-variant="c"] .app .run-scope {
+  grid-area: scope;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: var(--t-sub);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="c"] .app .run-when {
+  grid-area: when;
+  color: var(--dim);
+  font-size: var(--t-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+html[data-variant="c"] .app .run-facts {
+  grid-area: facts;
+  color: var(--dim);
+  font-size: var(--t-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-variant="c"] .app .run-suspect {
+  color: var(--bad);
+}
+
+html[data-variant="c"] .app .run-auto {
+  color: var(--accent);
+}
+
+/* Resting affordance: the audit's spirit — More… stays faintly visible even
+   at rest, so a row still reads as actionable before you hover it. */
+html[data-variant="c"] .app .run-acts {
+  display: flex;
+  grid-area: acts;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 14px;
+  opacity: 0.38;
+  transition: opacity 150ms ease-out;
+}
+
+html[data-variant="c"] .app .run:hover .run-acts,
+html[data-variant="c"] .app .run:focus-within .run-acts,
+html[data-variant="c"] .app .run-acts.asking {
+  opacity: 1;
+}
+
+html[data-variant="c"] .app .run-acts .ask {
+  color: var(--dim);
+  font-size: var(--t-meta);
+}
+
+html[data-variant="c"] .app .link.bad {
+  color: var(--bad);
+}
+
+html[data-variant="c"] .app .link:disabled {
+  color: var(--dimmer);
+}
+
+/* --- shared buttons, scoped to the main window only ------------------------- */
+
+html[data-variant="c"] .app .btn {
+  padding: 5px 12px;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--dim);
+  font-size: var(--t-meta);
+  transition: color 150ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out,
+    box-shadow 150ms ease-out;
+}
+
+html[data-variant="c"] .app .btn:hover {
+  border-color: var(--card-border-strong);
+  background: var(--card-strong);
+  color: var(--fg);
+}
+
+html[data-variant="c"] .app .btn.go {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  color: var(--accent);
+  box-shadow: var(--glow);
+}
+
+html[data-variant="c"] .app .btn.go:hover {
+  border-color: var(--accent);
+}
+
+html[data-variant="c"] .app .link {
+  color: var(--accent);
+}
+
+/* --- settings: inset grouped cards ------------------------------------------ */
+
+html[data-variant="c"] .app .pane h2 {
+  margin: var(--step-5) var(--gutter) var(--step-2);
+  color: var(--dim);
+  font-size: var(--t-sub);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+html[data-variant="c"] .app .pane {
+  padding-bottom: var(--step-2);
+}
+
+html[data-variant="c"] .app .set {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  margin: 0 var(--gutter);
+  padding: 15px 18px;
+  border: 1px solid var(--card-border);
+  border-top: 0;
+  background: var(--card);
+}
+
+html[data-variant="c"] .app .set:first-of-type {
+  border-top: 1px solid var(--card-border);
+  border-radius: 14px 14px 0 0;
+  box-shadow: var(--top-sheen);
+}
+
+html[data-variant="c"] .app .set:last-of-type {
+  border-radius: 0 0 14px 14px;
+  box-shadow: var(--shadow-1), var(--shadow-2);
+}
+
+html[data-variant="c"] .app .set:only-of-type {
+  border-radius: 14px;
+  box-shadow: var(--top-sheen), var(--shadow-1), var(--shadow-2);
+}
+
+html[data-variant="c"] .app .set-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+html[data-variant="c"] .app .set-hint {
+  color: var(--dim);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="c"] .app .set-control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+}
+
+html[data-variant="c"] .app .set-unit {
+  color: var(--dim);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="c"] .app .num-input {
+  width: 78px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+html[data-variant="c"] .app .text-input {
+  width: 240px;
+}
+
+html[data-variant="c"] .app .saved {
+  color: var(--dim);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="c"] .app .path,
+html[data-variant="c"] .app .first-path {
+  overflow: hidden;
+  color: var(--dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-variant="c"] .app .path {
+  max-width: 300px;
+}
+
+html[data-variant="c"] .app .key {
+  padding: 2px 6px 3px;
+  border: 1px solid var(--card-border-strong);
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--t-meta);
+  line-height: 1.4;
+}
+
+html[data-variant="c"] .app .foot {
+  margin: var(--step-4) var(--gutter) var(--step-5);
+  max-width: 560px;
+  color: var(--dim);
+  font-size: var(--t-sub);
+  line-height: 1.6;
+}
+
+html[data-variant="c"] .app .foot.bad,
+html[data-variant="c"] .app .set-hint.bad {
+  color: var(--bad);
+}
+
+/* --- first run: the card becomes the hero ----------------------------------- */
+
+html[data-variant="c"] .app .first {
+  display: grid;
+  min-height: 100vh;
+  padding: 40px;
+  place-items: center;
+}
+
+html[data-variant="c"] .app .first-card {
+  box-sizing: border-box;
+  width: min(460px, 100%);
+  padding: 36px 32px;
+  border: 1px solid var(--card-border);
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: var(--top-sheen), var(--shadow-1), var(--shadow-2);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  backdrop-filter: blur(30px) saturate(170%);
+}
+
+html[data-variant="c"] .app .first-mark {
+  width: 30px;
+  height: 30px;
+  color: var(--accent);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.1;
+  filter: drop-shadow(0 0 10px rgba(240, 165, 90, 0.4));
+}
+
+html[data-variant="c"] .app .first h1 {
+  margin: 22px 0 10px;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.022em;
+}
+
+html[data-variant="c"] .app .first p {
+  margin: 0 0 22px;
+  color: var(--dim);
+  font-size: var(--t-body);
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+html[data-variant="c"] .app .first-path {
+  padding: 11px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--sunken);
+  color: var(--fg);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="c"] .app .first-acts {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+html[data-variant="c"] .app .first-error {
+  margin: 16px 0 0;
+  color: var(--bad);
+  font-size: var(--t-sub);
+}
+
+html[data-variant="c"] .app :where(.tab, .add-url, .text-input, .num-input):focus-visible {
+  outline: none;
+  box-shadow: var(--glow);
+}
+
+html[data-variant="c"] .app .btn:focus-visible,
+html[data-variant="c"] .app .link:focus-visible {
+  outline: none;
+  box-shadow: var(--glow);
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-variant="c"] .app .strip::after {
+    width: 100%;
+    animation: none;
+    opacity: 0.5;
+    box-shadow: none;
+  }
+}
+
+/* --- sheets: true glass ------------------------------------------------------ */
+
+html[data-variant="c"] .app .scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: start center;
+  padding: 64px var(--gutter) var(--step-5);
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+html[data-variant="c"] .app .sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-sizing: border-box;
+  width: min(580px, 100%);
+  gap: var(--step-4);
+  padding: 24px;
+  border: 1px solid var(--card-border-strong);
+  border-radius: 18px;
+  background: var(--card-strong);
+  -webkit-backdrop-filter: blur(36px) saturate(180%);
+  backdrop-filter: blur(36px) saturate(180%);
+  box-shadow: var(--top-sheen), var(--shadow-1), 0 20px 50px rgba(0, 0, 0, 0.4);
+  color: var(--dim);
+  font-size: var(--t-sub);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.55;
+}
+
+html[data-variant="c"] .app .sheet .acts {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+html[data-variant="c"] .app .sheet strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+html[data-variant="c"] .app .mcp-config {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--sunken);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-meta);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* --- api push (Ask AI) -------------------------------------------------------- */
+
+html[data-variant="c"] .app .ask-prompt {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--sunken);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--t-body);
+  line-height: 1.5;
+  transition: box-shadow 150ms ease-out;
+}
+
+html[data-variant="c"] .app .ask-prompt:focus {
+  outline: none;
+  box-shadow: var(--glow);
+}
+
+html[data-variant="c"] .app .ask-model {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+html[data-variant="c"] .app .mcp-config.digest {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--t-body);
+  max-height: 360px;
+}
+
+/* --- about panel --------------------------------------------------------------- */
+
+html[data-variant="c"] .app .pane.about {
+  padding-bottom: 24px;
+}
+
+html[data-variant="c"] .app .notices {
+  margin: var(--step-2) var(--gutter) 0;
+  max-height: 440px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
