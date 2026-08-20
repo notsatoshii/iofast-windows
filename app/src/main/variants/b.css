@@ -15,9 +15,10 @@ html[data-variant="b"] .app {
   --hairline: rgba(255, 255, 255, 0.08);
   --hairline-strong: rgba(255, 255, 255, 0.18);
   --hover: rgba(255, 255, 255, 0.06);
-  /* Explicit re-declaration (unchanged from theme.css) — needed so the light
-     block below can safely tighten it against the new panel ground. */
-  --dim: rgba(243, 243, 245, 0.52);
+  /* Explicit re-declaration MATCHING theme.css (0.54 — its measured floor on
+     the attention wash) so the light block below can tighten its own value
+     against the new panel ground. Keep in sync with theme.css. */
+  --dim: rgba(243, 243, 245, 0.54);
   /* Same amber family, restated so the light block can darken it a touch for
      the new #ececee-family ground without the two blocks drifting apart. */
   --accent: #f0a55a;
