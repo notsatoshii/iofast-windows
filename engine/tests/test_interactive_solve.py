@@ -14,7 +14,7 @@ import scrapling.fetchers as fetchers
 from iofast_engine import solve
 from iofast_engine.solve import _human_solve, solve_and_continue
 from iofast_engine.spider import DocSpider
-from iofast_engine.tiers import is_challenge
+from iofast_engine.tiers import CHALLENGE_MARKERS, is_challenge
 
 START = "https://docs.example.com/docs/"
 URL = "https://docs.example.com/docs/walled"
@@ -142,9 +142,20 @@ def test_each_body_marker_stands_on_its_own():
     """One isolating body per marker. Without this the committed fixture — which
     carries "just a moment..." at byte 77 — masks the other two: deleting either
     from the marker list left the whole suite green (checked 2026-08-13)."""
-    for marker in ("just a moment...", "cf_chl_opt", "/cdn-cgi/challenge-platform/"):
+    for marker in CHALLENGE_MARKERS:
         assert is_challenge(200, {}, f"<html><body>{marker}</body></html>"), marker
     assert not is_challenge(200, {}, "<html><body><article>Real docs.</article></body></html>")
+
+
+def test_bot_management_jsd_script_is_not_a_challenge():
+    """Bot Management puts this loader on every normal page (developer.quickintel.io,
+    2026-10-21): the bare challenge-platform prefix matched it and failed a 200 page."""
+    page = (
+        "<html><head><title>Loading...</title></head><body><app-root></app-root><script>"
+        "a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';</script></body></html>"
+    )
+    assert not is_challenge(200, {}, page)
+    assert is_challenge(200, {}, page + "<script src='/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1'>")
 
 
 def test_human_solve_keeps_waiting_through_a_branded_challenge():

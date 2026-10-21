@@ -60,7 +60,7 @@ def site(extra=None, sidebar=SIDEBAR, shell=SHELL, root=ROOT, targets=EXPECTED):
         root + "_sidebar.md": FakeResponse(sidebar),
     }
     for url in targets:
-        pages[url] = FakeResponse(QUICKSTART)
+        pages[url] = FakeResponse(QUICKSTART + f"\n<!-- {url} -->\n")  # unique: same text dedupes
     pages.update(extra or {})
     return pages
 

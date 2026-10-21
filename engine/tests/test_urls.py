@@ -109,3 +109,16 @@ def test_unparseable_url_is_excluded_not_raised():
     """llms.txt is untrusted input — a bracketed placeholder host must not kill the run."""
     placeholder = "https://[organization-name].gitbook.io/[site-title]"
     assert reject_url(placeholder, HOST, SCOPE, DEPTH, KEEP) == "unparseable"
+
+
+def test_section_folder_is_one_per_api_whatever_url_was_copied():
+    from iofast_engine.urls import section_folder
+
+    api = "https://developer.quickintel.io/catalog/api/576af828-be07-40b1-aaf8-28be07e0b1bf"
+    want = "docs-developer-quickintel-io/catalog-api-576af828-be07-40b1-aaf8-28be07e0b1bf"
+    for url in (api, api + "/", api + "/doc", api + "/doc/", api + "/doc?page=b4c7#x"):
+        assert section_folder(url) == want, url
+    other = api.replace("576af828", "11111111")
+    assert section_folder(other) != want, "API B keeps its own folder"
+    assert section_folder("https://www.Docs.X.com/") == "docs-docs-x-com/_root"
+    assert section_folder("https://docs.x.com/docs/intro?a=1") == "docs-docs-x-com/docs"

@@ -24,6 +24,28 @@ def scope_prefix(url: str) -> str:
     return path.rsplit("/", 1)[0] + "/"
 
 
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def section_folder(url: str) -> str:
+    """Stable folder name for one docs section: <host>/<section>.
+
+    The section is the scope prefix, cut right after the first id-shaped segment, so
+    every URL inside one portal API (/catalog/api/<uuid>/doc?page=..., /catalog/api/<uuid>)
+    names the same folder while API A and API B stay apart. Offline and deterministic.
+    """
+    parsed = urlparse(url)
+    parts = parsed.path.split("/")
+    for i, part in enumerate(parts):
+        if UUID.match(part):
+            parts = parts[: i + 1] + [""]
+            break
+    prefix = scope_prefix(parsed._replace(path="/".join(parts)).geturl())
+    site = re.sub(r"[^a-z0-9]+", "-", norm_host(parsed.netloc)).strip("-")
+    section = re.sub(r"[^A-Za-z0-9]+", "-", prefix).strip("-")
+    return f"docs-{site}/{section or '_root'}"
+
+
 def path_depth(url: str, prefix: str) -> int:
     """Depth = URL path segments beyond the scope prefix (NOT link hops)."""
     path = urlparse(url).path

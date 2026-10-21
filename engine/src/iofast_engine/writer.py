@@ -122,6 +122,18 @@ class Writer:
         # pre-claimed by a sentinel that equals no URL, so a /report or
         # /README-UNTRUSTED page gets a hash suffix instead of clobbering ours.
         self.names = {"report": None, README_FILE[:-3]: None}
+        self.hashes = {}  # sha1(text) -> (first url, file) this run
+        # A refresh into the same folder keeps every page's file name: the prior
+        # manifest's url -> file pairs are claimed first, so collision suffixes
+        # never swap and leave a stale twin behind.
+        try:
+            with open(os.path.join(out_dir, "manifest.json"), encoding="utf-8") as fh:
+                rows = json.load(fh).get("pages", [])
+        except (OSError, ValueError):
+            rows = []
+        for row in rows:
+            if row.get("file"):
+                self.names.setdefault(row["file"].removesuffix(".md"), row["url"])
         self.written = 0
 
     def write(
@@ -137,11 +149,32 @@ class Writer:
         etag=None,
         last_modified=None,
     ):
+        # Same text already saved this run under another URL (trailing slash,
+        # ?query or alias twins): point at that file instead of saving a copy.
+        # Fileless on purpose, so token counts, clean checks and resume skip it.
+        digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
+        first = self.hashes.get(digest)
+        if first and first[0] != url:
+            self.ledger.record(
+                url, "duplicate", f"same content as {first[1]}", tier=tier, chars=len(text),
+                status=status,
+            )
+            self.emit({"type": "warning", "url": url, "message": f"♻️  duplicate of {first[1]}: {url}"})
+            return first[1][:-3]
         name = unique_name(url, self.names)
         self.names[name] = url
+        self.hashes[digest] = (url, f"{name}.md")
         path = os.path.join(self.out_dir, f"{name}.md")
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(envelope(url, text))
+        body = envelope(url, text)
+        # Re-scrape into the same folder: an unchanged page is left untouched (mtime kept).
+        try:
+            with open(path, encoding="utf-8") as fh:
+                unchanged = fh.read() == body
+        except OSError:
+            unchanged = False
+        if not unchanged:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
         self.written += 1
         self.ledger.record(
             url,
@@ -165,7 +198,7 @@ class Writer:
                 "file": f"{name}.md",
                 "tier": tier,
                 "chars": len(text),
-                "message": f"📄 {self.written}/{self.max_pages} saved: {name}.md",
+                "message": f"📄 {self.written}/{self.max_pages} {'unchanged' if unchanged else 'saved'}: {name}.md",
             }
         )
         return name

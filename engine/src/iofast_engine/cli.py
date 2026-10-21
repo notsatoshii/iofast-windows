@@ -66,6 +66,9 @@ def main(argv=None):
     est.add_argument("url")
     est.add_argument("--json", action="store_true", help="estimate result as JSON on stdout")
 
+    section = sub.add_parser("section", help="print the stable <site>/<section> folder for a URL")
+    section.add_argument("url")
+
     sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
 
     browsers_p = sub.add_parser(
@@ -85,6 +88,12 @@ def main(argv=None):
     from .browsers import default_storage_env
 
     default_storage_env()
+
+    if args.command == "section":
+        from .urls import section_folder
+
+        print(section_folder(args.url), flush=True)
+        return 0
 
     if args.command == "rpc":
         from .rpc import serve_stdio

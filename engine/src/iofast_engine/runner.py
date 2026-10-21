@@ -9,6 +9,7 @@ import os
 from urllib.parse import urlparse
 
 from .ledger import FAILURE_OUTCOMES, Ledger
+from .writer import LEDGER_FILE, README_FILE
 from .manifest import build_manifest
 
 
@@ -135,6 +136,8 @@ def run_scrape(
     if is_cancelled():
         return _cancelled_before_run(url, out, emit)
 
+    prior = previous_pages(out) if out else {}
+
     from .adapters.detection import preflight
     from .adapters.run import harvest_run, known_fail_run
 
@@ -187,7 +190,30 @@ def run_scrape(
             spider.manifest,
         )
 
+    if prior and not is_cancelled():
+        move_stale(out_dir, prior, manifest, emit)
     return _result(written, out_dir, exit_code(ledger, written), is_cancelled(), manifest, emit)
+
+
+def move_stale(out_dir, prior, manifest, emit):
+    """Refresh in place: a page file this run no longer produces moves to
+    <parent>/_stale/<folder>/ (never deleted). A page that merely FAILED this run
+    keeps its old file, and a run that crashed or was cancelled moves nothing."""
+    counts = manifest.get("counts", {})
+    if manifest.get("info", {}).get("cancelled") or counts.get("failed_exception"):
+        return
+    rows = manifest.get("pages", [])
+    keep = {r["file"] for r in rows if r.get("file")}
+    if not keep:  # refusal / nothing in scope / nothing written: never empty the folder
+        return
+    keep |= {prior[r["url"]]["file"] for r in rows if r["url"] in prior}
+    stale_dir = os.path.join(os.path.dirname(os.path.abspath(out_dir)), "_stale", os.path.basename(out_dir.rstrip("/")))
+    for name in sorted(os.listdir(out_dir)):
+        if not name.endswith(".md") or name in keep or name in (LEDGER_FILE, README_FILE):
+            continue
+        os.makedirs(stale_dir, exist_ok=True)
+        os.replace(os.path.join(out_dir, name), os.path.join(stale_dir, name))
+        emit({"type": "warning", "file": name, "message": f"🗄️  stale (gone upstream): {name} -> {stale_dir}"})
 
 
 def _cancelled_before_run(url, out, emit):

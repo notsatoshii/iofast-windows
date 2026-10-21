@@ -22,7 +22,7 @@ def run(tmp_path, pages, fail_urls=()):
 
 
 def test_healthy_run_is_clean(tmp_path):
-    verdict = run(tmp_path, [(f"https://x.com/docs/p{i}", CONTENT) for i in range(20)])
+    verdict = run(tmp_path, [(f"https://x.com/docs/p{i}", f"{CONTENT}{i}") for i in range(20)])
     assert verdict["clean"] is True
     assert verdict["coverage"]["value"] == 1.0
 
@@ -31,7 +31,7 @@ def test_coverage_below_floor_fails(tmp_path):
     # 18 written of 20 enqueued = 90% < 95%.
     verdict = run(
         tmp_path,
-        [(f"https://x.com/docs/p{i}", CONTENT) for i in range(18)],
+        [(f"https://x.com/docs/p{i}", f"{CONTENT}{i}") for i in range(18)],
         fail_urls=["https://x.com/docs/f1", "https://x.com/docs/f2"],
     )
     assert verdict["coverage"]["ok"] is False
@@ -60,7 +60,7 @@ def test_one_index_page_does_not_fail_a_healthy_corpus(tmp_path):
     """The cap is corpus-wide by design: a genuine TOC page (measured up to 0.88
     link ratio on the readme/redocly landing fixtures) must not fail a real run."""
     toc = "\n".join(f"- [Chapter {i}](https://x.com/docs/c{i})" for i in range(20))
-    pages = [(f"https://x.com/docs/p{i}", CONTENT) for i in range(10)]
+    pages = [(f"https://x.com/docs/p{i}", f"{CONTENT}{i}") for i in range(10)]
     pages.append(("https://x.com/docs/index-toc", toc))
     verdict = run(tmp_path, pages)
     assert verdict["clean"] is True

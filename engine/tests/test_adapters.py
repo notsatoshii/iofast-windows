@@ -46,7 +46,7 @@ def test_registry_entries_are_plain_adapters():
 
 
 def test_registry_shape():
-    assert len(ADAPTERS) == 11
+    assert len(ADAPTERS) == 12
     names = [a.name for a in ADAPTERS]
     assert len(set(names)) == len(names), f"duplicate adapter names: {names}"
 

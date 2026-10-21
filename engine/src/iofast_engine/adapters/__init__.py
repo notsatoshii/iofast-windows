@@ -6,6 +6,7 @@ from .document360 import ADAPTER as DOCUMENT360
 from .docsify import ADAPTER as DOCSIFY
 from .docusaurus import ADAPTER as DOCUSAURUS
 from .gitbook import ADAPTER as GITBOOK
+from .gravitee import ADAPTER as GRAVITEE
 from .mintlify import ADAPTER as MINTLIFY
 from .notion import ADAPTER as NOTION
 from .readme import ADAPTER as README
@@ -27,6 +28,7 @@ ADAPTERS: tuple[Adapter, ...] = (
     SWAGGERHUB,
     CONFLUENCE,
     NOTION,
+    GRAVITEE,
 )
 
 

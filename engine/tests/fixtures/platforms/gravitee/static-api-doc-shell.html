@@ -1,0 +1,61 @@
+<!--
+
+    Copyright (C) 2015 The Gravitee team (http://gravitee.io)
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+            http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+-->
+<!doctype html>
+<html lang="en" data-beasties-container>
+  <head>
+    <meta charset="utf-8">
+    <title>Loading...</title>
+    <base href="/">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="webcomponents/webcomponents-loader.js"></script>
+    <script src="redoc/redoc.standalone.js"></script>
+  <style>@font-face{font-family:IBM Plex Sans;font-style:normal;font-display:swap;font-weight:100;src:url("./media/ibm-plex-sans-latin-100-normal-5JYGBT2W.woff2") format("woff2"),url("./media/ibm-plex-sans-latin-100-normal-3DVESQ5R.woff") format("woff")}@font-face{font-family:IBM Plex Sans;font-style:normal;font-display:swap;font-weight:200;src:url("./media/ibm-plex-sans-latin-200-normal-NQ7GGSKY.woff2") format("woff2"),url("./media/ibm-plex-sans-latin-200-normal-3MJVPXDS.woff") format("woff")}@font-face{font-family:IBM Plex Sans;font-style:normal;font-display:swap;font-weight:300;src:url("./media/ibm-plex-sans-latin-300-normal-LWHZPPGB.woff2") format("woff2"),url("./media/ibm-plex-sans-latin-300-normal-SEQH2KC5.woff") format("woff")}@font-face{font-family:IBM Plex Sans;font-style:normal;font-display:swap;font-weight:400;src:url("./media/ibm-plex-sans-latin-400-normal-COQVXTP6.woff2") format("woff2"),url("./media/ibm-plex-sans-latin-400-normal-CQ4Y6APF.woff") format("woff")}@font-face{font-family:IBM Plex Sans;font-style:normal;font-display:swap;font-weight:500;src:url("./media/ibm-plex-sans-latin-500-normal-JTONHBWS.woff2") format("woff2"),url("./media/ibm-plex-sans-latin-500-normal-AYNPQPGU.woff") format("woff")}@font-face{font-family:IBM Plex Sans;font-style:normal;font-display:swap;font-weight:600;src:url("./media/ibm-plex-sans-latin-600-normal-DTNZULF4.woff2") format("woff2"),url("./media/ibm-plex-sans-latin-600-normal-LA7D2FY4.woff") format("woff")}@font-face{font-family:IBM Plex Sans;font-style:normal;font-display:swap;font-weight:700;src:url("./media/ibm-plex-sans-latin-700-normal-IXG35DPN.woff2") format("woff2"),url("./media/ibm-plex-sans-latin-700-normal-M4EGDRED.woff") format("woff")}:root{--gv-theme-color-darker:#383E3F;--gv-theme-color-dark:#28444F;--gv-theme-color:#5A7684;--gv-theme-color-light:#86c3d0;--gv-theme-color-danger:#FF5722;--gv-theme-color-error-dark:#d32f2f;--gv-theme-color-error:#f44336;--gv-theme-color-error-light:#e57373;--gv-theme-color-info-dark:#1976d2;--gv-theme-color-info:#2196f3;--gv-theme-color-info-light:#64b5f6;--gv-theme-color-success-dark:#388e3c;--gv-theme-color-success:#4caf50;--gv-theme-color-success-light:#81c784;--gv-theme-color-warning-dark:#f57c00;--gv-theme-color-warning:#ff9800;--gv-theme-color-warning-light:#ffb74d;--gv-theme-neutral-color-darkest:#000000;--gv-theme-neutral-color-darker:#BFBFBF;--gv-theme-neutral-color-dark:#D9D9D9;--gv-theme-neutral-color:#F5F5F5;--gv-theme-neutral-color-light:#EFEFEF;--gv-theme-neutral-color-lighter:#FAFAFA;--gv-theme-neutral-color-lightest:#FFFFFF;--gv-theme-font-color-dark:#262626;--gv-theme-font-color-light:#FFFFFF;--gv-theme-font-family:"IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;--gv-theme-font-size-xs:10px;--gv-theme-font-size-s:12px;--gv-theme-font-size-m:14px;--gv-theme-font-size-l:16px;--gv-theme-font-size-xl:26px;--gv-theme-font-size-xxl:30px;--gv-theme-homepage-background-height:400px;--gv-theme-skeleton-color:#BFBFBF;--gv-theme-homepage-background-color:#5A7684;--gv-theme-homepage-background-image:none;--gv-theme-logo:url(/images/gravitee-logo-cyan.svg);--gv-theme-optional-logo:url(/images/gravitee-logo-white.svg);--gv-theme-favicon:/images/gravitee-favicon.png}:root{font-family:var(--gv-theme-font-family);font-size:var(--gv-theme-font-size-m);color:var(--gv-theme-font-color-dark);--gv-theme-layout--pb:1rem;--gv-theme-layout--pl:8rem;--gv-theme-layout--pr:8rem;--gv-theme-layout--pt:1rem;--gv-theme-layout-footer-bottom--h:150px;--gv-theme-layout-footer-top--h:338px;--gv-theme-layout-header--h:3.8rem;--gv-theme-page--pb:4rem;--gv-theme-page--pt:4rem}@media screen and (max-width: 1920px){:root{--gv-theme-layout--pr:250px;--gv-theme-layout--pl:250px}}@media screen and (max-width: 1680px){:root{--gv-theme-layout--pr:130px;--gv-theme-layout--pl:130px}}@media screen and (max-width: 1600px){:root{--gv-theme-layout--pr:90px;--gv-theme-layout--pl:90px}}@media screen and (max-width: 1440px){:root{--gv-theme-layout--pr:10px;--gv-theme-layout--pl:10px}}@media screen and (max-width: 1366px){:root{--gv-theme-layout--pr:8px;--gv-theme-layout--pl:8px}}@media only screen and (max-device-width: 1280px){:root{--gv-theme-layout--pr:5px;--gv-theme-layout--pl:5px}}body{margin:0}.loader{position:absolute;top:45%;left:45%;display:flex;margin:0 auto;width:200px;height:200px;border-radius:50%;box-sizing:border-box;border:10px solid var(--gv-theme-font-color-dark);animation:rotation 1s linear infinite;border-bottom-color:transparent}</style><link rel="stylesheet" href="styles-547UVV5Q.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="styles-547UVV5Q.css"></noscript><link rel="stylesheet" href="swagger-ui-7Q4AM34N.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="swagger-ui-7Q4AM34N.css"></noscript><script src="/billing/payment-interceptor.js" defer></script><style>
+:root { color-scheme: dark; }
+
+/* Gravitee hardcodes white on the subscriptions table wrapper */
+.table-container { background-color: var(--gv-theme-neutral-color-lightest, #1d211f) !important; }
+
+/* unstyled anchors (Access URL) fall back to browser dark blue */
+a, .link, .link:visited { color: var(--gv-theme-color, #00e08c); }
+
+/* Redoc hardcodes section labels (AUTHORIZATIONS, REQUEST BODY SCHEMA) to dark slate */
+.redoc-wrap h5 { color: rgba(234,234,234,.75) !important; border-bottom-color: rgba(234,234,234,.25) !important; }
+
+/* Gravitee styles markdown tables but not pre/code/blockquote/hr */
+.markdown-content pre {
+  background: var(--gv-theme-neutral-color-darker, #131614);
+  border: 1px solid rgba(234,234,234,.12);
+  border-radius: 6px;
+  padding: 12px 16px;
+  overflow-x: auto;
+}
+.markdown-content code { background: rgba(234,234,234,.08); border-radius: 4px; padding: 1px 5px; }
+.markdown-content pre code { background: none; padding: 0; }
+.markdown-content blockquote {
+  margin: 12px 0;
+  padding: 8px 16px;
+  border-left: 3px solid var(--gv-theme-color, #00e08c);
+  background: rgba(0,224,140,.06);
+}
+.markdown-content hr { border: none; border-top: 1px solid rgba(234,234,234,.15); margin: 24px 0; }
+</style></head>
+  <body>
+    <span id="loader" class="loader"></span>
+    <app-root></app-root>
+  <link rel="modulepreload" href="chunk-PLJHFNTQ.js"><link rel="modulepreload" href="chunk-TTYCJ4Y3.js"><link rel="modulepreload" href="chunk-SIY5WL5J.js"><link rel="modulepreload" href="chunk-G6DIP7HP.js"><link rel="modulepreload" href="chunk-AJOVG3GN.js"><link rel="modulepreload" href="chunk-L7G7JWTM.js"><link rel="modulepreload" href="chunk-MTSXVEBG.js"><link rel="modulepreload" href="chunk-4WXLQXRR.js"><link rel="modulepreload" href="chunk-KT75U6KE.js"><link rel="modulepreload" href="chunk-H7XTQZ5S.js"><script src="polyfills-4IZWXQH6.js" type="module"></script><script src="scripts-5THSK5BA.js" defer></script><script src="main-3VXZS3MR.js" type="module"></script><script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a4dde3c29ad8d5cf',t:'MTc5MjU2MDgyOQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

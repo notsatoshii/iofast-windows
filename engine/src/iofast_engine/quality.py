@@ -30,10 +30,14 @@ def analyse(manifest: dict) -> dict:
     clean = manifest.get("clean", {})
     link_ratio = clean.get("link_ratio", {})
 
+    # Duplicates count here: a site serving one block/shell page for every URL
+    # dedupes to a single file, and must still read as uniform tiny pages.
+    dups = [p for p in pages if p.get("outcome") == "duplicate"]
+    sizes = chars + [p["chars"] for p in dups]
     uniform_tiny = False
-    if len(chars) >= 3:
-        med = statistics.median(chars)
-        spread = statistics.pstdev(chars)
+    if len(sizes) >= 3:
+        med = statistics.median(sizes)
+        spread = statistics.pstdev(sizes)
         uniform_tiny = med < THIN_FLOOR and spread < THIN_FLOOR / 2
 
     flags = []
@@ -43,6 +47,8 @@ def analyse(manifest: dict) -> dict:
         flags.append("link_ratio_over_cap")
     if uniform_tiny:
         flags.append("uniform_tiny")
+    if len(dups) >= 2 and len(dups) >= len(ok):
+        flags.append("mostly_duplicate")
     if not ok and pages:
         flags.append("nothing_extracted")
 

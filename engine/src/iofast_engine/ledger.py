@@ -13,6 +13,7 @@ OUTCOMES = (
     "failed_exception",
     "cancelled",
     "suspect_shrink",
+    "duplicate",  # additive: same text as a page already saved this run; `file` names it
 )
 FAILURE_OUTCOMES = ("skipped_no_content", "failed_fetch", "failed_exception", "suspect_shrink")
 

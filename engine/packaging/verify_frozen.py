@@ -44,10 +44,12 @@ import tempfile
 import threading
 import time
 
+# {title} sits inside the prose on purpose: extraction drops the <h1>, and the
+# writer saves identical page bodies once (later ones record "duplicate").
 PAGE = """<!doctype html><html><head><title>{title}</title></head><body>
 <nav><a href="/docs/">Home</a><a href="/docs/guide">Guide</a></nav>
 <main><h1>{title}</h1>
-<p>This fixture page carries enough real prose to clear the thin-page band:
+<p>{title}: this fixture page carries enough real prose to clear the thin-page band:
 it explains, at comfortable length, that the frozen sidecar must fetch,
 extract, convert and write this content without any browser tier. The
 extraction stack (trafilatura with an lxml fallback) needs a believable
@@ -61,7 +63,7 @@ the property this script exists to prove about the bundle.</p>
 CHAIN_PAGE = """<!doctype html><html><head><title>{title}</title></head><body>
 <nav>{next_link}</nav>
 <main><h1>{title}</h1>
-<p>This chain fixture page exists so the crawl is sequential: the only route
+<p>{title}: this chain fixture page exists so the crawl is sequential: the only route
 to the next page is the single link above, which means the spider cannot see
 page N+1 before it has fetched and parsed page N. That property is what makes
 the cancel test deterministic — a cancel sent after the first page event is

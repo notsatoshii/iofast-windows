@@ -141,3 +141,72 @@ def test_readme_stem_reserved_against_scraped_page(tmp_path):
     assert f"{name}.md" != README_FILE, "scraped page claimed the README file"
     write_run(str(tmp_path), ledger, {"start url": "https://x.com"})
     assert "malicious body" not in (tmp_path / README_FILE).read_text(encoding="utf-8")
+
+
+def test_same_text_under_two_urls_is_saved_once(tmp_path):
+    ledger = Ledger()
+    writer = Writer(str(tmp_path), ledger, max_pages=5)
+    writer.write("https://x.com/docs/a", "# Same")
+    writer.write("https://x.com/docs/a-alias", "# Same")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["docs-a.md"]
+    assert writer.written == 1
+    row = ledger.records["https://x.com/docs/a-alias"]
+    assert row["outcome"] == "duplicate" and row["file"] == "" and "docs-a.md" in row["reason"]
+
+
+def test_rescrape_leaves_an_unchanged_file_untouched(tmp_path):
+    Writer(str(tmp_path), Ledger()).write("https://x.com/docs/a", "# Same")
+    path = tmp_path / "docs-a.md"
+    stamp = 1_000_000_000
+    import os
+
+    os.utime(path, (stamp, stamp))
+    Writer(str(tmp_path), Ledger()).write("https://x.com/docs/a", "# Same")
+    assert path.stat().st_mtime == stamp, "identical re-scrape must not rewrite the file"
+    Writer(str(tmp_path), Ledger()).write("https://x.com/docs/a", "# Changed")
+    assert "# Changed" in path.read_text()
+
+
+def test_one_block_page_for_every_url_still_reads_suspect(tmp_path):
+    """Dedupe keeps one file, but a site answering every URL with the same tiny
+    block/shell page is a failed scrape, not a clean one-page corpus."""
+    ledger = Ledger()
+    writer = Writer(str(tmp_path), ledger, max_pages=10)
+    for i in range(6):
+        url = f"https://x.com/docs/p{i}"
+        ledger.enqueue(url)
+        writer.write(url, "Please enable JavaScript to continue.")
+    manifest = write_run(str(tmp_path), ledger, {"start url": "https://x.com/docs/"})
+    assert writer.written == 1
+    assert manifest["quality"]["verdict"] == "SUSPECT"
+    assert {"uniform_tiny", "mostly_duplicate"} <= set(manifest["quality"]["flags"])
+
+
+def _run(out, pages, failed=()):
+    """One run into `out`: pages = {url: text}; failed urls record failed_fetch."""
+    from iofast_engine.runner import move_stale, previous_pages
+
+    prior = previous_pages(str(out))
+    ledger = Ledger()
+    writer = Writer(str(out), ledger, max_pages=50)
+    for url, text in pages.items():
+        ledger.enqueue(url)
+        writer.write(url, text)
+    for url in failed:
+        ledger.enqueue(url)
+        ledger.record(url, "failed_fetch", "http 503")
+    manifest = write_run(str(out), ledger, {"start url": "https://x.com/"})
+    if prior:
+        move_stale(str(out), prior, manifest, lambda e: None)
+    return sorted(p.name for p in out.glob("*.md") if p.name not in (LEDGER_FILE, README_FILE))
+
+
+def test_refresh_keeps_names_moves_gone_pages_and_keeps_failed_ones(tmp_path):
+    out = tmp_path / "docs"
+    out.mkdir()
+    first = _run(out, {"https://x.com/a/b": "1", "https://x.com/a-b": "2", "https://x.com/gone": "3",
+                       "https://x.com/flaky": "4"})
+    # Collision order swapped: names must not swap, so no stale twin appears.
+    second = _run(out, {"https://x.com/a-b": "2", "https://x.com/a/b": "1"}, failed=["https://x.com/flaky"])
+    assert second == sorted(set(first) - {"gone.md"}), "flaky failed this run but keeps its file"
+    assert (tmp_path / "_stale" / "docs" / "gone.md").exists(), "moved, never deleted"

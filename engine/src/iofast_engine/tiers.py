@@ -25,7 +25,16 @@ def header_lookup(headers: dict, name: str) -> str:
 # Checked against Cloudflare's OWN challenge documentation (2026-08-13): those pages
 # describe challenges in prose and contain none of these literals, so scraping the
 # docs that explain the mechanism does not read as the mechanism.
-CHALLENGE_MARKERS = ("just a moment...", "cf_chl_opt", "/cdn-cgi/challenge-platform/")
+# Only the interstitial's own script trees count: /h/<x>/orchestrate/... today and the
+# older /orchestrate/jsch/... The bare prefix also covers Bot Management's per-page
+# scripts (/scripts/jsd/main.js on every normal page of developer.quickintel.io,
+# 2026-10-21), which are not challenges.
+CHALLENGE_MARKERS = (
+    "just a moment...",
+    "cf_chl_opt",
+    "/cdn-cgi/challenge-platform/h/",
+    "/cdn-cgi/challenge-platform/orchestrate/",
+)
 # Measured 2026-08-13: a live custom-branded challenge body was 27674 bytes with its
 # first marker at 14866 — invisible to the 8000-char window this replaces. Real docs
 # pages measured 105-208KB, so the cap still avoids lowercasing a whole document;

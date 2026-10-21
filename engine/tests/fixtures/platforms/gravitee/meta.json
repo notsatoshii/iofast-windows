@@ -1,0 +1,19 @@
+{
+  "platform": "gravitee",
+  "pages": [
+    {
+      "file": "static-api-doc-shell.html",
+      "url": "https://developer.quickintel.io/catalog/api/576af828-be07-40b1-aaf8-28be07e0b1bf/doc",
+      "captured": "2026-10-21",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "server": "cloudflare",
+        "cf-cache-status": "DYNAMIC"
+      },
+      "variant": "static",
+      "extracted_chars": 0,
+      "synthetic": false
+    }
+  ]
+}
