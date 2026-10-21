@@ -82,6 +82,9 @@ def test_md_twins_canonicalise_index_convention():
     # same page enters the crawl twice under two urls.
     assert md_twins(["https://x/docs/get-started/index.md"]) == ["https://x/docs/get-started"]
     assert md_twins(["https://x/index.md"]) == ["https://x"]
+    # GitBook lists the landing page as readme.md (docs.paperstrategy.xyz, 2026-10-21)
+    assert md_twins(["https://x/readme.md"]) == ["https://x"]
+    assert md_twins(["https://x/the-loop/README.md"]) == ["https://x/the-loop"]
 
 
 def test_md_twin_map_keeps_exact_twin_urls():

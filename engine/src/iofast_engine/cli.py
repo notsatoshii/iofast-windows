@@ -135,7 +135,7 @@ def main(argv=None):
         return 0 if result["installed"] else 1
 
     # Argument validation happens before any network call.
-    error = validate(args.url, args.scope)
+    error = validate(args.url, getattr(args, "scope", None))  # estimate takes no --scope
     if error:
         ap.error(error)
 

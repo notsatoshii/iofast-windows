@@ -43,3 +43,14 @@ def test_scope_root_without_trailing_slash_is_in_scope():
     assert validate("https://docs.x.com/docs", scope="/docs/") is None
     assert validate("https://docs.x.com/docs/intro", scope="/docs/") is None
     assert validate("https://docs.x.com/api", scope="/docs/") is not None
+
+
+def test_estimate_validates_without_a_scope_flag():
+    """estimate has no --scope: validation must not crash reading it (offline: bad URL)."""
+    result = run("estimate", "ftp://x.com/docs/")
+    assert result.returncode == 2 and "AttributeError" not in result.stderr, result.stderr
+
+
+def test_section_prints_the_folder():
+    result = run("section", "https://www.Docs.X.com/docs/intro")
+    assert result.returncode == 0 and result.stdout.strip() == "docs-docs-x-com/docs"

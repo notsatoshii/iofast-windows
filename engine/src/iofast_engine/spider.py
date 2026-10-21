@@ -27,6 +27,7 @@ from .rescue import rescue_selectors
 from .tiers import THIN_CHARS, TIERS, browsers_available, header_lookup, is_challenge
 from .urls import (
     VERSION_ROOT_LOCALES,
+    _md_canonical,
     bad_href,
     clean_url,
     md_twin_map,
@@ -738,6 +739,10 @@ class DocSpider(Spider):
             # body, so no links to follow) never revisits its child pages, and
             # the rewritten manifest silently drops their validators.
             seeded = {url for url, _ in seeds}
+            # A prior url that is only another name for a seeded page (an old
+            # `/readme` twin row, now folded into `/`) would refetch, redirect to
+            # an already-seen page, and land as a false failed_fetch.
+            canon = {clean_url(url) for url in seeded}
             # A previous-manifest page keeps its twin when this run is
             # md-capable — else an update on a twin site would overwrite
             # markdown-sourced files with HTML extracts (or trip the shrink
@@ -748,7 +753,10 @@ class DocSpider(Spider):
                 for url, row in sorted(self.previous.items())
                 # robots re-checked: the site may have tightened its policy
                 # since the prior run wrote these pages.
-                if row.get("file") and url not in seeded and self.robots.allowed(url)
+                if row.get("file")
+                and url not in seeded
+                and clean_url(_md_canonical(clean_url(url) + ".md")) not in canon
+                and self.robots.allowed(url)
             ]
         for url, md_capable in seeds[: self.max_pages]:
             if url in self.seen:

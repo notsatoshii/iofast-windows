@@ -140,13 +140,16 @@ def md_variant(url: str) -> str:
 def _md_canonical(twin_url: str) -> str:
     """Canonical page url for a `.md` twin link.
 
-    Strips `.md`, then a trailing `/index` — Cloudflare twins live at
-    `<path>/index.md` while the sitemap lists `<path>`, and without the strip
-    the same page enters the crawl twice under two urls.
+    Strips `.md`, then a trailing `/index` or `/readme` — Cloudflare twins live
+    at `<path>/index.md` and GitBook lists a folder's landing page as
+    `<path>/readme.md` (docs.paperstrategy.xyz: `/readme` 307s to `/`) while the
+    sitemap lists `<path>`. Without the strip the same page enters the crawl
+    twice under two urls.
     """
     page = twin_url[:-3]
-    if page.endswith("/index"):
-        page = page[: -len("/index")]
+    for stem in ("/index", "/readme"):
+        if page.lower().endswith(stem):
+            return page[: -len(stem)]
     return page
 
 
