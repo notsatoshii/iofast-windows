@@ -69,6 +69,11 @@ def main(argv=None):
     section = sub.add_parser("section", help="print the stable <site>/<section> folder for a URL")
     section.add_argument("url")
 
+    combine_p = sub.add_parser(
+        "combine", help="join a site folder's pages into one LLM-ready <site>/<site>.md"
+    )
+    combine_p.add_argument("site_dir")
+
     sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
 
     browsers_p = sub.add_parser(
@@ -93,6 +98,16 @@ def main(argv=None):
         from .urls import section_folder
 
         print(section_folder(args.url), flush=True)
+        return 0
+
+    if args.command == "combine":
+        from .combine import combine
+
+        target = combine(args.site_dir)
+        if target is None:
+            print(f"no scraped pages under {args.site_dir}", file=sys.stderr)
+            return 1
+        print(target, flush=True)
         return 0
 
     if args.command == "rpc":

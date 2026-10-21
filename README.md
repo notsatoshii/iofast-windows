@@ -103,7 +103,9 @@ engine/.venv/bin/iofast scrape https://docs.example.com/docs/ --out ./out
 ```
 
 `iofast estimate` gives a fast page count, and `iofast rpc` starts the
-stdio server the app talks to.
+stdio server the app talks to. `iofast combine <site-dir>` joins every
+section of a hotkey site folder into one LLM-ready `<site-dir>/<site-dir>.md`:
+pages in the site's own order, repeated boilerplate removed.
 
 **Frozen engine (the sidecar the app runs).** Build it before starting the
 app. In dev the shell looks for `engine/dist/iofast/iofast` (or wherever

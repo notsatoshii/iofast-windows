@@ -13,5 +13,6 @@ def build_manifest(info: dict, ledger, reconciled: bool) -> dict:
         "excluded": ledger.excluded,
         "reconciled": reconciled,
         "token_estimate": tokens,
-        "pages": sorted(ledger.records.values(), key=lambda r: r["url"]),
+        # Site order (first enqueue), not URL order: `iofast combine` reads it.
+        "pages": sorted(ledger.records.values(), key=lambda r: ledger.order[r["url"]]),
     }

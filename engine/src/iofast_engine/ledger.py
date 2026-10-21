@@ -25,9 +25,13 @@ class Ledger:
         self.enqueued = set()
         self.records = {}
         self.excluded = {}
+        # First-seen index per url: seeds and adapters enqueue in the site's own
+        # order (sitemap / llms.txt / nav), so the manifest can keep that order.
+        self.order = {}
 
     def enqueue(self, url):
         self.enqueued.add(url)
+        self.order.setdefault(url, len(self.order))
 
     def exclude(self, reason):
         self.excluded[reason] = self.excluded.get(reason, 0) + 1
@@ -50,6 +54,7 @@ class Ledger:
         if outcome not in OUTCOMES:
             raise ValueError(f"unknown outcome: {outcome}")
         self.enqueued.add(url)
+        self.order.setdefault(url, len(self.order))
         self.records[url] = {
             "url": url,
             "outcome": outcome,
