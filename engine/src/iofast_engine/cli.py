@@ -102,6 +102,11 @@ def main(argv=None):
 
     sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
 
+    check_deps_p = sub.add_parser(
+        "check-deps", help="verify all source modules and runtime deps are importable"
+    )
+    check_deps_p.add_argument("--json", action="store_true", help="result as JSON on stdout")
+
     browsers_p = sub.add_parser(
         "browsers", help="out-of-band browser components (SHA-256-pinned download)"
     )
@@ -162,6 +167,51 @@ def main(argv=None):
         from .rpc import serve_stdio
 
         return serve_stdio()
+
+    if args.command == "check-deps":
+        # Import every source module and report availability. Used by the
+        # app's --self-test to verify the frozen sidecar has all sources.
+        from .sources import (
+            GitHubSource,
+            InstagramSource,
+            WebSource,
+            XSource,
+            YouTubeSource,
+        )
+
+        sources = {
+            "youtube": YouTubeSource is not None,
+            "github": GitHubSource is not None,
+            "instagram": InstagramSource is not None,
+            "x": XSource is not None,
+            "web": WebSource is not None,
+        }
+        # Also verify key runtime deps are importable.
+        deps_ok = True
+        dep_errors = []
+        for mod_name in ("yt_dlp", "playwright", "scrapling", "trafilatura"):
+            try:
+                __import__(mod_name)
+            except ImportError as e:
+                deps_ok = False
+                dep_errors.append(f"{mod_name}: {e}")
+
+        result = {"sources": sources, "deps_ok": deps_ok, "dep_errors": dep_errors}
+        all_available = all(sources.values()) and deps_ok
+        if args.json:
+            print(json.dumps(result), flush=True)
+        else:
+            for name, available in sources.items():
+                status = "ok" if available else "MISSING"
+                print(f"  {name}: {status}", file=sys.stderr)
+            if dep_errors:
+                for err in dep_errors:
+                    print(f"  dep error: {err}", file=sys.stderr)
+            print(
+                f"check-deps: {'all sources available' if all_available else 'INCOMPLETE'}",
+                file=sys.stderr,
+            )
+        return 0 if all_available else 1
 
     if args.command == "browsers":
         from . import browsers
