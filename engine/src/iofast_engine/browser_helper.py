@@ -64,7 +64,11 @@ def _patch_frozen_driver_path():
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass is None:
             return
-        real_driver = os.path.join(meipass, "patchright", "driver")
+        # PyInstaller 6.x places collected package data under _internal/.
+        # Try both layouts for forward/backward compatibility.
+        real_driver = os.path.join(meipass, "_internal", "patchright", "driver")
+        if not os.path.isdir(real_driver):
+            real_driver = os.path.join(meipass, "patchright", "driver")
         if not os.path.isdir(real_driver):
             return  # driver not bundled; nothing to fix
 
