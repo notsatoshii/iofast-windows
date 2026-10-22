@@ -909,8 +909,29 @@ fn run_self_test() {
 
                 match child {
                     Ok(mut proc) => {
-                        // Wait for window to appear and become foreground.
-                        std::thread::sleep(std::time::Duration::from_secs(4));
+                        // Wait for the browser window to fully initialize.
+                        // Chrome/Edge with --new-window on an existing profile
+                        // reuses the process; the new tab takes time to render.
+                        std::thread::sleep(std::time::Duration::from_secs(6));
+
+                        // Bring the browser window to foreground by title.
+                        // Without this, GetForegroundWindow() returns whatever
+                        // was last focused (often the terminal), and COM UIA
+                        // crashes traversing a non-browser window tree.
+                        unsafe {
+                            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                FindWindowW, SetForegroundWindow,
+                            };
+                            let title: Vec<u16> = "Example Domain"
+                                .encode_utf16()
+                                .chain(std::iter::once(0))
+                                .collect();
+                            let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+                            if !hwnd.is_null() {
+                                SetForegroundWindow(hwnd);
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                            }
+                        }
 
                         // Try native COM UIA first.
                         let start_native = Instant::now();
