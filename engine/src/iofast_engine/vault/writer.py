@@ -150,6 +150,7 @@ def write_new_notes(
         folder = note.get("folder", "")
         title = note.get("title", "")
         tags = note.get("tags", [])
+        aliases = note.get("aliases", [])
         content = note.get("content", "")
         if not title:
             continue
@@ -160,11 +161,26 @@ def write_new_notes(
         lines = ["---"]
         if tags:
             lines.append(f"tags: [{', '.join(tags)}]")
+        if aliases:
+            quoted = [f'"{a}"' for a in aliases]
+            lines.append(f"aliases: [{', '.join(quoted)}]")
         lines.append(f"created: {today}")
         lines.append("---")
         lines.append("")
         lines.append(f"# {title}")
         lines.append("")
+        # Prevent duplicate H1: strip any leading "# title" from content
+        # since we already wrote it above.
+        content_lines = content.splitlines()
+        if content_lines:
+            first = content_lines[0].strip()
+            heading_re = __import__("re").compile(r"^#\s+(.+)$")
+            if heading_re.match(first):
+                content_lines = content_lines[1:]
+                # Strip blank line after removed heading too
+                if content_lines and not content_lines[0].strip():
+                    content_lines = content_lines[1:]
+            content = "\n".join(content_lines)
         lines.append(content)
         lines.append("")
         path.parent.mkdir(parents=True, exist_ok=True)

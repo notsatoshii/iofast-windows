@@ -547,4 +547,201 @@ class TestYoutubeTypeDetection:
         run_dir.mkdir()
         assert _detect_source_type(run_dir) == "web"
 
+
+class TestEntityCap:
+    """Entity notes capped at 8 per capture; over-cap entities stay as links only."""
+
+    def test_caps_entity_notes_at_eight(self, tmp_path):
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "AI").mkdir(parents=True)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text(
+            '{"info": {"url": "https://example.com/cap", "title": "Cap Test"}}',
+            encoding="utf-8",
+        )
+        (run_dir / "content.md").write_text("# Cap Test\nBody.", encoding="utf-8")
+        # 12 entities — only first 8 should get notes
+        entities = [f"Entity {i}" for i in range(12)]
+        mock_classify = {
+            "topic_folder": "AI",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {
+                "summary": "Test.",
+                "key_points": [],
+                "notable_quotes": [],
+                "entities": entities,
+            },
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "- [[Cap Test]]",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            result = file_capture(run_dir, vault_path=vault)
+        # Count entity notes created (exclude source note and MOC)
+        ai_files = [f.name for f in (vault / "AI").glob("*.md")
+                    if f.name != "Cap Test.md" and not f.name.endswith(" MOC.md")]
+        assert len(ai_files) == 8
+        # Source note should still reference all 12 entities
+        source = (vault / "AI" / "Cap Test.md").read_text(encoding="utf-8")
+        for e in entities:
+            assert e in source
+
+
+class TestEntityMergeNormalization:
+    """Near-duplicate entity names merged before writing."""
+
+    def test_react_and_react_framework_merge(self, tmp_path):
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "AI").mkdir(parents=True)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text(
+            '{"info": {"url": "https://example.com/merge", "title": "Merge Test"}}',
+            encoding="utf-8",
+        )
+        (run_dir / "content.md").write_text(
+            "# Merge Test\nReAct is a framework. ReAct Framework does reasoning.",
+            encoding="utf-8",
+        )
+        mock_classify = {
+            "topic_folder": "AI",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {
+                "summary": "Test.",
+                "key_points": [],
+                "notable_quotes": [],
+                "entities": ["ReAct", "ReAct Framework"],
+            },
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "- [[Merge Test]]",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            file_capture(run_dir, vault_path=vault)
+        # Should create only ONE note for ReAct concept (exclude MOC)
+        ai_files = [f.name for f in (vault / "AI").glob("*.md")
+                    if f.name != "Merge Test.md" and not f.name.endswith(" MOC.md")]
+        assert len(ai_files) == 1
+        # The note should exist under one canonical name
+        assert (vault / "AI" / "ReAct.md").exists() or (vault / "AI" / "ReAct Framework.md").exists()
+
+    def test_existing_alias_prevents_new_note(self, tmp_path):
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "AI").mkdir(parents=True)
+        # Pre-existing note with alias
+        existing = vault / "AI" / "Transformer Architecture.md"
+        existing.write_text(
+            '---\ntags: [ai]\naliases: ["Transformers"]\n---\n# Transformer Architecture\n',
+            encoding="utf-8",
+        )
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text(
+            '{"info": {"url": "https://example.com/alias", "title": "Alias Test"}}',
+            encoding="utf-8",
+        )
+        (run_dir / "content.md").write_text("# Alias Test\nBody.", encoding="utf-8")
+        mock_classify = {
+            "topic_folder": "AI",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {
+                "summary": "Test.",
+                "key_points": [],
+                "notable_quotes": [],
+                "entities": ["Transformers"],  # matches existing alias
+            },
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "- [[Alias Test]]",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            file_capture(run_dir, vault_path=vault)
+        # Should NOT create a new "Transformers.md" — it matches existing alias
+        assert not (vault / "AI" / "Transformers.md").exists()
+
+
+class TestEntityDescriptionQuality:
+    """Entity notes get real descriptions from capture text, not bare stubs."""
+
+    def test_entity_note_has_description_not_stub(self, tmp_path):
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "AI").mkdir(parents=True)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text(
+            '{"info": {"url": "https://example.com/desc", "title": "Desc Test"}}',
+            encoding="utf-8",
+        )
+        (run_dir / "content.md").write_text(
+            "# Desc Test\nLangChain is a framework for building LLM applications. "
+            "It provides tools for chaining language model calls together.",
+            encoding="utf-8",
+        )
+        mock_classify = {
+            "topic_folder": "AI",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {
+                "summary": "Test.",
+                "key_points": [],
+                "notable_quotes": [],
+                "entities": ["LangChain"],
+            },
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "- [[Desc Test]]",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            file_capture(run_dir, vault_path=vault)
+        entity_note = (vault / "AI" / "LangChain.md").read_text(encoding="utf-8")
+        # Must NOT be a bare stub
+        assert "Entity mentioned in" not in entity_note
+        # Must have real content drawn from capture
+        assert "framework" in entity_note.lower() or "LLM" in entity_note or "chaining" in entity_note.lower()
+        # Must have Mentioned-in line
+        assert "Mentioned in: [[Desc Test]]" in entity_note
+
+
+class TestHeadingDeduplication:
+    """write_new_notes must never produce duplicate H1 headings."""
+
+    def test_content_with_heading_stripped(self, tmp_path):
+        from iofast_engine.vault.writer import write_new_notes
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "AI").mkdir()
+        notes = [{
+            "title": "Test Entity",
+            "folder": "AI",
+            "tags": ["entity"],
+            "content": "# Test Entity\n\nSome description here.\n",
+        }]
+        paths = write_new_notes(vault, notes)
+        assert len(paths) == 1
+        text = paths[0].read_text(encoding="utf-8")
+        # H1 should appear exactly once
+        assert text.count("# Test Entity") == 1
+        # Content body should still be present
+        assert "Some description here." in text
+
         

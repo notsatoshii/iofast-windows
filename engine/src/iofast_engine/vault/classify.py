@@ -57,9 +57,10 @@ Return ONLY valid JSON (no markdown fences, no commentary) with this exact schem
       "title": "<Title Case with spaces>",
       "folder": "<existing or same topic_folder>",
       "tags": ["<kebab-case>", ...],
-      "content": "<note body with [[wikilinks]]>"
+      "aliases": ["<alternative spellings or names>", ...],
+      "content": "<1-3 sentence description drawn from capture text, no invented facts. End with 'Mentioned in: [[{title}]].'>"
     }}
-  ],  // max 8 entity/concept notes
+  ],  // max 8 entity/concept notes; rank entities by centrality to this capture
   "append_sections": [
     {{
       "note_title": "<existing note title to append to>",

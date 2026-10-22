@@ -95,6 +95,62 @@ def _extract_title(run_dir: Path) -> str:
 _HEADING_RE = __import__("re").compile(r"^#\s+(.+)$")
 
 
+def _extract_entity_description(
+    entity: str, combined_text: str, source_title: str, run_dir: Path | None = None,
+) -> str:
+    """Extract a 1-3 sentence description of an entity from capture text.
+
+    Finds the first mention and extracts surrounding context. Falls back
+    to a generic 'mentioned in' line if no useful context found.
+    When combined_text is empty, reads .md files from run_dir directly.
+    """
+    import re as _re
+
+    body = combined_text
+    # If combined_text is empty, try reading .md files from run_dir
+    if not body.strip() and run_dir is not None:
+        parts = []
+        for md_file in sorted(run_dir.rglob("*.md")):
+            if md_file.name in ("report.md", "README-UNTRUSTED.md"):
+                continue
+            try:
+                parts.append(md_file.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+        body = "\n\n".join(parts)
+
+    # Strip heading lines so they don't pollute descriptions
+    text_lines = body.splitlines()
+    body_lines = [l for l in text_lines if not l.startswith("# ")]
+    body = "\n".join(body_lines)
+
+    # Find first mention (case-insensitive)
+    pattern = _re.compile(_re.escape(entity), _re.IGNORECASE)
+    match = pattern.search(body)
+    if not match:
+        return f"Referenced in [[{source_title}]]."
+
+    # Extract surrounding sentences (up to 3)
+    start = max(0, match.start() - 200)
+    end = min(len(body), match.end() + 300)
+    snippet = body[start:end]
+
+    # Split into sentences and take up to 3 that mention the entity
+    sentences = _re.split(r'(?<=[.!?])\s+', snippet)
+    relevant = []
+    for s in sentences:
+        if pattern.search(s) and len(s.strip()) > 10:
+            clean = s.strip().replace("\n", " ")
+            if clean not in relevant:
+                relevant.append(clean)
+            if len(relevant) >= 3:
+                break
+
+    if relevant:
+        return " ".join(relevant)
+    return f"Referenced in [[{source_title}]]."
+
+
 def _first_heading_title(run_dir: Path) -> str | None:
     """Return the first H1 heading found in any .md file under run_dir.
 
@@ -288,32 +344,109 @@ def file_capture(
     topic_folder = classification["topic_folder"]
     _emit(f"topic: {topic_folder}, tags: {classification['tags']}")
 
-    # Build title sets for entity linking
+    # Build title/alias sets for entity linking and dedup
     existing_titles = {n["title"] for n in vault_scan.get("notes", [])}
     existing_titles_lower = {t.lower() for t in existing_titles}
+    existing_aliases_lower = {a.lower() for a in vault_scan.get("alias_index", [])}
 
-    # Ensure every entity from classification becomes a note.
-    # The LLM may list entities in source_note.entities but not create
-    # new_notes entries for all of them. Fill gaps with stub notes so
-    # every [[wikilink]] in Related resolves to an actual file.
+    # Normalize entity names: strip suffixes like Framework/Model/Library/Inc,
+    # collapse whitespace, lowercase for comparison. Returns canonical form.
+    import re as _re
+    _SUFFIX_RE = _re.compile(
+        r"\s+(framework|model|library|inc|ltd|corp|llc|platform|system|toolkit|sdk|api)$",
+        _re.IGNORECASE,
+    )
+
+    def _normalize_entity(name: str) -> str:
+        """Normalize entity name for dedup comparison."""
+        n = name.strip()
+        n = _SUFFIX_RE.sub("", n)
+        n = _re.sub(r"\s+", " ", n).strip()
+        return n
+
+    # Build normalized lookup: maps normalized-lower -> (canonical_title, is_existing)
+    norm_to_canonical: dict[str, tuple[str, bool]] = {}
+    for t in existing_titles:
+        norm_to_canonical[_normalize_entity(t).lower()] = (t, True)
+    for a in vault_scan.get("alias_index", []):
+        key = _normalize_entity(a).lower()
+        if key not in norm_to_canonical:
+            norm_to_canonical[key] = (a, True)
+
+    # Track new notes being created this run (normalized -> canonical title)
+    new_note_norm_map: dict[str, str] = {}
     new_note_titles = {n["title"] for n in classification.get("new_notes", []) if n.get("title")}
-    new_note_titles_lower = {t.lower() for t in new_note_titles}
-    for entity in classification.get("source_note", {}).get("entities", []):
+
+    # Merge near-duplicate new_notes from LLM before processing entities
+    merged_new_notes: list[dict] = []
+    seen_norms: set[str] = set()
+    for note in classification.get("new_notes", []):
+        n_title = note.get("title", "").strip()
+        if not n_title:
+            continue
+        norm_key = _normalize_entity(n_title).lower()
+        # Check against existing titles/aliases first
+        if norm_key in norm_to_canonical:
+            # Existing note matches — add alias instead of creating new note
+            canonical, _ = norm_to_canonical[norm_key]
+            if n_title != canonical:
+                # Record alias merge (will be handled by append_to_existing_notes or skipped)
+                pass
+            continue
+        # Check against other new notes in this batch
+        if norm_key in seen_norms:
+            continue  # duplicate within batch — skip
+        seen_norms.add(norm_key)
+        new_note_norm_map[norm_key] = n_title
+        merged_new_notes.append(note)
+    classification["new_notes"] = merged_new_notes
+
+    # Cap entity notes at 8 total (LLM's new_notes + auto-created stubs).
+    # Entities are ranked by position in source_note.entities (LLM orders by centrality).
+    MAX_ENTITY_NOTES = 8
+    current_new_count = len(classification["new_notes"])
+
+    # Process remaining entities from source_note.entities
+    # These become wikilinks; only create notes if under cap and not already existing
+    entities_list = classification.get("source_note", {}).get("entities", [])
+    linked_entities: list[str] = []
+    for entity in entities_list:
         e_stripped = str(entity).strip()
         if not e_stripped:
             continue
-        e_lower = e_stripped.lower()
-        if e_lower in existing_titles_lower or e_lower in new_note_titles_lower:
+        norm_key = _normalize_entity(e_stripped).lower()
+
+        # Check if already exists in vault
+        if norm_key in norm_to_canonical:
+            canonical, _ = norm_to_canonical[norm_key]
+            linked_entities.append(canonical)
             continue
-        # Create a stub entity note so the wikilink resolves
-        classification["new_notes"].append({
-            "title": e_stripped,
-            "folder": topic_folder,
-            "tags": ["entity"],
-            "content": f"Entity mentioned in [[{title}]].\n",
-        })
-        new_note_titles.add(e_stripped)
-        new_note_titles_lower.add(e_lower)
+
+        # Check if already being created in this batch
+        if norm_key in new_note_norm_map:
+            linked_entities.append(new_note_norm_map[norm_key])
+            continue
+
+        # Under cap? Create a quality entity note
+        if current_new_count < MAX_ENTITY_NOTES:
+            # Generate description from capture context (first mention in content)
+            desc = _extract_entity_description(e_stripped, combined_text, title, run_dir=run_dir)
+            classification["new_notes"].append({
+                "title": e_stripped,
+                "folder": topic_folder,
+                "tags": ["entity"],
+                "content": f"{desc}\n\nMentioned in: [[{title}]].\n",
+            })
+            new_note_norm_map[norm_key] = e_stripped
+            new_note_titles.add(e_stripped)
+            linked_entities.append(e_stripped)
+            current_new_count += 1
+        else:
+            # Over cap — plain text in Related, no note created
+            linked_entities.append(e_stripped)
+
+    # Update source_note.entities to use canonical names for linking
+    classification["source_note"]["entities"] = linked_entities
 
     # Write source note
     _emit("writing source note")
