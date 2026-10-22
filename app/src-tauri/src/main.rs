@@ -19,10 +19,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use sidecar::SidecarManager;
 
-#[cfg(target_os = "macos")]
-const HOTKEY_MOD: Modifiers = Modifiers::SUPER;
-#[cfg(not(target_os = "macos"))]
-const HOTKEY_MOD: Modifiers = Modifiers::CONTROL;
+// Hotkey modifiers are computed per-platform in quick_panel_hotkey() because
+// bitflags `|` is not const on keyboard-types 0.7 / bitflags 2.x.
 
 /// Panel geometry. Width is fixed; height follows the content (`panel_resize`).
 const PANEL_WIDTH: f64 = 680.0;
@@ -240,20 +238,8 @@ fn panel_resize(app: AppHandle, height: f64) {
     }
 }
 
-/// Clipboard read, macOS only.
-///
-/// `tauri-plugin-clipboard-manager` would be the portable route, but its
-/// `arboard` dependency turns on `image-data` by default (feature unification
-/// means we cannot switch it off from here), and that pulls image -> moxcms /
-/// zune-jpeg / getrandom releases requiring edition2024 into the *macOS* graph,
-/// which cargo 1.78 refused to parse. Pinning arboard and image back just moved
-/// the failure one crate along. `pbpaste` is a macOS built-in, and the panel is
-/// a macOS menubar utility. The toolchain floor has since moved
-/// (rust-toolchain.toml = 1.97.1, D2 2026-08-12), so the crate would now build —
-/// and slice #7 declined it anyway: three lines calling a first-party binary do
-/// the whole job on the only platform that ships this panel, so the swap would
-/// buy a dependency and no behaviour. Revisit if and when Windows lands, which
-/// is the case that actually needs a portable route.
+/// Clipboard read. macOS uses `pbpaste`; Windows uses the Win32 clipboard API
+/// directly (no crate needed for plain text). Both return None on empty or error.
 fn clipboard_text() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
@@ -261,7 +247,44 @@ fn clipboard_text() -> Option<String> {
         let text = String::from_utf8(out.stdout).ok()?;
         return (!text.trim().is_empty()).then_some(text);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::DataExchange::{
+            CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        };
+        use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+        // CF_UNICODETEXT = 13; not re-exported as a const in windows-sys 0.59 DataExchange feature.
+        const CF_UNICODETEXT: u32 = 13;
+
+        unsafe {
+            if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 {
+                return None;
+            }
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                return None;
+            }
+            let handle = GetClipboardData(CF_UNICODETEXT as u32);
+            if handle.is_null() {
+                let _ = CloseClipboard();
+                return None;
+            }
+            let ptr = GlobalLock(handle) as *const u16;
+            if ptr.is_null() {
+                let _ = CloseClipboard();
+                return None;
+            }
+            let mut len = 0;
+            while *ptr.add(len) != 0 {
+                len += 1;
+            }
+            let slice = std::slice::from_raw_parts(ptr, len);
+            let text = String::from_utf16_lossy(slice);
+            let _ = GlobalUnlock(handle);
+            let _ = CloseClipboard();
+            return (!text.trim().is_empty()).then_some(text);
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     None
 }
 
@@ -331,9 +354,16 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// CmdOrCtrl+Shift+K.
+/// macOS: Cmd+Shift+K. Windows: Ctrl+Shift+Space (Ctrl+Space is taken on this PC).
 fn quick_panel_hotkey() -> Shortcut {
-    Shortcut::new(Some(HOTKEY_MOD | Modifiers::SHIFT), Code::KeyK)
+    #[cfg(target_os = "macos")]
+    {
+        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyK)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space)
+    }
 }
 
 fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {

@@ -35,5 +35,14 @@ tokio = { version = "1", features = ["sync"] }
 # 1.85. Never `rm -rf` a user's library.
 trash = "3"
 
+[target.'cfg(windows)'.dependencies]
+# Win32 clipboard API for reading text without a crate that pulls image deps.
+windows-sys = { version = "0.59", features = [
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_Foundation",
+] }
+
 [profile.release]
 strip = true

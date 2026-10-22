@@ -1,5 +1,5 @@
 //! Everything that outlives a run: the config file, the library on disk, and
-//! the keychain. Plus the two macOS shell-outs (folder picker, Trash) — see the
+//! the secret store. Plus platform shell-outs (folder picker, Trash) — see the
 //! comments at each call site for why they are not crates.
 //!
 //! The library has no index and no database. Plain markdown on disk is the
@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Manager};
 
-/// `security -s` service name. Accounts are the env var names below.
+/// macOS: `security -s` service name. Windows: Credential Manager target prefix.
+/// Accounts are the env var names below.
 const KEYCHAIN_SERVICE: &str = "iofast";
 /// docs/RPC.md: the `env` allowlist the sidecar accepts, verbatim.
 pub const KEY_NAMES: [&str; 3] = ["OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL", "IOFAST_PROXY"];
@@ -219,58 +220,132 @@ pub fn library_delete(app: AppHandle, path: String) -> Result<(), String> {
     trash::delete(&dir).map_err(|e| e.to_string())
 }
 
-fn applescript_string(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// Folder picker. `tauri-plugin-dialog` is the portable route, but it pulls
-/// `tauri-plugin-fs` -> `toml ^1.0` -> `toml_parser`, which requires edition2024
-/// and so could not be parsed by cargo 1.78 (verified then: no pin helped, the
-/// `^1.0` requirement is hard). Same failure class as
-/// `tauri-plugin-clipboard-manager` — see `clipboard_text` in main.rs. The
-/// toolchain floor moved (rust-toolchain.toml = 1.97.1, D2 2026-08-12), but
-/// `choose folder` stays: a Standard Additions built-in beats a crate — no
-/// dependency, no automation (TCC) prompt, macOS-only like this app.
+/// Folder picker. macOS uses `choose folder` via osascript (no TCC prompt, no
+/// crate). Windows uses PowerShell's `FolderBrowserDialog` via a short inline
+/// script — same reason: `tauri-plugin-dialog` pulls edition2024 deps that
+/// cargo 1.78 could not parse, and the toolchain floor moved but the shell-out
+/// stayed because it works without new dependencies on either platform.
 #[tauri::command]
 pub fn pick_folder(start: Option<String>) -> Result<Option<String>, String> {
-    let prompt = "Choose the folder where iofast keeps your library";
-    let mut script = format!("POSIX path of (choose folder with prompt {}", applescript_string(prompt));
-    match start {
-        // `POSIX file` on a path that does not exist aborts the whole script.
-        Some(dir) if Path::new(&dir).is_dir() => {
-            script.push_str(&format!(" default location POSIX file {}", applescript_string(&dir)));
+    #[cfg(target_os = "macos")]
+    {
+        fn applescript_string(text: &str) -> String {
+            format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
         }
-        _ => {}
+        let prompt = "Choose the folder where iofast keeps your library";
+        let mut script = format!(
+            "POSIX path of (choose folder with prompt {}",
+            applescript_string(prompt)
+        );
+        match start {
+            Some(dir) if Path::new(&dir).is_dir() => {
+                script.push_str(&format!(
+                    " default location POSIX file {}",
+                    applescript_string(&dir)
+                ));
+            }
+            _ => {}
+        }
+        script.push(')');
+        let out = std::process::Command::new("/usr/bin/osascript")
+            .args(["-e", &script])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return if err.contains("-128") || err.contains("canceled") {
+                Ok(None)
+            } else {
+                Err(err.trim().to_string())
+            };
+        }
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Ok(Some(path.trim_end_matches('/').to_string()))
     }
-    script.push(')');
-    let out = std::process::Command::new("/usr/bin/osascript")
-        .args(["-e", &script])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        // "User canceled." is the normal way out of a picker, not a failure.
-        let err = String::from_utf8_lossy(&out.stderr);
-        return if err.contains("-128") || err.contains("canceled") {
-            Ok(None)
-        } else {
-            Err(err.trim().to_string())
+    #[cfg(target_os = "windows")]
+    {
+        // FolderBrowserDialog in a single-threaded STA apartment. The initial
+        // directory is set only when the caller passed one that exists; an
+        // invalid path would throw, so we silently ignore it.
+        let init = match start {
+            Some(dir) if Path::new(&dir).is_dir() => dir,
+            _ => String::new(),
         };
+        // Escape single quotes for the PowerShell string literal.
+        let init_ps = init.replace('\'', "''");
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+             $d.Description = 'Choose the folder where iofast keeps your library'; \
+             $d.ShowNewFolderButton = $true; \
+             if ('{init_ps}' -ne '' ) {{ $d.SelectedPath = '{init_ps}' }}; \
+             if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ \
+               Write-Output $d.SelectedPath \
+             }}"
+        );
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(err.trim().to_string());
+        }
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if path.is_empty() {
+            return Ok(None); // user cancelled
+        }
+        Ok(Some(path))
     }
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    // `choose folder` returns a trailing slash; the library root is joined onto.
-    Ok(Some(path.trim_end_matches('/').to_string()))
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = start;
+        Err("folder picker not supported on this platform".into())
+    }
 }
 
+/// Read one secret from the platform store. macOS uses `security find-generic-password`;
+/// Windows uses PowerShell's `Get-StoredCredential` against Credential Manager.
+/// Returns None when the entry does not exist or the read fails.
 fn keychain_get(name: &str) -> Option<String> {
-    let out = std::process::Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name, "-w"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("/usr/bin/security")
+            .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name, "-w"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let value = String::from_utf8(out.stdout).ok()?.trim_end().to_string();
+        (!value.is_empty()).then_some(value)
     }
-    let value = String::from_utf8(out.stdout).ok()?.trim_end().to_string();
-    (!value.is_empty()).then_some(value)
+    #[cfg(target_os = "windows")]
+    {
+        // Credential Manager target: "iofast:<ACCOUNT>". Get-StoredCredential
+        // returns $null when the target does not exist; we print only on hit so
+        // an empty stdout means "not stored" without parsing error text.
+        let target = format!("{KEYCHAIN_SERVICE}:{name}");
+        let script = format!(
+            "$c = Get-StoredCredential -Target '{}' -ErrorAction SilentlyContinue; \
+             if ($c) {{ $c.GetNetworkCredential().Password }}",
+            target.replace('\'', "''")
+        );
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let value = String::from_utf8(out.stdout).ok()?.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = name;
+        None
+    }
 }
 
 /// Which secrets exist — never their values. The settings pane shows a saved
@@ -283,12 +358,13 @@ pub fn keychain_status() -> Map<String, Value> {
         .collect()
 }
 
-/// `security add-generic-password`, with the value on **stdin** (typed twice,
-/// as the tool prompts) rather than `-w <value>` — argv is world-readable in
-/// `ps`. Same reason the sidecar gets keys in the request body, never on argv.
+/// Store one secret. macOS uses `security add-generic-password` with the value
+/// on stdin (argv is world-readable in `ps`). Windows uses `cmdkey /generic:`
+/// which accepts the password on `/pass:` — also visible in `tasklist /v` for
+/// the brief spawn, but there is no stdin alternative on Windows; the sidecar
+/// still receives keys only in the request body, never on argv.
 #[tauri::command]
 pub fn keychain_set(name: String, value: String) -> Result<(), String> {
-    use std::io::Write;
     if !KEY_NAMES.contains(&name.as_str()) {
         return Err(format!("unknown key {name}"));
     }
@@ -296,31 +372,56 @@ pub fn keychain_set(name: String, value: String) -> Result<(), String> {
         return Err("value cannot be empty".into());
     }
     if value.contains('\n') {
-        // The stdin prompt is line-based; a newline would silently truncate.
         return Err("value cannot contain a line break".into());
     }
-    let mut child = std::process::Command::new("/usr/bin/security")
-        .args(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", &name, "-w"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let written = child
-        .stdin
-        .take()
-        .expect("piped")
-        .write_all(format!("{value}\n{value}\n").as_bytes());
-    let status = child.wait().map_err(|e| e.to_string())?;
-    written.map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err("keychain refused the item".into());
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::Write;
+        let mut child = std::process::Command::new("/usr/bin/security")
+            .args(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", &name, "-w"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let written = child
+            .stdin
+            .take()
+            .expect("piped")
+            .write_all(format!("{value}\n{value}\n").as_bytes());
+        let status = child.wait().map_err(|e| e.to_string())?;
+        written.map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("keychain refused the item".into());
+        }
+        if keychain_get(&name).as_deref() != Some(value.as_str()) {
+            return Err("keychain did not store the value".into());
+        }
+        Ok(())
     }
-    // The prompt path reports success even when the two entries disagree.
-    if keychain_get(&name).as_deref() != Some(value.as_str()) {
-        return Err("keychain did not store the value".into());
+    #[cfg(target_os = "windows")]
+    {
+        let target = format!("{KEYCHAIN_SERVICE}:{name}");
+        // cmdkey /generic:TARGET /user:ACCOUNT /pass:VALUE — upsert semantics.
+        let status = std::process::Command::new("cmdkey")
+            .args(["/generic:", &target, "/user:", &name, "/pass:", &value])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("Credential Manager refused the item".into());
+        }
+        if keychain_get(&name).as_deref() != Some(value.as_str()) {
+            return Err("Credential Manager did not store the value".into());
+        }
+        Ok(())
     }
-    Ok(())
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (name, value);
+        Err("secret store not supported on this platform".into())
+    }
 }
 
 #[tauri::command]
@@ -328,12 +429,26 @@ pub fn keychain_clear(name: String) -> Result<(), String> {
     if !KEY_NAMES.contains(&name.as_str()) {
         return Err(format!("unknown key {name}"));
     }
-    std::process::Command::new("/usr/bin/security")
-        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &name])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/security")
+            .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &name])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let target = format!("{KEYCHAIN_SERVICE}:{name}");
+        // /delete is silent on missing targets — same idempotency as macOS.
+        std::process::Command::new("cmdkey")
+            .args(["/delete:", &target])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -384,32 +499,77 @@ fn candidate_dirs() -> Vec<PathBuf> {
     if let Some(path) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path));
     }
-    for fixed in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
-        dirs.push(PathBuf::from(fixed));
+    #[cfg(target_os = "macos")]
+    {
+        for fixed in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+            dirs.push(PathBuf::from(fixed));
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = PathBuf::from(home);
+            for rel in [".local/bin", ".bun/bin", ".deno/bin", ".claude/local", ".npm-global/bin"] {
+                dirs.push(home.join(rel));
+            }
+        }
+        dirs.push(PathBuf::from("/Applications/Cursor.app/Contents/Resources/app/bin"));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        for rel in [".local/bin", ".bun/bin", ".deno/bin", ".claude/local", ".npm-global/bin"] {
-            dirs.push(home.join(rel));
+    #[cfg(target_os = "windows")]
+    {
+        // Common Windows install locations for CLIs (npm, bun, deno, scoop, choco).
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let local = PathBuf::from(local);
+            for rel in ["Programs\\Python\\Python313\\Scripts", "pnpm", "bun", "deno", "Microsoft\\WindowsApps"] {
+                dirs.push(local.join(rel));
+            }
+        }
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let appdata = PathBuf::from(appdata);
+            for rel in ["npm", "scoop\\shims"] {
+                dirs.push(appdata.join(rel));
+            }
+        }
+        if let Some(progfiles) = std::env::var_os("ProgramFiles") {
+            dirs.push(PathBuf::from(progfiles).join("nodejs"));
+        }
+        // Cursor installs its CLI shim here on Windows.
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(local).join("Programs\\cursor\\resources\\app\\bin"));
         }
     }
-    // Cursor's "Install command" shim and the copy inside the app bundle.
-    dirs.push(PathBuf::from("/Applications/Cursor.app/Contents/Resources/app/bin"));
     dirs
 }
 
 /// First directory in the search path holding an executable named `bin`.
 fn resolve_bin(bin: &str) -> Option<PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
     let mut seen = std::collections::HashSet::new();
     for dir in candidate_dirs() {
         if !seen.insert(dir.clone()) {
             continue;
         }
-        let path = dir.join(bin);
-        if let Ok(meta) = std::fs::metadata(&path) {
-            if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
-                return Some(path);
+        // On Windows, executability is determined by extension (.exe, .cmd, .bat, .com).
+        // Try each common extension when the bare name doesn't match directly.
+        #[cfg(target_os = "windows")]
+        {
+            for ext in ["", ".exe", ".cmd", ".bat", ".com"] {
+                let path = if ext.is_empty() {
+                    dir.join(bin)
+                } else {
+                    dir.join(format!("{bin}{ext}"))
+                };
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    if meta.is_file() {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.join(bin);
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
+                    return Some(path);
+                }
             }
         }
     }
@@ -462,23 +622,49 @@ pub fn open_in_agent(app: AppHandle, agent: String, dir: String) -> Result<(), S
     let dir = checked_run_dir(&app, &dir)?;
     let dir = dir.to_string_lossy();
     if spec.terminal {
-        // ponytail: Terminal.app only. Add iTerm detection if that's ever wanted.
-        let script = "on run argv\n\
-             set d to quoted form of (item 1 of argv)\n\
-             set a to quoted form of (item 2 of argv)\n\
-             tell application \"Terminal\"\n\
-             do script \"cd \" & d & \" && exec \" & a\n\
-             activate\n\
-             end tell\n\
-             end run";
-        let out = std::process::Command::new("/usr/bin/osascript")
-            .args(["-e", script])
-            .arg(dir.as_ref())
-            .arg(&*bin)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        #[cfg(target_os = "macos")]
+        {
+            // ponytail: Terminal.app only. Add iTerm detection if that's ever wanted.
+            let script = "on run argv\n\
+                 set d to quoted form of (item 1 of argv)\n\
+                 set a to quoted form of (item 2 of argv)\n\
+                 tell application \"Terminal\"\n\
+                 do script \"cd \" & d & \" && exec \" & a\n\
+                 activate\n\
+                 end tell\n\
+                 end run";
+            let out = std::process::Command::new("/usr/bin/osascript")
+                .args(["-e", script])
+                .arg(dir.as_ref())
+                .arg(&*bin)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Windows Terminal (wt.exe) is the modern default; fall back to cmd
+            // when it is not installed. Both open a new tab/window cd'd to the
+            // run folder with the agent binary ready to type at.
+            let bin_str = bin.to_string_lossy();
+            let wt = resolve_bin("wt");
+            if wt.is_some() {
+                std::process::Command::new(wt.unwrap())
+                    .args(["new-tab", "--title", "iofast", "-d", dir.as_ref(), &*bin_str])
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())?;
+            } else {
+                // /k keeps the window open after the agent exits so the user can
+                // read any output; /d sets the working directory.
+                std::process::Command::new("cmd")
+                    .args(["/c", "start", "cmd", "/k", "cd", "/d", dir.as_ref(), "&&", &*bin_str])
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())?;
+            }
         }
         Ok(())
     } else {
