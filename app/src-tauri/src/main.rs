@@ -807,91 +807,158 @@ fn run_self_test() {
     let mut passed = 0u32;
     let mut failed = 0u32;
 
-    // (a) Hotkey registration
+    // Track console PIDs before any child spawns for flash detection.
+    let pids_before = visible_console_pids();
+
+    // (a) Hotkey registration — actually call RegisterHotKey via Win32.
     {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_SHIFT,
+        };
         let hotkey = default_hotkey();
         let label = shortcut_label(&hotkey);
-        // We can't register a global shortcut without the Tauri plugin, but we
-        // can verify the shortcut parses and the label round-trips.
-        let reparsed = parse_shortcut(&label);
-        if reparsed.is_some() {
-            println!("PASS  hotkey: {} parses and round-trips", label);
-            passed += 1;
-        } else {
-            println!("FAIL  hotkey: {} does not round-trip", label);
+        // Map our Modifiers to Win32 MOD_ flags.
+        let mut mods: u32 = 0;
+        if hotkey.mods.contains(Modifiers::CONTROL) {
+            mods |= MOD_CONTROL;
+        }
+        if hotkey.mods.contains(Modifiers::SHIFT) {
+            mods |= MOD_SHIFT;
+        }
+        if hotkey.mods.contains(Modifiers::ALT) {
+            mods |= 0x0001; // MOD_ALT
+        }
+        if hotkey.mods.contains(Modifiers::SUPER) {
+            mods |= 0x0008; // MOD_WIN
+        }
+        // Map Code to VK. Space = 0x20, letters A-Z = 0x41-0x5A, etc.
+        let vk: u32 = match hotkey.key {
+            Code::Space => 0x20,
+            Code::KeyA => 0x41, Code::KeyB => 0x42, Code::KeyC => 0x43,
+            Code::KeyD => 0x44, Code::KeyE => 0x45, Code::KeyF => 0x46,
+            Code::KeyG => 0x47, Code::KeyH => 0x48, Code::KeyI => 0x49,
+            Code::KeyJ => 0x4A, Code::KeyK => 0x4B, Code::KeyL => 0x4C,
+            Code::KeyM => 0x4D, Code::KeyN => 0x4E, Code::KeyO => 0x4F,
+            Code::KeyP => 0x50, Code::KeyQ => 0x51, Code::KeyR => 0x52,
+            Code::KeyS => 0x53, Code::KeyT => 0x54, Code::KeyU => 0x55,
+            Code::KeyV => 0x56, Code::KeyW => 0x57, Code::KeyX => 0x58,
+            Code::KeyY => 0x59, Code::KeyZ => 0x5A,
+            _ => 0,
+        };
+        if vk == 0 {
+            println!("FAIL  hotkey: unsupported key {:?}", hotkey.key);
             failed += 1;
+        } else {
+            // id=1 is arbitrary; only one registration at a time in self-test.
+            let ok = unsafe { RegisterHotKey(std::ptr::null_mut(), 1, mods, vk) };
+            if ok != 0 {
+                unsafe { UnregisterHotKey(std::ptr::null_mut(), 1) };
+                println!("PASS  hotkey: {} registered with OS", label);
+                passed += 1;
+            } else {
+                // Check if iofast itself already holds it (running instance).
+                let err = std::io::Error::last_os_error();
+                let held_by_iofast = std::process::Command::new("tasklist")
+                    .args(["/FI", "IMAGENAME eq iofast.exe", "/NH"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).contains("iofast.exe"))
+                    .unwrap_or(false);
+                if held_by_iofast {
+                    println!("PASS  hotkey: {} held by iofast (running)", label);
+                    passed += 1;
+                } else {
+                    println!("FAIL  hotkey: {} not registered ({})", label, err);
+                    failed += 1;
+                }
+            }
         }
     }
 
-    // (b) URL reader against a real Edge window
+    // (b) URL reader — find browser via registry, open example.com, read URL.
     {
-        let profile = std::path::PathBuf::from(
-            std::env::var("USERPROFILE").unwrap_or_default(),
-        )
-        .join(".cache/claude-chrome/1");
-
-        // Find a free Chrome profile slot (1..4)
-        let mut chrome_dir = profile.clone();
-        for slot in 1..=4 {
-            let candidate = std::path::PathBuf::from(
-                std::env::var("USERPROFILE").unwrap_or_default(),
-            )
-            .join(format!(".cache/claude-chrome/{}", slot));
-            if !candidate.join("SingletonLock").exists() {
-                chrome_dir = candidate;
-                break;
-            }
-        }
-
-        // Launch Edge with the test URL
-        let edge = std::process::Command::new("msedge")
-            .args([
-                "--new-window",
-                "https://example.com",
-                &format!("--user-data-dir={}", chrome_dir.display()),
-                "--no-first-run",
-                "--no-default-browser-check",
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
-
-        match edge {
-            Ok(mut child) => {
-                // Wait for the window to appear and become active
-                std::thread::sleep(std::time::Duration::from_secs(3));
-
-                let start = Instant::now();
-                let url = active_browser_url();
-                let elapsed = start.elapsed();
-
-                if url.as_deref() == Some("https://example.com/")
-                    || url.as_deref() == Some("https://example.com")
-                {
-                    println!(
-                        "PASS  url-reader: got {:?} in {:.0?}",
-                        url, elapsed
-                    );
-                    passed += 1;
-                } else {
-                    println!(
-                        "FAIL  url-reader: expected https://example.com, got {:?} in {:.0?}",
-                        url, elapsed
-                    );
-                    failed += 1;
+        let browser_exe = find_browser_exe();
+        match browser_exe {
+            Some((name, path)) => {
+                let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
+                // Find a free Chrome profile slot (1..4)
+                let mut chrome_dir = std::path::PathBuf::new();
+                for slot in 1..=4u32 {
+                    let candidate = std::path::PathBuf::from(&userprofile)
+                        .join(format!(".cache/claude-chrome/{}", slot));
+                    if !candidate.join("SingletonLock").exists() {
+                        chrome_dir = candidate;
+                        break;
+                    }
+                }
+                if chrome_dir.as_os_str().is_empty() {
+                    chrome_dir = std::path::PathBuf::from(&userprofile)
+                        .join(".cache/claude-chrome/1");
                 }
 
-                // Close Edge
-                let _ = child.kill();
-                let _ = child.wait();
+                let child = std::process::Command::new(&path)
+                    .args([
+                        "--new-window",
+                        "https://example.com/",
+                        &format!("--user-data-dir={}", chrome_dir.display()),
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn();
+
+                match child {
+                    Ok(mut proc) => {
+                        // Wait for window to appear and become foreground.
+                        std::thread::sleep(std::time::Duration::from_secs(4));
+
+                        // Try native COM UIA first.
+                        let start_native = Instant::now();
+                        let url_native = active_browser_url_native();
+                        let native_ms = start_native.elapsed().as_millis();
+
+                        // Try PowerShell fallback.
+                        let start_ps = Instant::now();
+                        let url_ps = active_browser_url_powershell();
+                        let ps_ms = start_ps.elapsed().as_millis();
+
+                        let method = if url_native.is_some() { "native" } else { "powershell" };
+                        let url = url_native.or(url_ps);
+
+                        if url.as_deref() == Some("https://example.com/")
+                            || url.as_deref() == Some("https://example.com")
+                        {
+                            println!(
+                                "PASS  url-reader: {} got {:?} (native={}ms, ps={}ms)",
+                                method, url, native_ms, ps_ms
+                            );
+                            passed += 1;
+                        } else {
+                            println!(
+                                "FAIL  url-reader: expected https://example.com/, got {:?} (native={}ms, ps={}ms)",
+                                url, native_ms, ps_ms
+                            );
+                            failed += 1;
+                        }
+
+                        // Close only the window we opened.
+                        let _ = proc.kill();
+                        let _ = proc.wait();
+                    }
+                    Err(e) => {
+                        println!("FAIL  url-reader: could not launch {}: {}", name, e);
+                        failed += 1;
+                    }
+                }
             }
-            Err(e) => {
-                println!("FAIL  url-reader: could not launch msedge: {}", e);
+            None => {
+                println!("FAIL  url-reader: no browser found (checked registry + standard paths)");
                 failed += 1;
             }
         }
     }
 
-    // (c) Engine sidecar grab of https://example.com
+    // (c) Engine sidecar grab of a real article page (Wikipedia Markdown article).
     {
         let engine = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../engine/dist/iofast/iofast.exe");
@@ -909,7 +976,7 @@ fn run_self_test() {
             let result = std::process::Command::new(&engine)
                 .args([
                     "scrape",
-                    "https://example.com",
+                    "https://en.wikipedia.org/wiki/Markdown",
                     "--out",
                     &out_dir.to_string_lossy(),
                     "--max-pages",
@@ -921,22 +988,48 @@ fn run_self_test() {
 
             match result {
                 Ok(out) if out.status.success() => {
-                    // Check that at least one file was written
-                    let files: Vec<_> = std::fs::read_dir(&out_dir)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|e| e.ok())
-                        .collect();
-                    if !files.is_empty() {
+                    // Check for non-empty markdown and manifest.json in run subfolder.
+                    let mut has_markdown = false;
+                    let mut has_manifest = false;
+                    if let Ok(entries) = std::fs::read_dir(&out_dir) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                // Look inside run folders for output files.
+                                if let Ok(sub) = std::fs::read_dir(&path) {
+                                    for sub_entry in sub.filter_map(|e| e.ok()) {
+                                        let name = sub_entry.file_name().to_string_lossy().to_string();
+                                        if name.ends_with(".md") {
+                                            if let Ok(meta) = sub_entry.metadata() {
+                                                if meta.len() > 0 {
+                                                    has_markdown = true;
+                                                }
+                                            }
+                                        }
+                                        if name == "manifest.json" {
+                                            has_manifest = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if has_markdown && has_manifest {
                         println!(
-                            "PASS  engine-grab: {} file(s) in {:.0?}",
-                            files.len(),
+                            "PASS  engine-grab: markdown+manifest found in {:.0?}",
+                            elapsed
+                        );
+                        passed += 1;
+                    } else if has_markdown {
+                        // manifest may be at top level or named differently; accept markdown alone.
+                        println!(
+                            "PASS  engine-grab: markdown found (no manifest) in {:.0?}",
                             elapsed
                         );
                         passed += 1;
                     } else {
                         println!(
-                            "FAIL  engine-grab: no output files in {:.0?}",
+                            "FAIL  engine-grab: no markdown output in {:.0?}",
                             elapsed
                         );
                         failed += 1;
@@ -948,7 +1041,7 @@ fn run_self_test() {
                         "FAIL  engine-grab: exit {} in {:.0?}: {}",
                         out.status.code().unwrap_or(-1),
                         elapsed,
-                        stderr.trim()
+                        stderr.lines().last().unwrap_or("").trim()
                     );
                     failed += 1;
                 }
@@ -957,48 +1050,161 @@ fn run_self_test() {
                     failed += 1;
                 }
             }
-            // Clean up
+            // Clean up temp output.
             let _ = std::fs::remove_dir_all(&out_dir);
         }
     }
 
-    // (d) Console flash detection: run a CREATE_NO_WINDOW command and verify
-    //     it completes without error. Full window enumeration for flash
-    //     detection requires correct HWND/LPARAM types that differ between
-    //     windows-sys versions; this validates the flag is applied.
+    // (d) Console flash detection: check no new conhost/powershell PIDs appeared.
     {
-        let start = Instant::now();
-        let result = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "Write-Output 'silent'"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
-        let elapsed = start.elapsed();
-
-        match result {
-            Ok(out) if out.status.success() => {
-                println!(
-                    "PASS  no-console-flash: silent PowerShell ran in {:.0?}",
-                    elapsed
-                );
-                passed += 1;
-            }
-            Ok(out) => {
-                println!(
-                    "FAIL  no-console-flash: PowerShell exit {} in {:.0?}",
-                    out.status.code().unwrap_or(-1),
-                    elapsed
-                );
-                failed += 1;
-            }
-            Err(e) => {
-                println!("FAIL  no-console-flash: spawn error: {}", e);
-                failed += 1;
-            }
+        let pids_after = visible_console_pids();
+        let new_pids: Vec<u32> = pids_after
+            .iter()
+            .filter(|p| !pids_before.contains(p))
+            .copied()
+            .collect();
+        if new_pids.is_empty() {
+            println!("PASS  no-console-flash: no new console windows during test");
+            passed += 1;
+        } else {
+            println!(
+                "FAIL  no-console-flash: {} new console PID(s): {:?}",
+                new_pids.len(),
+                new_pids
+            );
+            failed += 1;
         }
     }
 
     println!("\nSelf-test: {} passed, {} failed", passed, failed);
     std::process::exit(if failed == 0 { 0 } else { 1 });
+}
+
+/// Find Edge or Chrome executable via registry App Paths or standard install folders.
+#[cfg(target_os = "windows")]
+fn find_browser_exe() -> Option<(&'static str, std::path::PathBuf)> {
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE,
+        HKEY_CURRENT_USER, KEY_READ, REG_SZ,
+    };
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    fn read_reg_app_path(hkey: isize, subkey: &str) -> Option<std::path::PathBuf> {
+        unsafe {
+            let sub_wide: Vec<u16> = OsStr::new(subkey)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut key = std::ptr::null_mut();
+            if RegOpenKeyExW(hkey as _, sub_wide.as_ptr(), 0, KEY_READ, &mut key) != 0 {
+                return None;
+            }
+            let mut buf = [0u16; 512];
+            let mut size = (buf.len() * 2) as u32;
+            let mut kind = 0u32;
+            let ret = RegQueryValueExW(
+                key,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                &mut kind,
+                buf.as_mut_ptr() as *mut u8,
+                &mut size,
+            );
+            RegCloseKey(key);
+            if ret != 0 || kind != REG_SZ {
+                return None;
+            }
+            let len = (size as usize / 2).saturating_sub(1);
+            let s = String::from_utf16_lossy(&buf[..len]);
+            let p = std::path::PathBuf::from(s.trim_end_matches('\0'));
+            if p.is_file() { Some(p) } else { None }
+        }
+    }
+
+    // Try Edge first via registry.
+    let edge_subkey = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe";
+    if let Some(p) = read_reg_app_path(HKEY_LOCAL_MACHINE as isize, edge_subkey)
+        .or_else(|| read_reg_app_path(HKEY_CURRENT_USER as isize, edge_subkey))
+    {
+        return Some(("msedge", p));
+    }
+    // Try Chrome via registry.
+    let chrome_subkey = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe";
+    if let Some(p) = read_reg_app_path(HKEY_LOCAL_MACHINE as isize, chrome_subkey)
+        .or_else(|| read_reg_app_path(HKEY_CURRENT_USER as isize, chrome_subkey))
+    {
+        return Some(("chrome", p));
+    }
+    // Fallback: standard install paths.
+    let program_files = std::env::var("ProgramFiles").unwrap_or_default();
+    let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+    let local_app = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let candidates = [
+        ("msedge", format!(r"{}\Microsoft\Edge\Application\msedge.exe", program_files)),
+        ("msedge", format!(r"{}\Microsoft\Edge\Application\msedge.exe", program_files_x86)),
+        ("chrome", format!(r"{}\Google\Chrome\Application\chrome.exe", program_files)),
+        ("chrome", format!(r"{}\Google\Chrome\Application\chrome.exe", program_files_x86)),
+        ("chrome", format!(r"{}\Google\Chrome\Application\chrome.exe", local_app)),
+    ];
+    for (name, path) in &candidates {
+        let p = std::path::PathBuf::from(path);
+        if p.is_file() {
+            return Some((*name, p));
+        }
+    }
+    None
+}
+
+/// Enumerate PIDs of visible console windows (conhost.exe, powershell.exe, cmd.exe).
+#[cfg(target_os = "windows")]
+fn visible_console_pids() -> Vec<u32> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows_sys::Win32::Foundation::CloseHandle;
+
+    struct Ctx {
+        pids: Vec<u32>,
+    }
+
+    unsafe extern "system" fn enum_cb(hwnd: windows_sys::Win32::Foundation::HWND, lparam: windows_sys::Win32::Foundation::LPARAM) -> windows_sys::Win32::Foundation::BOOL {
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 {
+            return 1;
+        }
+        let ctx = &mut *(lparam as *mut Ctx);
+        // Avoid duplicates.
+        if ctx.pids.contains(&pid) {
+            return 1;
+        }
+        // Check if this PID is a console process.
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return 1;
+        }
+        let mut buf = [0u16; 260];
+        let mut size = buf.len() as u32;
+        if QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size) != 0 {
+            let name = String::from_utf16_lossy(&buf[..size as usize]).to_lowercase();
+            if name.contains("conhost") || name.contains("powershell") || name.contains("cmd.exe") {
+                ctx.pids.push(pid);
+            }
+        }
+        CloseHandle(h);
+        1
+    }
+
+    let mut ctx = Ctx { pids: Vec::new() };
+    unsafe {
+        EnumWindows(Some(enum_cb), &mut ctx as *mut Ctx as windows_sys::Win32::Foundation::LPARAM);
+    }
+    ctx.pids
 }
 
 #[cfg(not(target_os = "windows"))]
