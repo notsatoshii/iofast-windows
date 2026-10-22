@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-asyncio"]
 build = [
     "pyinstaller==6.16.0",
     # iofast.spec collect_data_files()s these two; both otherwise arrive only
