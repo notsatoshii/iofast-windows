@@ -35,5 +35,31 @@ tokio = { version = "1", features = ["sync"] }
 # 1.85. Never `rm -rf` a user's library.
 trash = "3"
 
+[target.'cfg(windows)'.dependencies]
+# Win32 clipboard API for reading text without a crate that pulls image deps.
+windows-sys = { version = "0.59", features = [
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_Security_Credentials",
+    "Win32_Foundation",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_System_ProcessStatus",
+] }
+# High-level `windows` crate for COM UI Automation (VARIANT, IUIAutomation,
+# IUIAutomationElementArray, SysFreeString — missing from windows-sys 0.59).
+# Used only for active_browser_url(); everything else stays on windows-sys.
+windows = { version = "0.58", features = [
+    "Win32_UI_Accessibility",
+    "Win32_System_Com",
+    "Win32_System_Variant",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [profile.release]
 strip = true

@@ -211,7 +211,7 @@ def file_stats(out_dir):
     return stats
 
 
-def main(binary):
+def main(binary, *, dev=False):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.delay = 0.0
     server.push_auth_headers = []
@@ -314,16 +314,22 @@ def main(binary):
         capture_output=True,
         text=True,
     ).stdout.strip()
-    expect(
-        binary_in_repo
-        and re.fullmatch(r"[0-9a-f]{40}", build) is not None
-        and git_ok("merge-base", "--is-ancestor", build, "HEAD")
-        and git_ok("diff", "--quiet", build, "--", *BUNDLE_INPUTS)
-        and not untracked,
-        f"build stamp {build[:12] or None!r} is an ancestor of HEAD with bundle inputs "
-        f"(src/packaging/pyproject) unchanged, tree clean there, binary inside this repo"
-        + ("" if binary_in_repo else f" (binary {binary!r} is OUTSIDE {repo!r})"),
-    )
+    if dev:
+        # --dev mode: skip git provenance (dirty tree during active development).
+        # All functional tests still run; only the build-stamp ancestry check
+        # is waived so freeze.ps1 can validate a just-built sidecar in-place.
+        print(f"[--dev] skipping git-clean provenance check (build={build[:12] or 'unknown'})")
+    else:
+        expect(
+            binary_in_repo
+            and re.fullmatch(r"[0-9a-f]{40}", build) is not None
+            and git_ok("merge-base", "--is-ancestor", build, "HEAD")
+            and git_ok("diff", "--quiet", build, "--", *BUNDLE_INPUTS)
+            and not untracked,
+            f"build stamp {build[:12] or None!r} is an ancestor of HEAD with bundle inputs "
+            f"(src/packaging/pyproject) unchanged, tree clean there, binary inside this repo"
+            + ("" if binary_in_repo else f" (binary {binary!r} is OUTSIDE {repo!r})"),
+        )
     expect((r2 or {}).get("error", {}).get("code") == -32602, "bad url -> -32602")
     expect(
         any(m.get("error", {}).get("code") == -32700 for m in messages if m.get("id") is None),
@@ -621,6 +627,12 @@ def main(binary):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("usage: verify_frozen.py <path-to-frozen-iofast>")
-    main(sys.argv[1])
+    import argparse
+    parser = argparse.ArgumentParser(description="Verify frozen iofast sidecar")
+    parser.add_argument("binary", help="Path to frozen iofast executable")
+    parser.add_argument(
+        "--dev", action="store_true",
+        help="Skip git-clean provenance check (for active development trees)",
+    )
+    args = parser.parse_args()
+    main(args.binary, dev=args.dev)

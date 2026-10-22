@@ -213,6 +213,12 @@ impl SidecarManager {
         let bin = resolve_binary(app)?;
         log::info!("spawning sidecar: {} rpc", bin.display());
         let mut cmd = Command::new(bin);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         cmd.arg("rpc");
         // No secrets here by design: OPENROUTER_API_KEY / IOFAST_RESCUE_MODEL
         // ride in the `scrape` request body, read from the keychain per run
