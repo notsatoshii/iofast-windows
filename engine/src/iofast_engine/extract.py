@@ -123,7 +123,29 @@ def extract_markdown(html: str, url: str, *, _already_resolved: bool = False) ->
         )
     except Exception:
         return ""
-    return (text or "").strip()
+    return _fix_code_span_punct((text or "").strip())
+
+
+_CODE_SPAN_PUNCT = re.compile(
+    r"(`[^`\n]+`|\[[^\]\n]*\]\([^)\s]+\)) ([,.;:!?)])(?=([`\[])|\s|$)"
+)
+
+
+def _fix_code_span_punct(text: str) -> str:
+    """Undo trafilatura's spacing around inline code and links.
+
+    trafilatura moves the space after a code span or link to the wrong side of
+    the punctuation: "`pip`, `uv`." comes out as "`pip` ,`uv` .".
+    Fenced code blocks are left alone.
+    """
+    out, fenced = [], False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and ("`" in line or "](" in line):
+            line = _CODE_SPAN_PUNCT.sub(lambda m: m[1] + m[2] + (" " if m[3] else ""), line)
+        out.append(line)
+    return "\n".join(out)
 
 
 def select_first(html: str, selectors) -> str:
