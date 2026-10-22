@@ -553,6 +553,20 @@ fn active_browser_url() -> Option<String> {
 /// Native COM UI Automation via the `windows` crate. Returns the first URL
 /// found in an Edit or Document control under the foreground window.
 fn active_browser_url_native() -> Option<String> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return None;
+    }
+    active_browser_url_from_hwnd(hwnd.0)
+}
+
+/// Read the URL from a specific browser window via COM UI Automation.
+/// Used by the self-test to avoid GetForegroundWindow() races — the caller
+/// passes the raw HWND pointer obtained from FindWindowW("Example Domain").
+fn active_browser_url_from_hwnd(
+    hwnd: *mut std::ffi::c_void,
+) -> Option<String> {
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED,
@@ -560,10 +574,8 @@ fn active_browser_url_native() -> Option<String> {
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, UIA_EditControlTypeId, UIA_DocumentControlTypeId,
     };
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
     unsafe {
-        // COM may already be initialized by Tauri; ignore RPC_E_CHANGED_MODE.
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
         let uia: IUIAutomation = match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
@@ -574,13 +586,9 @@ fn active_browser_url_native() -> Option<String> {
             }
         };
 
-        let hwnd = GetForegroundWindow();
-        if hwnd.0.is_null() {
-            let _ = CoUninitialize();
-            return None;
-        }
-
-        let root = match uia.ElementFromHandle(hwnd) {
+        // Convert raw pointer to windows crate HWND.
+        let win_hwnd = windows::Win32::Foundation::HWND(hwnd);
+        let root = match uia.ElementFromHandle(win_hwnd) {
             Ok(r) => r,
             Err(_) => {
                 let _ = CoUninitialize();
@@ -588,8 +596,6 @@ fn active_browser_url_native() -> Option<String> {
             }
         };
 
-        // Search for Edit controls (address bar) then Document controls.
-        // UIA_EditControlTypeId.0 extracts the raw i32 from the newtype.
         let result = search_uia_elements(&uia, &root, UIA_EditControlTypeId.0)
             .or_else(|| search_uia_elements(&uia, &root, UIA_DocumentControlTypeId.0));
 
@@ -914,28 +920,27 @@ fn run_self_test() {
                         // reuses the process; the new tab takes time to render.
                         std::thread::sleep(std::time::Duration::from_secs(6));
 
-                        // Bring the browser window to foreground by title.
-                        // Without this, GetForegroundWindow() returns whatever
-                        // was last focused (often the terminal), and COM UIA
-                        // crashes traversing a non-browser window tree.
-                        unsafe {
-                            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                                FindWindowW, SetForegroundWindow,
-                            };
+                        // Find the browser window by title and read its URL
+                        // via COM UIA on that specific HWND. Using
+                        // GetForegroundWindow() here crashes because the
+                        // self-test process owns the foreground, not the
+                        // browser we just spawned.
+                        let browser_hwnd = unsafe {
+                            use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
                             let title: Vec<u16> = "Example Domain"
                                 .encode_utf16()
                                 .chain(std::iter::once(0))
                                 .collect();
-                            let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
-                            if !hwnd.is_null() {
-                                SetForegroundWindow(hwnd);
-                                std::thread::sleep(std::time::Duration::from_millis(500));
-                            }
-                        }
+                            FindWindowW(std::ptr::null(), title.as_ptr())
+                        };
 
-                        // Try native COM UIA first.
+                        // Try native COM UIA on the specific browser HWND.
                         let start_native = Instant::now();
-                        let url_native = active_browser_url_native();
+                        let url_native = if !browser_hwnd.is_null() {
+                            active_browser_url_from_hwnd(browser_hwnd)
+                        } else {
+                            None
+                        };
                         let native_ms = start_native.elapsed().as_millis();
 
                         // Try PowerShell fallback.
