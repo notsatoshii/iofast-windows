@@ -107,7 +107,15 @@ License file (in package): LICENSE
 License: Apache-2.0
 License file (in package): LICENSE
 
+### httpcore 1.0.9
+License: BSD-3-Clause
+License file (in package): LICENSE.md
+
 ### httpcore2 2.16.0
+License: BSD-3-Clause
+License file (in package): LICENSE.md
+
+### httpx 0.28.1
 License: BSD-3-Clause
 License file (in package): LICENSE.md
 

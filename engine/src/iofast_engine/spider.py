@@ -1,9 +1,17 @@
 """DocSpider — the only module that imports scrapling at module level."""
 
 import os
+import sys
 import re
 import threading
 import time
+
+# Alias playwright → patchright BEFORE any scrapling fetcher/session import.
+# Scrapling's AsyncDynamicSession hard-imports playwright.async_api; in frozen
+# builds only patchright is bundled. The alias makes those imports resolve to
+# our bundled driver. Must be at module top, before any .tiers / .sources import
+# that might trigger scrapling loading.
+from . import browser_helper  # noqa: F401 — side-effect: sys.modules alias
 from collections import deque
 from urllib.parse import urlparse
 
@@ -120,6 +128,53 @@ def _single_proxy(raw):
     """
     proxies = [p for p in (raw or "").replace(",", " ").split() if p]
     return proxies[0] if proxies else None
+
+
+class _BrowserHelperSession:
+    """Minimal scrapling-compatible session that delegates to browser_helper.
+
+    Used in frozen builds where scrapling's AsyncDynamicSession cannot find
+    the node driver through its internal transport layer. browser_helper's
+    async_fetch_with_browser launches browsers directly via patchright with
+    system channel fallback, which works reliably in PyInstaller bundles.
+    """
+
+    def __init__(self, *, timeout_ms: int = 15000):
+        self._timeout_ms = timeout_ms
+        self._is_alive = False
+
+    async def start(self):
+        self._is_alive = True
+
+    async def close(self):
+        self._is_alive = False
+
+    async def __aenter__(self):
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+    async def fetch(self, url: str, **kwargs):
+        from scrapling.spiders import Response
+        from .browser_helper import async_fetch_with_browser
+
+        html, info = await async_fetch_with_browser(url, timeout_ms=self._timeout_ms)
+        if html is None:
+            raise RuntimeError(f"Browser fetch failed for {url}: {info}")
+
+        return Response(
+            url=url,
+            content=html,
+            status=200,
+            reason="OK",
+            cookies={},
+            headers={},
+            request_headers={"referer": "https://www.google.com/"},
+            encoding="utf-8",
+            method="GET",
+        )
 
 
 class DocSpider(Spider):
@@ -311,6 +366,12 @@ class DocSpider(Spider):
         block by IP. One proxy = every tier uses it; several (comma/whitespace/
         newline separated) = one shared ProxyRotator cycled per fetch across all
         tiers (see _proxy_kwarg). Unset = no proxy kwarg, byte-identical to before.
+
+        Frozen builds use _BrowserHelperSession instead of scrapling's native
+        sessions: scrapling's launch_persistent_context resolves the node driver
+        through a code path our sys.modules alias cannot intercept in PyInstaller
+        bundles. browser_helper.async_fetch_with_browser works reliably because
+        it launches browsers directly via patchright with system channel fallback.
         """
         from scrapling.fetchers import FetcherSession
 
@@ -318,22 +379,37 @@ class DocSpider(Spider):
 
         manager.add("static", FetcherSession(timeout=30, **proxy_kw), default=True)
         if self.browsers:
-            from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
+            if getattr(sys, "frozen", False):
+                # Frozen: use our own session that delegates to browser_helper.
+                manager.add(
+                    "dynamic",
+                    _BrowserHelperSession(timeout_ms=15000),
+                    lazy=True,
+                )
+                manager.add(
+                    "stealth",
+                    _BrowserHelperSession(timeout_ms=15000),
+                    lazy=True,
+                )
+            else:
+                from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
 
-            manager.add(
-                "dynamic",
-                AsyncDynamicSession(
-                    headless=True, disable_resources=True, max_pages=2, **proxy_kw
-                ),
-                lazy=True,
-            )
-            manager.add(
-                "stealth",
-                AsyncStealthySession(
-                    headless=True, solve_cloudflare=True, max_pages=1, **proxy_kw
-                ),
-                lazy=True,
-            )
+                manager.add(
+                    "dynamic",
+                    AsyncDynamicSession(
+                        headless=True, disable_resources=True, real_chrome=True,
+                        max_pages=2, **proxy_kw
+                    ),
+                    lazy=True,
+                )
+                manager.add(
+                    "stealth",
+                    AsyncStealthySession(
+                        headless=True, solve_cloudflare=False, real_chrome=True,
+                        max_pages=1, **proxy_kw
+                    ),
+                    lazy=True,
+                )
 
     async def is_blocked(self, response):
         """Let upstream retry only transient codes; 401/403/407 escalate the tier instead."""

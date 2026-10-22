@@ -316,6 +316,10 @@ def _extract_driver(wheel_path: str, package: str, pins):
 def _stream_runner(cmd, env=None, on_line=lambda line: None, timeout=CHROMIUM_TIMEOUT, **_):
     """Default runner: stream the child's merged output line by line (chromium's
     download progress was dark for 2/3 of the wait) and kill it at timeout."""
+    # Suppress console window flash on Windows (CREATE_NO_WINDOW).
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = subprocess.CREATE_NO_WINDOW
     proc = subprocess.Popen(
         cmd,
         env=env,
@@ -323,6 +327,7 @@ def _stream_runner(cmd, env=None, on_line=lambda line: None, timeout=CHROMIUM_TI
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        creationflags=creationflags,
     )
     lines = []
 

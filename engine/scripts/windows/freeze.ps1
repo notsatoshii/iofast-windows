@@ -18,8 +18,8 @@ Write-Host "=== Verifying runtime dependencies ==="
 $verifyFile = Join-Path $env:TEMP "iofast-verify-deps.py"
 @'
 import sys
-deps = ["scrapling", "trafilatura", "markdownify", "playwright", "patchright",
-        "cssselect", "lxml", "yt_dlp"]
+deps = ["scrapling", "trafilatura", "markdownify", "patchright",
+        "cssselect", "lxml", "yt_dlp", "httpx"]
 missing = []
 for d in deps:
     try:

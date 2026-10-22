@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Frozen sidecar: STATIC TIER ONLY — playwright/patchright are excluded by
-design (browsers download out-of-band into app support on first dynamic-tier
-use; see PLAN.md "Browser delivery (LOCKED)" and docs/RPC.md).
+"""Frozen sidecar: uses patchright for all browser automation (playwright is
+dev-only; its driver is stripped below). patchright's driver IS bundled so
+social_browser sources (instagram, x) work in the frozen build.
 
 Build:   .venv/bin/pyinstaller --noconfirm packaging/iofast.spec
 Verify:  .venv/bin/python packaging/verify_frozen.py dist/iofast/iofast
@@ -77,16 +77,12 @@ hiddenimports = [
     "yt_dlp.extractor",
     "yt_dlp.downloader",
     "yt_dlp.postprocessor",
-    # playwright Python package is imported by scrapling even in static tier;
-    # the node DRIVER is stripped below but the Python API must be importable.
-    "playwright",
-    "playwright.sync_api",
-    "playwright.async_api",
-    "playwright._impl",
-    # patchright Python package similarly imported but driver-stripped.
+    # patchright is the sole browser driver in frozen builds; its Python API
+    # and bundled node driver must both be present. Playwright is dev-only.
     "patchright",
     "patchright.sync_api",
     "patchright.async_api",
+    "httpx",
     # Source modules: explicit pins so --check-deps can verify them frozen.
     "iofast_engine.sources.youtube",
     "iofast_engine.sources.github",
@@ -100,6 +96,12 @@ hiddenimports = [
 # detection works in the frozen sidecar.
 _yt_dlp_datas, _yt_dlp_binaries, _yt_dlp_hiddenimports = collect_all("yt_dlp")
 
+# patchright's driver/ tree (node.exe + package/cli.js) is binary data that
+# hiddenimports alone cannot capture. collect_all gathers the full driver so
+# scrapling sessions and browser_helper can spawn the node subprocess in
+# frozen builds. Without this, every browser launch fails with FileNotFoundError.
+_patchright_datas, _patchright_binaries, _patchright_hiddenimports = collect_all("patchright")
+
 datas = (
     collect_data_files("trafilatura")  # settings.cfg + language data
     # Fingerprint datapoints: scrapling's static header generation reads these
@@ -107,6 +109,7 @@ datas = (
     + collect_data_files("apify_fingerprint_datapoints")
     + collect_data_files("browserforge")
     + _yt_dlp_datas
+    + _patchright_datas
 )
 
 a = Analysis(
@@ -122,15 +125,17 @@ a = Analysis(
     # channel="chrome" — only patchright's driver is stripped (dead weight).
 )
 
-# Strip ONLY patchright's driver: playwright's driver is required for
-# social_browser.py which launches Edge/Chrome via channel= parameter.
-# patchright's 124MB node driver is dead weight in this sidecar.
-_PATCHRIGHT_PREFIXES = ("patchright/driver",)
-a.datas = [e for e in a.datas if not e[0].startswith(_PATCHRIGHT_PREFIXES)]
-a.binaries = [e for e in a.binaries if not e[0].startswith(_PATCHRIGHT_PREFIXES)]
+# Strip ONLY playwright's driver: patchright is the sole browser driver in
+# frozen builds and its node driver must remain bundled. Playwright's driver
+# is dead weight (dev-only dependency).
+_PLAYWRIGHT_PREFIXES = ("playwright/driver",)
+a.datas = [e for e in a.datas if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
+a.binaries = [e for e in a.binaries if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
 
-# Merge yt_dlp binaries from collect_all into the analysis.
-a.binaries += _yt_dlp_binaries
+# Merge yt_dlp and patchright binaries from collect_all into the analysis.
+# patchright's node.exe driver is a binary that must be present for any
+# browser launch (social_browser, dynamic tier, spider sessions).
+a.binaries += _yt_dlp_binaries + _patchright_binaries
 
 pyz = PYZ(a.pure)
 exe = EXE(

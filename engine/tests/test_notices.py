@@ -39,7 +39,7 @@ def test_pyproject_direct_deps_parse():
     names = gn.direct_dep_names()
     assert names, "no direct deps parsed from pyproject.toml"
     # extras + version specifier stripping: scrapling[fetchers]==0.4.2 -> scrapling
-    assert {"scrapling", "playwright", "lxml"} <= names
+    assert {"scrapling", "patchright", "lxml"} <= names
 
 
 def test_parse_requirement_strips_extras_and_specifiers():

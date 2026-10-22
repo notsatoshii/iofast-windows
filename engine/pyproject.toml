@@ -14,7 +14,6 @@ dependencies = [
     "scrapling[fetchers]==0.4.2",
     "trafilatura==2.2.0",
     "markdownify==1.2.2",
-    "playwright==1.58.0",
     "patchright==1.58.2",
     "cssselect==1.4.0",
     "lxml==6.1.1",
@@ -28,7 +27,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio"]
+dev = ["pytest", "pytest-asyncio", "playwright==1.58.0"]
 gpu = [
     # CUDA runtime libs for faster-whisper on NVIDIA GPUs. Install with:
     #   pip install iofast-engine[gpu]

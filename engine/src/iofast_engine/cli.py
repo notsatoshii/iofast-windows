@@ -189,15 +189,59 @@ def main(argv=None):
         # Also verify key runtime deps are importable.
         deps_ok = True
         dep_errors = []
-        for mod_name in ("yt_dlp", "playwright", "scrapling", "trafilatura"):
+        for mod_name in ("yt_dlp", "patchright", "scrapling", "trafilatura", "httpx"):
             try:
                 __import__(mod_name)
             except ImportError as e:
                 deps_ok = False
                 dep_errors.append(f"{mod_name}: {e}")
 
-        result = {"sources": sources, "deps_ok": deps_ok, "dep_errors": dep_errors}
-        all_available = all(sources.values()) and deps_ok
+        # Browser launch test: actually start driver and open/close headless browser.
+        browser_ok = False
+        browser_info = ""
+        browser_error = ""
+        try:
+            import asyncio
+            from .browser_helper import get_async_playwright
+
+            async def _test_browser():
+                ap = get_async_playwright()
+                pw = await ap().start()
+                try:
+                    for channel in ("msedge", "chrome"):
+                        try:
+                            browser = await pw.chromium.launch(
+                                channel=channel,
+                                headless=True,
+                                args=["--headless=new"],
+                            )
+                            await browser.close()
+                            return True, f"system {channel}"
+                        except Exception:
+                            continue
+                    browser = await pw.chromium.launch(headless=True)
+                    await browser.close()
+                    return True, "managed chromium"
+                finally:
+                    await pw.stop()
+
+            browser_ok, browser_info = asyncio.run(
+                asyncio.wait_for(_test_browser(), timeout=20)
+            )
+        except Exception as e:
+            browser_error = str(e)
+
+        result = {
+            "sources": sources,
+            "deps_ok": deps_ok,
+            "dep_errors": dep_errors,
+            "browser_ok": browser_ok,
+        }
+        if browser_ok:
+            result["browser_info"] = browser_info
+        else:
+            result["browser_error"] = browser_error
+        all_available = all(sources.values()) and deps_ok and browser_ok
         if args.json:
             print(json.dumps(result), flush=True)
         else:
@@ -207,6 +251,10 @@ def main(argv=None):
             if dep_errors:
                 for err in dep_errors:
                     print(f"  dep error: {err}", file=sys.stderr)
+            if browser_ok:
+                print(f"  browser: ok ({browser_info})", file=sys.stderr)
+            else:
+                print(f"  browser: FAIL ({browser_error})", file=sys.stderr)
             print(
                 f"check-deps: {'all sources available' if all_available else 'INCOMPLETE'}",
                 file=sys.stderr,

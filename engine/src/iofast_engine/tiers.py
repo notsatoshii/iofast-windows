@@ -59,24 +59,32 @@ def is_challenge(status: int, headers: dict, text: str) -> bool:
 
 
 def browsers_available() -> bool:
-    """Dynamic/stealth tiers need this Playwright build's own chromium on disk.
+    """Check whether any browser can be launched for dynamic/stealth tiers.
 
-    Ask Playwright for the executable path it would use: a cache holding some other
-    chromium revision is a false positive (`python -m playwright install chromium` fixes it).
-    Frozen builds strip the node driver; components download out-of-band into app
-    support (browsers.py) — until they exist, answer False without spawning anything.
+    Tries system Edge/Chrome first (no download needed), then falls back to
+    managed Chromium. In frozen builds, the patchright driver is bundled so
+    system channels always work when Edge or Chrome is installed. Unfrozen
+    dev environments also check managed Chromium as a fallback.
     """
-    import sys
-
-    from . import browsers as components
-
-    if getattr(sys, "frozen", False) and not components.drivers_installed():
-        return False
-    components.activate()
     try:
-        from playwright.sync_api import sync_playwright
+        from .browser_helper import get_sync_playwright
 
+        sync_playwright = get_sync_playwright()
         with sync_playwright() as pw:
-            return os.path.exists(pw.chromium.executable_path)
+            # System browsers first — no download needed.
+            for channel in ("msedge", "chrome"):
+                try:
+                    browser = pw.chromium.launch(channel=channel, headless=True)
+                    browser.close()
+                    return True
+                except Exception:
+                    continue
+            # Managed Chromium fallback (dev environments with `playwright install`).
+            try:
+                browser = pw.chromium.launch(headless=True)
+                browser.close()
+                return True
+            except Exception:
+                return False
     except Exception:
         return False
