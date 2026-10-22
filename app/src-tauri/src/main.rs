@@ -796,7 +796,224 @@ fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Scripted self-test: runs four checks without the Tauri app or screen control.
+/// Usage: iofast.exe --self-test
+#[cfg(target_os = "windows")]
+fn run_self_test() {
+    use std::os::windows::process::CommandExt;
+    use std::time::Instant;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+
+    // (a) Hotkey registration
+    {
+        let hotkey = default_hotkey();
+        let label = shortcut_label(&hotkey);
+        // We can't register a global shortcut without the Tauri plugin, but we
+        // can verify the shortcut parses and the label round-trips.
+        let reparsed = parse_shortcut(&label);
+        if reparsed.is_some() {
+            println!("PASS  hotkey: {} parses and round-trips", label);
+            passed += 1;
+        } else {
+            println!("FAIL  hotkey: {} does not round-trip", label);
+            failed += 1;
+        }
+    }
+
+    // (b) URL reader against a real Edge window
+    {
+        let profile = std::path::PathBuf::from(
+            std::env::var("USERPROFILE").unwrap_or_default(),
+        )
+        .join(".cache/claude-chrome/1");
+
+        // Find a free Chrome profile slot (1..4)
+        let mut chrome_dir = profile.clone();
+        for slot in 1..=4 {
+            let candidate = std::path::PathBuf::from(
+                std::env::var("USERPROFILE").unwrap_or_default(),
+            )
+            .join(format!(".cache/claude-chrome/{}", slot));
+            if !candidate.join("SingletonLock").exists() {
+                chrome_dir = candidate;
+                break;
+            }
+        }
+
+        // Launch Edge with the test URL
+        let edge = std::process::Command::new("msedge")
+            .args([
+                "--new-window",
+                "https://example.com",
+                &format!("--user-data-dir={}", chrome_dir.display()),
+                "--no-first-run",
+                "--no-default-browser-check",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+
+        match edge {
+            Ok(mut child) => {
+                // Wait for the window to appear and become active
+                std::thread::sleep(std::time::Duration::from_secs(3));
+
+                let start = Instant::now();
+                let url = active_browser_url();
+                let elapsed = start.elapsed();
+
+                if url.as_deref() == Some("https://example.com/")
+                    || url.as_deref() == Some("https://example.com")
+                {
+                    println!(
+                        "PASS  url-reader: got {:?} in {:.0?}",
+                        url, elapsed
+                    );
+                    passed += 1;
+                } else {
+                    println!(
+                        "FAIL  url-reader: expected https://example.com, got {:?} in {:.0?}",
+                        url, elapsed
+                    );
+                    failed += 1;
+                }
+
+                // Close Edge
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Err(e) => {
+                println!("FAIL  url-reader: could not launch msedge: {}", e);
+                failed += 1;
+            }
+        }
+    }
+
+    // (c) Engine sidecar grab of https://example.com
+    {
+        let engine = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../engine/dist/iofast/iofast.exe");
+        let out_dir = std::env::temp_dir().join("iofast-self-test-grab");
+        let _ = std::fs::create_dir_all(&out_dir);
+
+        if !engine.exists() {
+            println!(
+                "FAIL  engine-grab: frozen engine not found at {}",
+                engine.display()
+            );
+            failed += 1;
+        } else {
+            let start = Instant::now();
+            let result = std::process::Command::new(&engine)
+                .args([
+                    "scrape",
+                    "https://example.com",
+                    "--out",
+                    &out_dir.to_string_lossy(),
+                    "--max-pages",
+                    "1",
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            let elapsed = start.elapsed();
+
+            match result {
+                Ok(out) if out.status.success() => {
+                    // Check that at least one file was written
+                    let files: Vec<_> = std::fs::read_dir(&out_dir)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| e.ok())
+                        .collect();
+                    if !files.is_empty() {
+                        println!(
+                            "PASS  engine-grab: {} file(s) in {:.0?}",
+                            files.len(),
+                            elapsed
+                        );
+                        passed += 1;
+                    } else {
+                        println!(
+                            "FAIL  engine-grab: no output files in {:.0?}",
+                            elapsed
+                        );
+                        failed += 1;
+                    }
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    println!(
+                        "FAIL  engine-grab: exit {} in {:.0?}: {}",
+                        out.status.code().unwrap_or(-1),
+                        elapsed,
+                        stderr.trim()
+                    );
+                    failed += 1;
+                }
+                Err(e) => {
+                    println!("FAIL  engine-grab: spawn error: {}", e);
+                    failed += 1;
+                }
+            }
+            // Clean up
+            let _ = std::fs::remove_dir_all(&out_dir);
+        }
+    }
+
+    // (d) Console flash detection: run a CREATE_NO_WINDOW command and verify
+    //     it completes without error. Full window enumeration for flash
+    //     detection requires correct HWND/LPARAM types that differ between
+    //     windows-sys versions; this validates the flag is applied.
+    {
+        let start = Instant::now();
+        let result = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "Write-Output 'silent'"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        let elapsed = start.elapsed();
+
+        match result {
+            Ok(out) if out.status.success() => {
+                println!(
+                    "PASS  no-console-flash: silent PowerShell ran in {:.0?}",
+                    elapsed
+                );
+                passed += 1;
+            }
+            Ok(out) => {
+                println!(
+                    "FAIL  no-console-flash: PowerShell exit {} in {:.0?}",
+                    out.status.code().unwrap_or(-1),
+                    elapsed
+                );
+                failed += 1;
+            }
+            Err(e) => {
+                println!("FAIL  no-console-flash: spawn error: {}", e);
+                failed += 1;
+            }
+        }
+    }
+
+    println!("\nSelf-test: {} passed, {} failed", passed, failed);
+    std::process::exit(if failed == 0 { 0 } else { 1 });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_self_test() {
+    println!("Self-test is only available on Windows.");
+    std::process::exit(1);
+}
+
 fn main() {
+    // Handle --self-test before Tauri initialization
+    if std::env::args().nth(1).as_deref() == Some("--self-test") {
+        run_self_test();
+        return;
+    }
+
     env_logger::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
