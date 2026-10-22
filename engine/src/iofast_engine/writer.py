@@ -169,6 +169,7 @@ class Writer:
         elapsed_ms=None,
         etag=None,
         last_modified=None,
+        name_override=None,
     ):
         # Same text already saved this run under another URL (trailing slash,
         # ?query or alias twins): point at that file instead of saving a copy.
@@ -182,7 +183,14 @@ class Writer:
             )
             self.emit({"type": "warning", "url": url, "message": f"♻️  duplicate of {first[1]}: {url}"})
             return first[1][:-3]
-        name = unique_name(url, self.names, out_dir=self.out_dir)
+        if name_override:
+            name = name_override
+            # Disambiguate if this name is already taken by a different URL.
+            if name in self.names and self.names[name] != url:
+                suffix = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
+                name = f"{name}-{suffix}"
+        else:
+            name = unique_name(url, self.names, out_dir=self.out_dir)
         self.names[name] = url
         self.hashes[digest] = (url, f"{name}.md")
         path = os.path.join(self.out_dir, f"{name}.md")

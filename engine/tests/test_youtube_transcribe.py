@@ -23,6 +23,10 @@ from iofast_engine.sources.youtube import (
     _pick_caption,
     _transcript_text,
     _format_duration,
+    _parse_json3,
+    _parse_vtt,
+    _resolve_caption_entries,
+    _safe_title_slug,
     should_skip_transcribe,
 )
 from iofast_engine.transcribe import (
@@ -227,3 +231,86 @@ class TestDurationFormat:
 
     def test_zero(self):
         assert _format_duration(0) == ""
+
+
+# ---------------------------------------------------------------------------
+# Subtitle parsing fixtures — ensures caption text is never empty when header
+# claims captions (regression for the empty-transcript bug).
+# ---------------------------------------------------------------------------
+
+class TestJson3Parsing:
+    """Real json3 fixture: parsed entries must produce non-empty transcript."""
+
+    SAMPLE_JSON3 = '{"events":[{"tStartMs":0,"dDurationMs":2000,"segs":[{"utf8":"Hello world"}]},{"tStartMs":2500,"dDurationMs":1500,"segs":[{"utf8":"This is a test"}]},{"tStartMs":5000,"dDurationMs":1000,"segs":[{"utf8":"\\n"}]}]}'
+
+    def test_json3_produces_entries(self):
+        entries = _parse_json3(self.SAMPLE_JSON3)
+        assert len(entries) == 2
+        assert entries[0]["text"] == "Hello world"
+        assert entries[1]["text"] == "This is a test"
+
+    def test_json3_nonempty_transcript(self):
+        """If header says 'uploader captions', transcript must not be empty."""
+        entries = _parse_json3(self.SAMPLE_JSON3)
+        text = _transcript_text(entries)
+        assert text.strip(), "Transcript must not be empty when captions exist"
+
+    def test_json3_empty_events(self):
+        entries = _parse_json3('{"events":[]}')
+        assert entries == []
+
+    def test_json3_invalid(self):
+        entries = _parse_json3("not json")
+        assert entries == []
+
+
+class TestVttParsing:
+    SAMPLE_VTT = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello world\n\n00:00:02.500 --> 00:00:04.000\nSecond line\n"
+
+    def test_vtt_produces_entries(self):
+        entries = _parse_vtt(self.SAMPLE_VTT)
+        assert len(entries) == 2
+        assert entries[0]["text"] == "Hello world"
+
+    def test_vtt_nonempty_transcript(self):
+        entries = _parse_vtt(self.SAMPLE_VTT)
+        text = _transcript_text(entries)
+        assert text.strip(), "Transcript must not be empty when VTT captions exist"
+
+
+class TestResolveCaptionEntries:
+    def test_prefers_downloaded_over_info_dict(self):
+        downloaded = {"en": [{"text": "from disk", "start": 0, "duration": 1}]}
+        info = {"subtitles": {"en": [{"text": "from info"}]}}
+        result = _resolve_caption_entries(info, downloaded, "en")
+        assert result[0]["text"] == "from disk"
+
+    def test_falls_back_to_info_dict(self):
+        info = {"subtitles": {"en": [{"text": "from info"}]}}
+        result = _resolve_caption_entries(info, {}, "en")
+        assert result[0]["text"] == "from info"
+
+    def test_returns_none_when_empty(self):
+        result = _resolve_caption_entries({}, {}, "en")
+        assert result is None
+
+
+class TestTitleSlug:
+    def test_basic_slug(self):
+        slug = _safe_title_slug("My Cool Video!", "abc123")
+        assert slug.endswith("-abc123")
+        assert "My-Cool-Video" in slug
+
+    def test_unicode_preserved(self):
+        slug = _safe_title_slug("한국어 제목", "xyz")
+        assert slug.endswith("-xyz")
+        assert "한국어" in slug
+
+    def test_empty_title(self):
+        slug = _safe_title_slug("", "id123")
+        assert slug == "video-id123"
+
+    def test_truncation(self):
+        long_title = "A" * 200
+        slug = _safe_title_slug(long_title, "id")
+        assert len(slug) <= 90  # 80 max + "-id" suffix
