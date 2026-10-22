@@ -30,7 +30,7 @@ def _resolve_in_vault(vault: Path, folder: str, filename: str) -> Path:
     target = vault / folder / filename if folder else vault / filename
     resolved = target.resolve()
     vault_resolved = vault.resolve()
-    if not str(resolved).startswith(str(vault_resolved)):
+    if not resolved.is_relative_to(vault_resolved):
         raise ValueError(f"path escapes vault: {resolved}")
     return resolved
 
@@ -126,11 +126,12 @@ def write_source_note(
     if sn.get("entities"):
         lines.append("## Related")
         lines.append("")
-        # All entities become wikilinks. The filer ensures each entity either
-        # matches an existing note, gets a new entity note created, or is dropped
-        # before reaching here. Never emit plain text where a link was intended.
+        # Link only names that resolve to a note (existing or created in this
+        # filing); anything else (e.g. over the entity-note cap) is plain text,
+        # so the vault never gets a link to a file that does not exist.
+        linkable = (existing_titles or set()) | (new_note_titles or set())
         for entity in sn["entities"]:
-            lines.append(f"- [[{entity}]]")
+            lines.append(f"- [[{entity}]]" if entity in linkable else f"- {entity}")
         lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)

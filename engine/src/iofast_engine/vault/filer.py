@@ -353,7 +353,7 @@ def file_capture(
     # collapse whitespace, lowercase for comparison. Returns canonical form.
     import re as _re
     _SUFFIX_RE = _re.compile(
-        r"\s+(framework|model|library|inc|ltd|corp|llc|platform|system|toolkit|sdk|api)$",
+        r"\s+(framework|model|library|inc|ltd|corp|llc|platform|system|toolkit|sdk|api|prompting|technique|method|approach|pattern)$",
         _re.IGNORECASE,
     )
 
@@ -368,10 +368,13 @@ def file_capture(
     norm_to_canonical: dict[str, tuple[str, bool]] = {}
     for t in existing_titles:
         norm_to_canonical[_normalize_entity(t).lower()] = (t, True)
-    for a in vault_scan.get("alias_index", []):
-        key = _normalize_entity(a).lower()
-        if key not in norm_to_canonical:
-            norm_to_canonical[key] = (a, True)
+    # Aliases resolve to the note that owns them: Obsidian links by filename,
+    # so [[alias]] alone would be a dead link.
+    for n in vault_scan.get("notes", []):
+        for a in n.get("aliases") or []:
+            key = _normalize_entity(str(a)).lower()
+            if key not in norm_to_canonical:
+                norm_to_canonical[key] = (n["title"], True)
 
     # Track new notes being created this run (normalized -> canonical title)
     new_note_norm_map: dict[str, str] = {}
@@ -442,7 +445,7 @@ def file_capture(
             linked_entities.append(e_stripped)
             current_new_count += 1
         else:
-            # Over cap — plain text in Related, no note created
+            # Over cap: no note created; the writer renders it as plain text
             linked_entities.append(e_stripped)
 
     # Update source_note.entities to use canonical names for linking

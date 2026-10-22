@@ -439,6 +439,32 @@ class TestEntityLinkFiltering:
         text = path.read_text(encoding="utf-8")
         assert "[[Something]]" in text
 
+    def test_unresolved_entity_is_plain_text(self, fixture_vault):
+        """A name with no existing or new note renders as plain text, never a dead link."""
+        from iofast_engine.vault.writer import write_source_note
+
+        classification = {
+            "tags": [],
+            "aliases": [],
+            "source_note": {"summary": "", "key_points": [], "notable_quotes": [],
+                            "entities": ["Python", "BabyAGI"]},
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "",
+        }
+        raw_path = fixture_vault / "Research (RAW)" / "iofast" / "2026-01-01 T3.md"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text('---\nsource: ""\n---\n', encoding="utf-8")
+        path = write_source_note(
+            fixture_vault, "AI", "T3", classification,
+            "https://example.com", raw_path,
+            existing_titles={"Python"}, new_note_titles=set(),
+        )
+        text = path.read_text(encoding="utf-8")
+        assert "- [[Python]]" in text
+        assert "- BabyAGI" in text
+        assert "[[BabyAGI]]" not in text
+
 
 class TestEntityStubCreation:
     """Filer creates stub notes for entities not in existing/new title sets."""
@@ -587,10 +613,13 @@ class TestEntityCap:
         ai_files = [f.name for f in (vault / "AI").glob("*.md")
                     if f.name != "Cap Test.md" and not f.name.endswith(" MOC.md")]
         assert len(ai_files) == 8
-        # Source note should still reference all 12 entities
+        # Source note references all 12 entities; only the 8 with notes are links
         source = (vault / "AI" / "Cap Test.md").read_text(encoding="utf-8")
-        for e in entities:
-            assert e in source
+        for e in entities[:8]:
+            assert f"- [[{e}]]" in source
+        for e in entities[8:]:
+            assert f"- {e}\n" in source
+            assert f"[[{e}]]" not in source
 
 
 class TestEntityMergeNormalization:
@@ -674,6 +703,46 @@ class TestEntityMergeNormalization:
             file_capture(run_dir, vault_path=vault)
         # Should NOT create a new "Transformers.md" — it matches existing alias
         assert not (vault / "AI" / "Transformers.md").exists()
+        # The link points at the note that owns the alias, not the alias itself
+        source = (vault / "AI" / "Alias Test.md").read_text(encoding="utf-8")
+        assert "[[Transformer Architecture]]" in source
+        assert "[[Transformers]]" not in source
+
+    def test_suffix_variant_links_to_created_note(self, tmp_path):
+        """'Chain of Thought' resolves to the 'Chain of Thought Prompting' note."""
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "AI").mkdir(parents=True)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text(
+            '{"info": {"url": "https://example.com/cot", "title": "CoT Test"}}',
+            encoding="utf-8",
+        )
+        (run_dir / "content.md").write_text("# CoT Test\nBody.", encoding="utf-8")
+        mock_classify = {
+            "topic_folder": "AI",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {
+                "summary": "Test.",
+                "key_points": [],
+                "notable_quotes": [],
+                "entities": ["Chain of Thought Prompting", "Chain of Thought"],
+            },
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "- [[CoT Test]]",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            file_capture(run_dir, vault_path=vault)
+        assert (vault / "AI" / "Chain of Thought Prompting.md").exists()
+        assert not (vault / "AI" / "Chain of Thought.md").exists()
+        source = (vault / "AI" / "CoT Test.md").read_text(encoding="utf-8")
+        assert "[[Chain of Thought]]" not in source
 
 
 class TestEntityDescriptionQuality:
