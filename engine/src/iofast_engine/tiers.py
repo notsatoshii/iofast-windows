@@ -74,8 +74,9 @@ def browsers_available() -> bool:
         return False
     components.activate()
     try:
-        from playwright.sync_api import sync_playwright
+        from .browser_helper import get_sync_playwright
 
+        sync_playwright = get_sync_playwright()
         with sync_playwright() as pw:
             return os.path.exists(pw.chromium.executable_path)
     except Exception:

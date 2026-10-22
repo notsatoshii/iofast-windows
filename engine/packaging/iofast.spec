@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Frozen sidecar: STATIC TIER ONLY — playwright/patchright are excluded by
-design (browsers download out-of-band into app support on first dynamic-tier
-use; see PLAN.md "Browser delivery (LOCKED)" and docs/RPC.md).
+"""Frozen sidecar: uses patchright for all browser automation (playwright is
+dev-only; its driver is stripped below). patchright's driver IS bundled so
+social_browser sources (instagram, x) work in the frozen build.
 
 Build:   .venv/bin/pyinstaller --noconfirm packaging/iofast.spec
 Verify:  .venv/bin/python packaging/verify_frozen.py dist/iofast/iofast
@@ -77,16 +77,12 @@ hiddenimports = [
     "yt_dlp.extractor",
     "yt_dlp.downloader",
     "yt_dlp.postprocessor",
-    # playwright Python package is imported by scrapling even in static tier;
-    # the node DRIVER is stripped below but the Python API must be importable.
-    "playwright",
-    "playwright.sync_api",
-    "playwright.async_api",
-    "playwright._impl",
-    # patchright Python package similarly imported but driver-stripped.
+    # patchright is the sole browser driver in frozen builds; its Python API
+    # and bundled node driver must both be present. Playwright is dev-only.
     "patchright",
     "patchright.sync_api",
     "patchright.async_api",
+    "httpx",
     # Source modules: explicit pins so --check-deps can verify them frozen.
     "iofast_engine.sources.youtube",
     "iofast_engine.sources.github",
@@ -122,12 +118,12 @@ a = Analysis(
     # channel="chrome" — only patchright's driver is stripped (dead weight).
 )
 
-# Strip ONLY patchright's driver: playwright's driver is required for
-# social_browser.py which launches Edge/Chrome via channel= parameter.
-# patchright's 124MB node driver is dead weight in this sidecar.
-_PATCHRIGHT_PREFIXES = ("patchright/driver",)
-a.datas = [e for e in a.datas if not e[0].startswith(_PATCHRIGHT_PREFIXES)]
-a.binaries = [e for e in a.binaries if not e[0].startswith(_PATCHRIGHT_PREFIXES)]
+# Strip ONLY playwright's driver: patchright is the sole browser driver in
+# frozen builds and its node driver must remain bundled. Playwright's driver
+# is dead weight (dev-only dependency).
+_PLAYWRIGHT_PREFIXES = ("playwright/driver",)
+a.datas = [e for e in a.datas if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
+a.binaries = [e for e in a.binaries if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
 
 # Merge yt_dlp binaries from collect_all into the analysis.
 a.binaries += _yt_dlp_binaries

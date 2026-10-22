@@ -49,8 +49,9 @@ async def _launch(*, headless: bool, minimized: bool = False):
     """
     global _playwright
     if _playwright is None:
-        from playwright.async_api import async_playwright as _ap
+        from ..browser_helper import get_async_playwright
 
+        _ap = get_async_playwright()
         _playwright = await _ap().start()
 
     profile = _profile_dir()

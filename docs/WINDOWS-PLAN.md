@@ -21,13 +21,15 @@ version, and the three ways to use a run (open in agent, MCP index, API push).
    binaries skipped) as one readable corpus, plus repo metadata.
 4. **Instagram and X.** Public-first capture (no login) for posts, Reels, and threads via
    the same endpoints the platforms' own logged-out web pages and embed widgets use. Falls
-   back to a dedicated browser profile (signed in once by hand, Edge or Chrome via Playwright
+   back to a dedicated browser profile (signed in once by hand, Edge or Chrome via Patchright
    `channel`) only for private/gated content, Stories, and profiles. Hard rules: public
    content only on the public route, handful of requests per capture, polite back-off on
    429/5xx, never retry-hammer; no proxy rotation, no fingerprint spoofing, no CAPTCHA
-   solving, no automated login. **Freeze note:** the frozen build must include `httpx`
-   (used by `sources/social_public.py` and `watch/checker.py`); add it to the PyInstaller
-   `hiddenimports` or `collect_all` list in `freeze.ps1`.
+   solving, no automated login. **Freeze note:** the frozen build uses **patchright** (not
+   playwright) for all browser automation; playwright's node driver is stripped, patchright's
+   driver is bundled. `httpx` is also included (used by `sources/social_public.py` and
+   `watch/checker.py`). `check-deps` performs a real headless browser launch test (system
+   Edge/Chrome first, then managed chromium) to verify the driver works before shipping.
 5. **Installer.** NSIS `.exe` installer from `pnpm tauri build`, tray icon, autostart option.
 
 ## Shared engine contract (all workers code against this)
