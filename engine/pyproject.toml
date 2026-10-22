@@ -37,5 +37,8 @@ build = [
 [project.scripts]
 iofast = "iofast_engine.cli:main"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/iofast_engine"]
