@@ -4,6 +4,13 @@ import os
 import re
 import threading
 import time
+
+# Alias playwright → patchright BEFORE any scrapling fetcher/session import.
+# Scrapling's AsyncDynamicSession hard-imports playwright.async_api; in frozen
+# builds only patchright is bundled. The alias makes those imports resolve to
+# our bundled driver. Must be at module top, before any .tiers / .sources import
+# that might trigger scrapling loading.
+from . import browser_helper  # noqa: F401 — side-effect: sys.modules alias
 from collections import deque
 from urllib.parse import urlparse
 

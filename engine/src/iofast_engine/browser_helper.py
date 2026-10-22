@@ -5,6 +5,39 @@ Playwright is dev-only; frozen sidecar uses patchright exclusively.
 """
 from __future__ import annotations
 
+import sys
+
+
+def patch_playwright():
+    """Redirect playwright.* imports to patchright.* via sys.modules.
+
+    Scrapling's AsyncDynamicSession / AsyncStealthySession hard-import
+    ``playwright.async_api`` and ``playwright.sync_api``. In frozen builds
+    only patchright is bundled, so those imports fail with FileNotFoundError
+    on the node driver. Patchright is API-compatible — aliasing the modules
+    before scrapling loads them makes every third-party session class use
+    our bundled driver transparently. Safe to call multiple times (idempotent).
+    Must be called BEFORE any scrapling fetcher/session import.
+    """
+    if "playwright" in sys.modules and "patchright" not in sys.modules:
+        return  # real playwright already loaded (dev env); don't clobber
+    try:
+        import patchright
+        import patchright.async_api
+        import patchright.sync_api
+        import patchright._impl  # noqa: F401 — some code paths touch this
+
+        sys.modules.setdefault("playwright", patchright)
+        sys.modules.setdefault("playwright.async_api", patchright.async_api)
+        sys.modules.setdefault("playwright.sync_api", patchright.sync_api)
+        sys.modules.setdefault("playwright._impl", patchright._impl)
+    except ImportError:
+        pass  # patchright not installed; nothing to alias
+
+
+# Run at module import time so every downstream import sees the alias.
+patch_playwright()
+
 
 def get_async_playwright():
     """Return patchright's async_playwright class.
