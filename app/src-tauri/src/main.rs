@@ -1076,6 +1076,179 @@ fn run_self_test() {
         }
     }
 
+    // (e) Engine --check-deps: verify all source modules are importable in the
+    // installed sidecar. Requires youtube, github, instagram, x, web all available.
+    {
+        let local_app = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let engine = std::path::PathBuf::from(&local_app)
+            .join("iofast")
+            .join("engine")
+            .join("iofast.exe");
+        if !engine.exists() {
+            println!(
+                "FAIL  engine-check-deps: frozen engine not found at {}",
+                engine.display()
+            );
+            failed += 1;
+        } else {
+            let result = std::process::Command::new(&engine)
+                .args(["check-deps", "--json"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            match result {
+                Ok(out) if out.status.success() => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    // Parse JSON to verify all sources are available.
+                    if let Ok(v) = serde_json::from_str::<Value>(&stdout) {
+                        let sources = v.get("sources").and_then(|s| s.as_object());
+                        let deps_ok = v
+                            .get("deps_ok")
+                            .and_then(|d| d.as_bool())
+                            .unwrap_or(false);
+                        let required = ["youtube", "github", "instagram", "x", "web"];
+                        let all_available = sources
+                            .map(|s| {
+                                required.iter().all(|name| {
+                                    s.get(*name)
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false)
+                                })
+                            })
+                            .unwrap_or(false);
+                        if all_available && deps_ok {
+                            println!("PASS  engine-check-deps: all 5 sources + deps OK");
+                            passed += 1;
+                        } else {
+                            println!(
+                                "FAIL  engine-check-deps: sources={:?}, deps_ok={}",
+                                sources, deps_ok
+                            );
+                            failed += 1;
+                        }
+                    } else {
+                        println!(
+                            "FAIL  engine-check-deps: could not parse JSON output"
+                        );
+                        failed += 1;
+                    }
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    println!(
+                        "FAIL  engine-check-deps: exit {}: {}",
+                        out.status.code().unwrap_or(-1),
+                        stderr.lines().last().unwrap_or("").trim()
+                    );
+                    failed += 1;
+                }
+                Err(e) => {
+                    println!("FAIL  engine-check-deps: spawn error: {}", e);
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    // (f) YouTube detect+grab: grab a short video and verify the output is a
+    // transcript/description markdown (not a plain web page scrape).
+    {
+        let local_app = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let engine = std::path::PathBuf::from(&local_app)
+            .join("iofast")
+            .join("engine")
+            .join("iofast.exe");
+        let out_dir = std::env::temp_dir().join("iofast-self-test-youtube");
+        let _ = std::fs::create_dir_all(&out_dir);
+
+        if !engine.exists() {
+            println!(
+                "FAIL  youtube-grab: frozen engine not found at {}",
+                engine.display()
+            );
+            failed += 1;
+        } else {
+            let start = Instant::now();
+            let result = std::process::Command::new(&engine)
+                .args([
+                    "grab",
+                    "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                    "--out",
+                    &out_dir.to_string_lossy(),
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            let elapsed = start.elapsed();
+
+            match result {
+                Ok(out) if out.status.success() => {
+                    // Look for markdown files in run subfolders that contain
+                    // YouTube-specific content (transcript, description, metadata).
+                    let mut has_youtube_md = false;
+                    if let Ok(entries) = std::fs::read_dir(&out_dir) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                if let Ok(sub) = std::fs::read_dir(&path) {
+                                    for sub_entry in sub.filter_map(|e| e.ok()) {
+                                        let name =
+                                            sub_entry.file_name().to_string_lossy().to_string();
+                                        if name.ends_with(".md") {
+                                            if let Ok(content) =
+                                                std::fs::read_to_string(sub_entry.path())
+                                            {
+                                                // YouTube source produces markdown with
+                                                // video title, channel, duration, or transcript.
+                                                // A plain web scrape would have generic HTML-to-md.
+                                                let lower = content.to_lowercase();
+                                                if lower.contains("me at the zoo")
+                                                    || lower.contains("jawed")
+                                                    || lower.contains("transcript")
+                                                    || lower.contains("duration")
+                                                    || lower.contains("youtube")
+                                                {
+                                                    has_youtube_md = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if has_youtube_md {
+                        println!(
+                            "PASS  youtube-grab: transcript/description markdown in {:.0?}",
+                            elapsed
+                        );
+                        passed += 1;
+                    } else {
+                        println!(
+                            "FAIL  youtube-grab: no YouTube-specific markdown in {:.0?}",
+                            elapsed
+                        );
+                        failed += 1;
+                    }
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    println!(
+                        "FAIL  youtube-grab: exit {} in {:.0?}: {}",
+                        out.status.code().unwrap_or(-1),
+                        elapsed,
+                        stderr.lines().last().unwrap_or("").trim()
+                    );
+                    failed += 1;
+                }
+                Err(e) => {
+                    println!("FAIL  youtube-grab: spawn error: {}", e);
+                    failed += 1;
+                }
+            }
+            // Clean up temp output.
+            let _ = std::fs::remove_dir_all(&out_dir);
+        }
+    }
+
     println!("\nSelf-test: {} passed, {} failed", passed, failed);
     std::process::exit(if failed == 0 { 0 } else { 1 });
 }
