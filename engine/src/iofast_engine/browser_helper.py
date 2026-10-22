@@ -39,6 +39,61 @@ def patch_playwright():
 patch_playwright()
 
 
+def _patch_frozen_driver_path():
+    """Fix patchright's driver resolution in frozen (PyInstaller) builds.
+
+    In a frozen bundle, ``inspect.getfile(patchright)`` returns a path inside
+    the PYZ archive (e.g. ``.../_MEIxxxxx/patchright/__init__.pyc``). The
+    ``driver/`` tree with ``node.exe`` and ``package/cli.js`` is extracted as
+    loose files beside the exe, NOT inside the PYZ. Patchright's own
+    ``compute_driver_executable()`` therefore constructs a path that doesn't
+    exist on disk → FileNotFoundError when spawning the node subprocess.
+
+    We monkey-patch that function to resolve the driver relative to the
+    *extracted* package directory (which PyInstaller places next to the exe
+    under ``patchright/driver/``). This runs once at import time, before any
+    browser launch.
+    """
+    if not getattr(sys, "frozen", False):
+        return  # dev env: inspect.getfile works correctly
+    try:
+        import patchright._impl._driver as drv
+        import patchright as _pr
+
+        # In frozen builds sys._MEIPASS is the extraction root.
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass is None:
+            return
+        real_driver = os.path.join(meipass, "patchright", "driver")
+        if not os.path.isdir(real_driver):
+            return  # driver not bundled; nothing to fix
+
+        _original = drv.compute_driver_executable
+
+        def _fixed():
+            cli_path = os.path.join(real_driver, "package", "cli.js")
+            if sys.platform == "win32":
+                node = os.getenv(
+                    "PLAYWRIGHT_NODEJS_PATH",
+                    os.path.join(real_driver, "node.exe"),
+                )
+            else:
+                node = os.getenv(
+                    "PLAYWRIGHT_NODEJS_PATH",
+                    os.path.join(real_driver, "node"),
+                )
+            return (node, cli_path)
+
+        drv.compute_driver_executable = _fixed
+        # Also patch get_driver_env if needed — it reads version from the
+        # package which should still work via PYZ, but be safe.
+    except Exception:
+        pass  # best-effort; unfrozen or already patched
+
+
+_patch_frozen_driver_path()
+
+
 def get_async_playwright():
     """Return patchright's async_playwright class.
 
