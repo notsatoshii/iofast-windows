@@ -13,6 +13,7 @@ import asyncio
 import io
 import json
 import os
+import sys
 import threading
 
 import pytest
@@ -264,7 +265,10 @@ def test_scrape_interactive_threads_through(monkeypatch):
          "params": {"url": URL, "out": "/tmp/off"}}
     )
     join(server)
-    assert seen == {"/tmp/on": True, "/tmp/off": False}
+    # On Windows the engine normalizes /tmp to C:\tmp via os.path.abspath.
+    expected_on = os.path.abspath("/tmp/on")
+    expected_off = os.path.abspath("/tmp/off")
+    assert seen == {expected_on: True, expected_off: False}
 
 
 # ---------- recorded session, byte-for-byte ----------
@@ -307,7 +311,16 @@ def test_recorded_session_byte_for_byte(monkeypatch):
         join(server, "map")
         expected += [line.replace("{VERSION}", __version__) for line in step["expect"]]
 
-    assert lines(out) == expected  # byte-for-byte: same serializer, same order
+    actual = lines(out)
+    if sys.platform == "win32":
+        # The fixture records POSIX paths; on Windows the engine emits native
+        # paths (C:\tmp\...). Normalize both sides for comparison.
+        import re
+        def _norm(line):
+            return re.sub(r'"out_dir":\s*"[^"]*"', lambda m: '"out_dir": "' + os.path.abspath(json.loads('{' + m.group() + '}')['out_dir']).replace("\\", "\\\\") + '"', line)
+        actual = [_norm(l) for l in actual]
+        expected = [_norm(l) for l in expected]
+    assert actual == expected  # byte-for-byte: same serializer, same order
 
 
 # ---------- cancel lifecycle ----------

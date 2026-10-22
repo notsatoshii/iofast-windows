@@ -148,7 +148,7 @@ def test_install_extracts_drivers_and_installs_chromium(tmp_path, support, darwi
     # one chromium install per driver, pointed at the shared browsers dir
     assert [cmd[2:] for cmd, _ in calls] == [["install", "chromium"], ["install", "chromium"]]
     for cmd, kwargs in calls:
-        assert cmd[0].endswith("/node") and cmd[1].endswith("/cli.js")
+        assert os.path.basename(cmd[0]) == "node" and os.path.basename(cmd[1]) == "cli.js"
         assert kwargs["env"]["PLAYWRIGHT_BROWSERS_PATH"] == str(support / "browsers")
     stages = [(event["component"], event["stage"]) for event in events]
     for package in ("playwright", "patchright"):
@@ -336,6 +336,7 @@ def test_chromium_output_streams_as_events(tmp_path, support, darwin):
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="/bin/sh not available on Windows")
 def test_stream_runner_streams_and_times_out():
     lines = []
     result = browsers._stream_runner(
