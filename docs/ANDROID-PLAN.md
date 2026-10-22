@@ -31,16 +31,25 @@ and the target apps opt in.
 These apps do NOT render their canonical URL as visible text in the view tree.
 The accessibility service drives the app's own Share → Copy link action:
 
-1. Trampoline signals the accessibility service with the target package.
-2. Service finds the Share button by resource id or content description
-   (Korean: 공유, 링크 복사; English: Share, Copy link) and clicks it.
-3. Service finds and clicks "Copy link" in the share sheet.
-4. Trampoline polls the clipboard (bounded: 3 s total, 200 ms intervals).
-5. ClipboardCleaner validates the URL against the app's pattern, strips
-   tracking params (si=, igsh=, utm_*, s=/t= on X), normalizes to canonical
-   form, and restores the previous clipboard content.
-6. If the share sheet is still open after timeout, service sends
-   GLOBAL_ACTION_BACK to dismiss it. Never loops.
+1. Trampoline records target package + previous clipboard, signals the
+   accessibility service, and **exits immediately** so the social app
+   regains focus (required for a11y clicks to work).
+2. Service runs a state machine (ShareFlowStateMachine) in
+   onAccessibilityEvent:
+   - FIND_SHARE: search rootInActiveWindow for Share control by resource
+     id or text/contentDescription (EN+KO), click via ACTION_CLICK on the
+     node or its nearest clickable ancestor.
+   - WAIT_SHEET: wait for the app's in-app sheet or Android system chooser.
+   - CLICK_COPY: find "Copy link"/"링크 복사"/"Copy"/"복사" and click it.
+   - DONE: launch transparent ClipboardReadActivity (focused = allowed
+     to read clipboard on Android 10+). It reads, cleans, saves to Room,
+     toasts, restores previous clipboard, and finishes.
+3. Hard limit 3 s overall. On timeout: one GLOBAL_ACTION_BACK if a sheet
+   was opened, then toast the Share→iofast fallback. Never loops.
+
+**Label/id tables** (`AppShareLabels.kt`) are UNVERIFIED until real
+uiautomator dumps from Eric's Fold2 replace them. They contain best-guess
+resource ids and EN/KO labels based on public APK analysis.
 
 View-tree text matching remains as a fallback for these apps but is expected
 to return null on real devices.

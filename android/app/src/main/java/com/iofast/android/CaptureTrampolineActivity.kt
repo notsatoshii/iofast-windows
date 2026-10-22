@@ -9,26 +9,23 @@ import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
 import com.iofast.android.data.AppDatabase
 import com.iofast.android.data.CapturedLink
-import com.iofast.android.extractor.ClipboardCleaner
-import kotlinx.coroutines.delay
+import com.iofast.android.shareflow.AppShareLabels
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Side-key double-press lands here. For social apps (YouTube, X, Instagram),
- * drives the Share->Copy-link flow via the accessibility service, then reads
- * and cleans the clipboard. For browsers, reads the URL bar from the last
- * snapshot. Falls back to a toast directing the user to Share->iofast.
- *
- * If the accessibility service is disabled, opens settings with an explanation.
+ * Side-key double-press lands here. For social apps, signals the
+ * accessibility service to run the share-flow and exits immediately
+ * so the social app regains focus (required for a11y clicks).
+ * For browsers, reads the URL bar from the last snapshot directly.
+ * If the a11y service is disabled, opens settings with an explanation.
  */
 class CaptureTrampolineActivity : AppCompatActivity() {
 
     companion object {
-        private const val SHARE_FLOW_TIMEOUT_MS = 3000L
-        private const val CLIPBOARD_POLL_MS = 200L
         private const val SERVICE_PACKAGE = "com.iofast.android"
         private const val SERVICE_CLASS = "com.iofast.android.UrlCaptureAccessibilityService"
     }
@@ -50,71 +47,47 @@ class CaptureTrampolineActivity : AppCompatActivity() {
             return
         }
 
-        lifecycleScope.launch {
-            val url = when (snap.packageName) {
-                "com.google.android.youtube",
-                "com.twitter.android", "com.x.android",
-                "com.instagram.android" -> captureViaShareFlow(snap.packageName)
+        when (snap.packageName) {
+            "com.google.android.youtube",
+            "com.twitter.android", "com.x.android",
+            "com.instagram.android" -> {
+                // Save previous clipboard for restoration
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val previousClip = cm.primaryClip?.getItemAt(0)?.text?.toString()
 
-                "com.android.chrome",
-                "com.sec.android.app.sbrowser" -> UrlCaptureAccessibilityService.extractLastUrl()
-
-                else -> null
+                // Signal the service and exit immediately so the social app
+                // regains focus and the a11y service can click inside it
+                UrlCaptureAccessibilityService.startShareFlow(
+                    packageName = snap.packageName,
+                    previousClipboard = previousClip
+                )
+                finish()
+                return
             }
 
-            if (url != null) {
-                AppDatabase.get(this@CaptureTrampolineActivity)
-                    .capturedLinkDao()
-                    .insert(CapturedLink(url = url, sourcePackage = snap.packageName))
-                Toast.makeText(
-                    this@CaptureTrampolineActivity,
-                    getString(R.string.toast_captured, url),
-                    Toast.LENGTH_LONG
-                ).show()
-            } else {
-                Toast.makeText(
-                    this@CaptureTrampolineActivity,
-                    R.string.toast_fallback_share,
-                    Toast.LENGTH_LONG
-                ).show()
+            "com.android.chrome",
+            "com.sec.android.app.sbrowser" -> {
+                val url = UrlCaptureAccessibilityService.extractLastUrl()
+                if (url != null) {
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        AppDatabase.get(this@CaptureTrampolineActivity)
+                            .capturedLinkDao()
+                            .insert(CapturedLink(url = url, sourcePackage = snap.packageName))
+                    }
+                    Toast.makeText(this, getString(R.string.toast_captured, url), Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
+                }
+                finish()
+                return
             }
-            finish()
-        }
-    }
 
-    /**
-     * Drives Share->Copy-link via the accessibility service, polls the
-     * clipboard for a matching URL, cleans it, and restores the previous
-     * clipboard content. Bounded to SHARE_FLOW_TIMEOUT_MS.
-     */
-    private suspend fun captureViaShareFlow(packageName: String): String? {
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val previousClip = cm.primaryClip?.getItemAt(0)?.text?.toString()
-
-        // Signal the accessibility service to start the share flow
-        UrlCaptureAccessibilityService.startShareFlow(packageName)
-
-        val deadline = System.currentTimeMillis() + SHARE_FLOW_TIMEOUT_MS
-        var result: String? = null
-
-        while (System.currentTimeMillis() < deadline) {
-            delay(CLIPBOARD_POLL_MS)
-            val clipText = cm.primaryClip?.getItemAt(0)?.text?.toString() ?: continue
-            if (clipText.startsWith("http://") || clipText.startsWith("https://")) {
-                result = ClipboardCleaner.cleanForPackage(clipText, packageName)
-                if (result != null) break
+            else -> {
+                Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
+                finish()
+                return
             }
         }
-
-        UrlCaptureAccessibilityService.endShareFlow()
-
-        // Restore previous clipboard content
-        if (previousClip != null && result != null) {
-            val clip = android.content.ClipData.newPlainText("restored", previousClip)
-            cm.setPrimaryClip(clip)
-        }
-
-        return result
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {

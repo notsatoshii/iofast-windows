@@ -1,9 +1,13 @@
 package com.iofast.android
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.iofast.android.extractor.*
+import com.iofast.android.shareflow.AppShareLabels
+import com.iofast.android.shareflow.NodeClicker
+import com.iofast.android.shareflow.ShareFlowStateMachine
 
 /**
  * Tracks foreground app snapshots and drives the Share->Copy-link flow
@@ -22,18 +26,22 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
     )
 
     companion object {
-        /** Per-package snapshots; only relevant packages are stored. */
         private val snapshotMap = mutableMapOf<String, Snapshot>()
 
         @Volatile var lastRelevantSnapshot: Snapshot? = null
             private set
 
-        /** True while the share-flow automation is running. */
         @Volatile var shareFlowActive: Boolean = false
             private set
 
-        /** Package that triggered the current share flow, if any. */
         @Volatile var shareFlowPackage: String? = null
+            private set
+
+        @Volatile var shareFlowPreviousClipboard: String? = null
+            private set
+
+        /** The running state machine, if any. Accessed only from main thread. */
+        @Volatile var activeStateMachine: ShareFlowStateMachine? = null
             private set
 
         private val IGNORED_PACKAGES = setOf(
@@ -55,7 +63,7 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
             "com.instagram.android"
         )
 
-        private val STALENESS_MS = 10_000L
+        private const val STALENESS_MS = 10_000L
 
         private val extractors: List<UrlExtractor> = listOf(
             ChromeExtractor(),
@@ -67,7 +75,6 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
 
         fun getBestSnapshot(): Snapshot? {
             val now = System.currentTimeMillis()
-            // Clean stale entries
             snapshotMap.entries.removeIf { now - it.value.timestamp > STALENESS_MS }
             return lastRelevantSnapshot?.takeIf { now - it.timestamp <= STALENESS_MS }
         }
@@ -79,20 +86,30 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
             return extractor.extract(snap.viewTreeText)
         }
 
-        fun startShareFlow(packageName: String) {
+        fun startShareFlow(packageName: String, previousClipboard: String?) {
             shareFlowActive = true
             shareFlowPackage = packageName
+            shareFlowPreviousClipboard = previousClipboard
         }
 
         fun endShareFlow() {
             shareFlowActive = false
             shareFlowPackage = null
+            shareFlowPreviousClipboard = null
+            activeStateMachine = null
         }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
+
+        // If a share flow is active, feed events to the state machine
+        if (shareFlowActive && pkg == shareFlowPackage) {
+            val root = rootInActiveWindow
+            activeStateMachine?.onWindowUpdate(root)
+            return
+        }
 
         // Ignore irrelevant packages entirely
         if (pkg in IGNORED_PACKAGES) return
@@ -106,11 +123,56 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
                 val snap = Snapshot(pkg, text)
                 snapshotMap[pkg] = snap
                 lastRelevantSnapshot = snap
+
+                // If we were waiting for a share flow to start and this is the target app
+                // regaining focus after the trampoline exited, kick off the state machine
+                if (shareFlowActive && pkg == shareFlowPackage && activeStateMachine == null) {
+                    launchShareFlowStateMachine(pkg)
+                }
             }
         }
     }
 
     override fun onInterrupt() {}
+
+    private fun launchShareFlowStateMachine(packageName: String) {
+        val labels = AppShareLabels.forPackage(packageName) ?: run {
+            endShareFlow()
+            return
+        }
+
+        val clicker = NodeClicker { node ->
+            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+
+        val sm = ShareFlowStateMachine(
+            labels = labels,
+            clicker = clicker,
+            backAction = { performGlobalAction(GLOBAL_ACTION_BACK) },
+            onSuccess = {
+                // Launch ClipboardReadActivity which can read clipboard (it's focused)
+                val intent = Intent(this, ClipboardReadActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    putExtra(ClipboardReadActivity.EXTRA_PACKAGE, packageName)
+                    putExtra(ClipboardReadActivity.EXTRA_PREVIOUS_CLIP, shareFlowPreviousClipboard)
+                }
+                startActivity(intent)
+                endShareFlow()
+            },
+            onFail = {
+                endShareFlow()
+            }
+        )
+
+        activeStateMachine = sm
+        sm.start()
+
+        // Feed the current root immediately in case the window is already stable
+        val root = rootInActiveWindow
+        if (root != null) {
+            sm.onWindowUpdate(root)
+        }
+    }
 
     private fun collectText(node: AccessibilityNodeInfo): String {
         val sb = StringBuilder()

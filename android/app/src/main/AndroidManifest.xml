@@ -40,6 +40,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Transparent clipboard reader: launched after share-flow clicks Copy-link.
+             Being focused allows clipboard read on Android 10+. -->
+        <activity
+            android:name=".ClipboardReadActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
+
         <!-- Queue screen: list captured links with copy/share/delete -->
         <activity
             android:name=".QueueActivity"
