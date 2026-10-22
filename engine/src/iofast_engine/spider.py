@@ -207,111 +207,19 @@ class DocSpider(Spider):
         return super().start(**kwargs)
 
     async def _Spider__run(self):
-        """Override scrapling's __run to capture the event loop and cancel scope.
+        """Override scrapling's __run to capture the event loop reference.
 
         On Windows frozen builds, flag injection from request_cancel() (RPC
         thread) doesn't wake the engine loop stuck in an anyio await. We
-        capture the running loop and patch CrawlerEngine.crawl to store the
-        task group's cancel scope, so request_cancel() can use
-        call_soon_threadsafe to schedule cancel_scope.cancel() on the loop.
+        capture the running loop here so request_cancel() can use
+        call_soon_threadsafe to schedule a no-op callback that wakes the
+        loop, allowing it to see the injected _pause_requested/_force_stop
+        flags on its next iteration.
         """
         self._engine_loop = asyncio.get_running_loop()
-
-        from scrapling.spiders.engine import CrawlerEngine
-        original_crawl = CrawlerEngine.crawl
-
-        async def patched_crawl(engine_self):
-            import anyio
-            from anyio import create_task_group
-
-            engine_self._running = True
-            engine_self._items.clear()
-            engine_self.paused = False
-            engine_self._pause_requested = False
-            engine_self._force_stop = False
-            from scrapling.spiders.result import CrawlStats
-            engine_self.stats = CrawlStats(start_time=anyio.current_time())
-
-            resuming = (
-                (await engine_self._restore_from_checkpoint())
-                if engine_self._checkpoint_system_enabled
-                else False
-            )
-            engine_self._last_checkpoint_time = anyio.current_time()
-
-            async with engine_self.session_manager:
-                engine_self.stats.concurrent_requests = engine_self.spider.concurrent_requests
-                engine_self.stats.concurrent_requests_per_domain = engine_self.spider.concurrent_requests_per_domain
-                engine_self.stats.download_delay = engine_self.spider.download_delay
-                await engine_self.spider.on_start(resuming=resuming)
-
-                try:
-                    if not resuming:
-                        async for request in engine_self.spider.start_requests():
-                            engine_self._normalize_request(request)
-                            await engine_self.scheduler.enqueue(request)
-                    else:
-                        from scrapling.core.utils import log
-                        log.info("Resuming from checkpoint, skipping start_requests()")
-
-                    async with create_task_group() as tg:
-                        engine_self._cancel_scope = tg.cancel_scope
-                        while engine_self._running:
-                            if engine_self._pause_requested:
-                                if engine_self._active_tasks == 0 or engine_self._force_stop:
-                                    if engine_self._force_stop:
-                                        from scrapling.core.utils import log
-                                        log.warning(f"Force stopping with {engine_self._active_tasks} active tasks")
-                                        tg.cancel_scope.cancel()
-                                    if engine_self._checkpoint_system_enabled:
-                                        await engine_self._save_checkpoint()
-                                    engine_self.paused = True
-                                    from scrapling.core.utils import log
-                                    log.info("Spider paused, checkpoint saved")
-                                else:
-                                    from scrapling.core.utils import log
-                                    log.info("Spider stopped gracefully")
-                                engine_self._running = False
-                                break
-                            await anyio.sleep(0.05)
-                            continue
-
-                            if engine_self._checkpoint_system_enabled and engine_self._is_checkpoint_time():
-                                await engine_self._save_checkpoint()
-
-                            if engine_self.scheduler.is_empty:
-                                if engine_self._active_tasks == 0:
-                                    engine_self._running = False
-                                    from scrapling.core.utils import log
-                                    log.debug("Spider idle")
-                                    break
-                                await anyio.sleep(0.05)
-                                continue
-
-                            if engine_self._active_tasks >= engine_self.spider.concurrent_requests:
-                                await anyio.sleep(0.01)
-                                continue
-
-                            request = await engine_self.scheduler.dequeue()
-                            engine_self._active_tasks += 1
-                            tg.start_soon(engine_self._task_wrapper, request)
-                finally:
-                    await engine_self.spider.on_close()
-                    if not engine_self.paused and engine_self._checkpoint_system_enabled:
-                        await engine_self._checkpoint_manager.cleanup()
-
-            import json
-            from scrapling.core.utils import log
-            engine_self.stats.log_levels_counter = engine_self.spider._log_counter.get_counts()
-            engine_self.stats.end_time = anyio.current_time()
-            log.info(json.dumps(engine_self.stats.to_dict(), indent=4))
-            return engine_self.stats
-
-        CrawlerEngine.crawl = patched_crawl
         try:
             return await super()._Spider__run()
         finally:
-            CrawlerEngine.crawl = original_crawl
             self._engine_loop = None
 
     # Class-level defaults so partially-constructed spiders (tests build via
@@ -604,22 +512,20 @@ class DocSpider(Spider):
                 self._pause_sent = True
             except (RuntimeError, AttributeError):
                 pass
-            # Direct flag injection + cancel scope cancellation via the event
-            # loop. On Windows frozen builds, setting flags from the RPC thread
-            # doesn't wake the engine loop stuck in an anyio await. We also
-            # schedule cancel_scope.cancel() on the engine's event loop using
-            # call_soon_threadsafe so it actually interrupts the in-flight I/O.
+            # Direct flag injection + event loop wake-up. On Windows frozen
+            # builds, setting flags from the RPC thread doesn't wake the
+            # engine loop stuck in an anyio await. We schedule a no-op
+            # callback via call_soon_threadsafe to force the loop to iterate
+            # and see the injected _pause_requested/_force_stop flags.
             engine = getattr(self, "_engine", None)
             if engine is not None:
                 try:
                     engine._force_stop = True
                     engine._pause_requested = True
                     engine._running = False
-                    # Cancel the task group's scope from outside the event loop
-                    scope = getattr(engine, "_cancel_scope", None)
                     loop = getattr(self, "_engine_loop", None)
-                    if scope is not None and loop is not None and loop.is_running():
-                        loop.call_soon_threadsafe(scope.cancel)
+                    if loop is not None and loop.is_running():
+                        loop.call_soon_threadsafe(lambda: None)
                 except Exception:
                     pass
 
