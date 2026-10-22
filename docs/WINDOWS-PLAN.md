@@ -80,14 +80,32 @@ RPC: `vault.status`, `vault.file {run_dir, dry_run?, vault?, backend?}`, `vault.
 Module: `engine/src/iofast_engine/vault/` (scan.py, detect.py, raw.py, classify.py, writer.py, filer.py, lint.py, vault_rpc.py).
 CLI hook: `engine/src/iofast_engine/cli_vault.py` (standalone, merged into cli.py by the integration branch).
 
+## Step 7: Vault extras
+
+Post-filing tools that run on the vault itself, not on a capture run:
+
+1. **Dedupe** — URL normalization across platforms (YouTube shorts/youtu.be/mobile, twitter→x.com, instagram reel→p), content hashing, whitespace-insensitive title matching. Runs before filing to skip duplicates; also available standalone.
+2. **Ask** — BM25 retrieval over note chunks with title/alias/tag boosts, incremental mtime-based index (`.iofast-ask-index.json`), LLM answer with `[[Note Title]]` citations. Optional `--save` writes the answer as a vault note.
+3. **Check** — weekly vault health report: lint issues, likely duplicates, Quicknotes triage, singleton tags, MOC drift. Writes `Weekly/<YYYY>-W<ww> Vault check.md`. Idempotent per week.
+4. **Digest** — weekly research digest from log entries and source notes. LLM synthesizes themes and highlights. Writes `Weekly/<YYYY>-W<ww> Digest.md`. Idempotent per week.
+
+CLI: `iofast vault ask <question> [--save]`, `iofast vault check [--week YYYY-Www]`, `iofast digest [--week YYYY-Www] [--if-due]`.
+RPC: `vault.ask {question, vault?, top_k?, save?}`, `vault.check {vault?, week?}`, `digest.make {vault?, week?}`.
+
+Module: `engine/src/iofast_engine/vault/` (dedupe.py, ask.py, check.py, digest.py, extras_rpc.py).
+CLI hook: `engine/src/iofast_engine/cli_vault_extras.py`.
+
+Bug fixes in this step: title extraction now checks manifest `info.title` then H1 headings then host from URL; entity links filtered to only existing or newly-created notes.
+
 ## Branches
 
 - `win/shell`  step 1 + 5 (app, packaging, Windows fixes)
 - `src/web-yt-gh` steps 2 + 3 (sources package, registry, CLI, RPC)
 - `src/social` step 4 (instagram.py, x.py, social_browser.py, signin RPC)
-- `feat/intake` step 7 (watch list + chat history import)
+- `feat/intake` step 7a (watch list + chat history import)
+- `feat/vault-extras` step 7b (dedupe, ask, check, digest, filing bug fixes)
 
-## Step 7: Extras
+## Step 7a: Intake (watch list + chat import)
 
 ### Watch list
 

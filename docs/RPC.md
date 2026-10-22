@@ -301,6 +301,31 @@ Lints the vault for broken links, orphans, missing frontmatter, singleton tags, 
 `fix: true` repairs MOC index drift only. Synchronous.
 Result: `{vault_path, total_notes, broken_links, orphans, missing_frontmatter, singleton_tags, moc_drift, fixed_mocs}`.
 
+### `vault.ask`
+Params: `{"question": str, "vault": str|null, "top_k": int=5, "save": bool=false}`.
+BM25 retrieval over vault notes with title/alias/tag boosts, answered by LLM
+with `[[Note Title]]` citations. Uses an incremental mtime-based index
+(`.iofast-ask-index.json`) rebuilt only when notes change. `save: true` writes
+the answer as a note in the vault. Runs in a worker thread (one at a time,
+`-32000` while running).
+Result: `{answer: str, sources: [{title, path, score}], saved_path: str|null}`.
+
+### `vault.check`
+Params: `{"vault": str|null, "week": str|null}`.
+Generates a weekly vault health report covering lint issues, likely duplicates,
+Quicknotes triage, singleton tags, and MOC drift. Writes to
+`Weekly/<YYYY>-W<ww> Vault check.md`. `week` defaults to the current ISO week.
+Runs in a worker thread. Idempotent per week.
+Result: `{week: str, report_path: str, issues: int, duplicates: int, quicknotes: int}`.
+
+### `digest.make`
+Params: `{"vault": str|null, "week": str|null}`.
+Generates a weekly research digest from log entries and source notes captured
+in the given week. Writes to `Weekly/<YYYY>-W<ww> Digest.md`. Uses LLM to
+synthesize themes and highlight best items. `week` defaults to the current ISO
+week. Runs in a worker thread. Idempotent per week.
+Result: `{week: str, digest_path: str, notes_count: int, log_entries: int}`.
+
 ### `watch.add`
 Params: `{"url": str, "every": "daily"|"weekly", "file": bool=false, "limit": int=10}`.
 Adds a URL to the watch list. Detects kind from URL (youtube, github, web, instagram, x).
