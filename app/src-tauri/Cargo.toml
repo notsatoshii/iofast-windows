@@ -47,6 +47,16 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Com",
 ] }
+# High-level `windows` crate for COM UI Automation (VARIANT, IUIAutomation,
+# IUIAutomationElementArray, SysFreeString — missing from windows-sys 0.59).
+# Used only for active_browser_url(); everything else stays on windows-sys.
+windows = { version = "0.58", features = [
+    "Win32_UI_Accessibility",
+    "Win32_System_Com",
+    "Win32_System_Variant",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 strip = true

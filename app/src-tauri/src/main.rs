@@ -542,6 +542,122 @@ fn place_panel(panel: &tauri::WebviewWindow) {
 /// text and updates when this returns.
 #[cfg(target_os = "windows")]
 fn active_browser_url() -> Option<String> {
+    // Try native COM UI Automation first (~50-150ms); fall back to hidden
+    // PowerShell (~200-400ms) if COM fails at runtime.
+    if let Some(url) = active_browser_url_native() {
+        return Some(url);
+    }
+    active_browser_url_powershell()
+}
+
+/// Native COM UI Automation via the `windows` crate. Returns the first URL
+/// found in an Edit or Document control under the foreground window.
+fn active_browser_url_native() -> Option<String> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, UIA_EditControlTypeId, UIA_DocumentControlTypeId,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    unsafe {
+        // COM may already be initialized by Tauri; ignore RPC_E_CHANGED_MODE.
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
+        let uia: IUIAutomation = match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
+            Ok(u) => u,
+            Err(_) => {
+                let _ = CoUninitialize();
+                return None;
+            }
+        };
+
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            let _ = CoUninitialize();
+            return None;
+        }
+
+        let root = match uia.ElementFromHandle(hwnd) {
+            Ok(r) => r,
+            Err(_) => {
+                let _ = CoUninitialize();
+                return None;
+            }
+        };
+
+        // Search for Edit controls (address bar) then Document controls.
+        // UIA_EditControlTypeId.0 extracts the raw i32 from the newtype.
+        let result = search_uia_elements(&uia, &root, UIA_EditControlTypeId.0)
+            .or_else(|| search_uia_elements(&uia, &root, UIA_DocumentControlTypeId.0));
+
+        let _ = CoUninitialize();
+        result
+    }
+}
+
+/// Search descendants of `root` for elements matching `control_type` that have
+/// a Value pattern containing a URL, or whose Name contains a URL.
+unsafe fn search_uia_elements(
+    uia: &windows::Win32::UI::Accessibility::IUIAutomation,
+    root: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+    control_type: i32,
+) -> Option<String> {
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationElementArray, IUIAutomationValuePattern, TreeScope_Descendants,
+        UIA_ControlTypePropertyId, UIA_ValuePatternId,
+    };
+    use windows::core::VARIANT;
+
+    let cond_variant = VARIANT::from(control_type);
+    let cond = match uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &cond_variant) {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    let array: IUIAutomationElementArray = match root.FindAll(TreeScope_Descendants, &cond) {
+        Ok(a) => a,
+        Err(_) => return None,
+    };
+
+    let len = match array.Length() {
+        Ok(l) => l,
+        Err(_) => return None,
+    };
+
+    for i in 0..len.min(50) {
+        let el = match array.GetElement(i) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        // Try Value pattern first (address bar). GetCurrentPatternAs does
+        // the QueryInterface to IUIAutomationValuePattern internally.
+        if let Ok(val_pat) = el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) {
+            if let Ok(bstr) = val_pat.CurrentValue() {
+                let s: String = bstr.to_string();
+                if s.starts_with("http://") || s.starts_with("https://") {
+                    return Some(s);
+                }
+            }
+        }
+
+        // Fallback: Name property
+        if let Ok(name_bstr) = el.CurrentName() {
+            let s: String = name_bstr.to_string();
+            if s.starts_with("http://") || s.starts_with("https://") {
+                return Some(s);
+            }
+        }
+    }
+
+    None
+}
+
+/// Hidden PowerShell UIA fallback. Used when native COM fails at runtime.
+fn active_browser_url_powershell() -> Option<String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 

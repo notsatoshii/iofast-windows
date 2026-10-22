@@ -930,4 +930,85 @@ mod tests {
         assert_eq!(host_of("http://example.com:8080"), "example.com:8080");
         assert_eq!(host_of(""), "");
     }
+
+    /// Round-trip test for the native Win32 credential store. Calls
+    /// CredWriteW/CredReadW/CredDeleteW directly with a throwaway target
+    /// name, bypassing the KEY_NAMES allowlist so we never touch real keys.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn credential_round_trip_write_read_delete() {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Security::Credentials::{
+            CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW,
+            CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+        };
+
+        let target_name = "iofast:__test_roundtrip_do_not_use";
+        let secret = b"test-secret-value-12345";
+
+        let target_wide: Vec<u16> = OsStr::new(target_name)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        // Clean up any leftover from a previous failed run.
+        unsafe {
+            CredDeleteW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0);
+        }
+
+        // Write
+        let mut cred = CREDENTIALW {
+            Flags: 0,
+            Type: CRED_TYPE_GENERIC,
+            TargetName: target_wide.as_ptr() as *mut u16,
+            Comment: std::ptr::null_mut(),
+            LastWritten: windows_sys::Win32::Foundation::FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            },
+            CredentialBlobSize: secret.len() as u32,
+            CredentialBlob: secret.as_ptr() as *mut u8,
+            Persist: CRED_PERSIST_LOCAL_MACHINE,
+            AttributeCount: 0,
+            Attributes: std::ptr::null_mut(),
+            TargetAlias: std::ptr::null_mut(),
+            UserName: std::ptr::null_mut(),
+        };
+        let write_ok = unsafe { CredWriteW(&cred, 0) };
+        assert_ne!(write_ok, 0, "CredWriteW should succeed");
+
+        // Read back
+        let mut read_cred: *mut CREDENTIALW = std::ptr::null_mut();
+        let read_ok = unsafe {
+            CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut read_cred)
+        };
+        assert_ne!(read_ok, 0, "CredReadW should succeed");
+        assert!(!read_cred.is_null());
+        let blob = unsafe {
+            std::slice::from_raw_parts(
+                (*read_cred).CredentialBlob,
+                (*read_cred).CredentialBlobSize as usize,
+            )
+        };
+        assert_eq!(blob, secret, "read-back must match what was written");
+        unsafe { CredFree(read_cred as *mut _) };
+
+        // Delete
+        let del_ok =
+            unsafe { CredDeleteW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0) };
+        assert_ne!(del_ok, 0, "CredDeleteW should succeed");
+
+        // Verify gone
+        let mut gone_cred: *mut CREDENTIALW = std::ptr::null_mut();
+        let gone_ok = unsafe {
+            CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut gone_cred)
+        };
+        assert_eq!(gone_ok, 0, "credential must be gone after delete");
+
+        // Double-delete should fail gracefully (ERROR_NOT_FOUND = 1168)
+        let double_del =
+            unsafe { CredDeleteW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0) };
+        assert_eq!(double_del, 0, "double-delete should fail");
+    }
 }
