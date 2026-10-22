@@ -28,6 +28,7 @@ from ..transcribe import (
     download_audio,
     should_skip_transcribe,
     transcribe_audio,
+    ytdlp_js_runtimes,
 )
 from ..writer import Writer, write_run
 from .base import GrabOptions, GrabResult
@@ -283,6 +284,9 @@ class YouTubeSource:
             "extract_flat": False,  # resolve playlist entries fully
             "ignoreerrors": True,   # skip broken entries instead of aborting
         }
+        # yt-dlp >= 2024 requires a JS runtime for YouTube signature solving.
+        # Use patchright's bundled node.exe so users don't need deno installed.
+        ydl_opts.update(ytdlp_js_runtimes())
 
         # Extract metadata only first (no subtitle download yet).
         meta_opts = dict(ydl_opts)
@@ -544,6 +548,8 @@ def _download_subtitles(
         "outtmpl": outtmpl,
         "ignoreerrors": True,
     }
+    # yt-dlp >= 2024 requires a JS runtime for YouTube signature solving.
+    ydl_opts.update(ytdlp_js_runtimes())
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
