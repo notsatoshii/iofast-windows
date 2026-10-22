@@ -86,7 +86,11 @@ def main(argv=None):
 
     # Vault subcommands (step 6): file, lint, find
     from .cli_vault import add_vault_subcommands
-    add_vault_subcommands(sub)
+    vault_sub = add_vault_subcommands(sub)
+
+    # Vault extras (step 7): ask, check + top-level digest
+    from .cli_vault_extras import add_extras_subcommands
+    add_extras_subcommands(vault_sub, sub)
 
     # Watch subcommands (step 7): add, list, remove, run
     from .cli_watch import add_watch_subcommands
@@ -133,9 +137,16 @@ def main(argv=None):
         return 0
 
     if args.command == "vault":
+        # Extras commands (ask, check) are dispatched via cli_vault_extras
+        if getattr(args, "vault_command", None) in ("ask", "check"):
+            from .cli_vault_extras import run_vault_extras
+            return run_vault_extras(args)
         from .cli_vault import run_vault
-
         return run_vault(args)
+
+if args.command == "digest":
+        from .cli_vault_extras import run_digest
+        return run_digest(args)
 
     if args.command == "watch":
         from .cli_watch import run_watch

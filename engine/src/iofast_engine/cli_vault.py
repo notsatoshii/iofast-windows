@@ -11,7 +11,11 @@ import sys
 
 
 def add_vault_subcommands(subparsers):
-    """Register vault subcommands on the argparse subparsers object."""
+    """Register vault subcommands on the argparse subparsers object.
+
+    Returns the vault sub-subparsers action so extras can add their own
+    commands without reaching into argparse internals.
+    """
     vault_p = subparsers.add_parser("vault", help="Obsidian vault filing (step 6)")
     vault_sub = vault_p.add_subparsers(dest="vault_command", required=True)
 
@@ -28,6 +32,8 @@ def add_vault_subcommands(subparsers):
     lint_p.add_argument("--json", action="store_true", help="result as JSON on stdout")
 
     vault_sub.add_parser("find", help="print detected Obsidian vaults")
+
+    return vault_sub
 
 
 def run_vault(args):
