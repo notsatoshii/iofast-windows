@@ -65,26 +65,43 @@ def browsers_available() -> bool:
     managed Chromium. In frozen builds, the patchright driver is bundled so
     system channels always work when Edge or Chrome is installed. Unfrozen
     dev environments also check managed Chromium as a fallback.
-    """
-    try:
-        from .browser_helper import get_sync_playwright
 
-        sync_playwright = get_sync_playwright()
-        with sync_playwright() as pw:
-            # System browsers first — no download needed.
-            for channel in ("msedge", "chrome"):
+    Runs in a background thread with a hard timeout: on Windows frozen builds
+    patchright's driver resolution can block indefinitely when the bundled
+    driver tree is missing or corrupt, which would stall DocSpider.__init__
+    and make RPC cancel appear to hang (the scrape thread never reaches the
+    engine loop where cancel flags are checked).
+    """
+    import threading
+
+    result = [False]
+
+    def _probe():
+        try:
+            from .browser_helper import get_sync_playwright
+
+            sync_playwright = get_sync_playwright()
+            with sync_playwright() as pw:
+                # System browsers first — no download needed.
+                for channel in ("msedge", "chrome"):
+                    try:
+                        browser = pw.chromium.launch(channel=channel, headless=True)
+                        browser.close()
+                        result[0] = True
+                        return
+                    except Exception:
+                        continue
+                # Managed Chromium fallback (dev environments with `playwright install`).
                 try:
-                    browser = pw.chromium.launch(channel=channel, headless=True)
+                    browser = pw.chromium.launch(headless=True)
                     browser.close()
-                    return True
+                    result[0] = True
                 except Exception:
-                    continue
-            # Managed Chromium fallback (dev environments with `playwright install`).
-            try:
-                browser = pw.chromium.launch(headless=True)
-                browser.close()
-                return True
-            except Exception:
-                return False
-    except Exception:
-        return False
+                    pass
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_probe, daemon=True)
+    t.start()
+    t.join(timeout=10)  # 10s hard cap; returns False if probe hangs
+    return result[0]
