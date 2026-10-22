@@ -330,7 +330,7 @@ class DocSpider(Spider):
             manager.add(
                 "stealth",
                 AsyncStealthySession(
-                    headless=True, solve_cloudflare=True, max_pages=1, **proxy_kw
+                    headless=True, solve_cloudflare=False, max_pages=1, **proxy_kw
                 ),
                 lazy=True,
             )

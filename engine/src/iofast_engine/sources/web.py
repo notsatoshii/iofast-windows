@@ -100,24 +100,25 @@ class WebSource:
     def _fetch_with_escalation(self, url: str, emit) -> tuple[str, str, str, int | None]:
         """Static -> dynamic -> stealth. Returns (markdown, tier, how, status).
 
-        Runs synchronously in an executor thread because scrapling's fetchers
-        are sync. The escalation logic mirrors DocSpider's parse() but for a
-        single page: try each tier until content clears THIN_CHARS or we run
-        out of tiers. Best-tier memory keeps the richest output seen.
+        Runs synchronously in an executor thread. The escalation logic mirrors
+        DocSpider's parse() but for a single page: try each tier until content
+        clears THIN_CHARS or we run out of tiers. Best-tier memory keeps the
+        richest output seen. Errors are never swallowed — every failure is
+        reported via emit and recorded in the final result.
         """
         best_text = ""
         best_tier = "static"
         best_how = "none"
         best_status: int | None = None
-        has_browsers = browsers_available()
 
         for tier in TIERS:
-            if tier != "static" and not has_browsers:
-                break
-
-            response = self._fetch_tier(url, tier)
+            response, info = self._fetch_tier(url, tier)
             if response is None:
-                emit({"type": "warning", "url": url, "message": f"⚠️  {tier}: no response"})
+                # Tier failed — report the reason, don't silently skip.
+                emit({
+                    "type": "warning", "url": url,
+                    "message": f"⚠️  {tier} failed: {info}",
+                })
                 continue
 
             status = getattr(response, "status", 0)
@@ -127,16 +128,18 @@ class WebSource:
             if is_challenge(status, headers, body):
                 emit({
                     "type": "progress", "url": url,
-                    "message": f"⬆️  challenge on {tier}, escalating: {url}",
+                    "message": f"🚫 challenge detected on {tier} (blocked): {url}",
                 })
-                continue
+                # Do NOT escalate past a challenge — Eric's rule: no CAPTCHA
+                # solving. Report it and stop. The human-solve browser option
+                # exists separately for one-time manual clearance.
+                break
 
             if status != 200:
                 emit({
                     "type": "warning", "url": url,
-                    "message": f"⚠️  http {status} on {tier}: {url}",
+                    "message": f"⚠️  http {status} on {tier} ({info}): {url}",
                 })
-                # Still try extraction — some 4xx pages carry useful content.
                 if status >= 400:
                     continue
 
@@ -154,30 +157,42 @@ class WebSource:
             if tier != "stealth":
                 emit({
                     "type": "progress", "url": url,
-                    "message": f"⬆️  thin ({len(text)} chars) on {tier}, escalating: {url}",
+                    "message": f"⬆️  thin ({len(text)} chars) on {tier} ({info}), escalating: {url}",
                 })
 
         return best_text, best_tier, best_how, best_status
 
     @staticmethod
     def _fetch_tier(url: str, tier: str):
-        """One fetch at the given tier. Returns Response or None. Never raises."""
-        try:
-            if tier == "static":
+        """One fetch at the given tier. Returns (Response-like, info) or (None, error).
+
+        The dynamic tier uses patchright directly via browser_helper (system
+        Edge/Chrome first, managed Chromium fallback). The stealth tier no
+        longer solves CAPTCHAs — it renders the page only, same as dynamic.
+        Errors are never swallowed: the caller records them in the report.
+        """
+        if tier == "static":
+            try:
                 from scrapling.fetchers import Fetcher
-                return Fetcher.get(url, timeout=30, stealthy_headers=True)
-            elif tier == "dynamic":
-                from scrapling.fetchers import StealthyFetcher
-                return StealthyFetcher.get(
-                    url, headless=True, disable_resources=True, timeout=30,
-                )
-            elif tier == "stealth":
-                from scrapling.fetchers import StealthyFetcher
-                return StealthyFetcher.get(
-                    url, headless=True, solve_cloudflare=True, timeout=30,
-                )
-        except Exception:
-            return None
+                return Fetcher.get(url, timeout=30, stealthy_headers=True), "static"
+            except Exception as e:
+                return None, f"static error: {type(e).__name__}: {e}"
+        elif tier in ("dynamic", "stealth"):
+            # Use patchright directly — system browser first, managed fallback.
+            # No CAPTCHA solving (Eric's rule): stealth == dynamic render-only.
+            from ..browser_helper import fetch_with_browser
+            html, info = fetch_with_browser(url, timeout_ms=15000)
+            if html is None:
+                return None, f"{tier} error: {info}"
+            # Wrap in a minimal Response-like object so the caller can read
+            # .status, .headers, and _body_text() works on the body attribute.
+            class _BrowserResponse:
+                status = 200
+                headers = {}
+                body = html.encode("utf-8")
+                text = html
+            return _BrowserResponse(), info
+        return None, f"unknown tier: {tier}"
 
     # ------------------------------------------------------------------ site
 
