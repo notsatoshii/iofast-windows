@@ -188,6 +188,7 @@ class TestWriter:
         path = write_source_note(
             fixture_vault, "AI", "Test Source", classification,
             "https://example.com", raw_path, captured_date="2026-10-22",
+            existing_titles={"Transformer Architecture"},
         )
         assert path.exists()
         text = path.read_text(encoding="utf-8")
@@ -297,3 +298,143 @@ class TestFilerDryRun:
         if raw_dir.exists():
             md_files = list(raw_dir.glob("*.md"))
             assert len(md_files) == 0
+
+
+class TestTitleExtraction:
+    """Regression: filer used run folder name instead of real title."""
+
+    def test_extract_title_from_manifest_info_title(self, tmp_path):
+        from iofast_engine.vault.filer import _extract_title
+
+        run = tmp_path / "yt-test3"
+        run.mkdir()
+        manifest = {
+            "schema": 1,
+            "info": {"title": "Real Video Title", "url": "https://youtube.com/watch?v=x"},
+            "counts": {"ok": 1},
+            "pages": [],
+        }
+        (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        assert _extract_title(run) == "Real Video Title"
+
+    def test_extract_title_from_content_heading(self, tmp_path):
+        from iofast_engine.vault.filer import _extract_title
+
+        run = tmp_path / "blog-test3"
+        run.mkdir()
+        manifest = {
+            "schema": 1,
+            "info": {"url": "https://example.com/article"},
+            "counts": {"ok": 1},
+            "pages": [],
+        }
+        (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        page = run / "article.md"
+        page.write_text(
+            "--- SOURCE: https://example.com/article ---\n"
+            "--- UNTRUSTED CONTENT ---\n\n"
+            "# My Blog Post Title\n\nSome content.\n",
+            encoding="utf-8",
+        )
+        assert _extract_title(run) == "My Blog Post Title"
+
+    def test_extract_title_falls_back_to_host(self, tmp_path):
+        from iofast_engine.vault.filer import _extract_title
+
+        run = tmp_path / "empty-run"
+        run.mkdir()
+        manifest = {
+            "schema": 1,
+            "info": {"url": "https://www.example.com/page"},
+            "counts": {"ok": 0},
+            "pages": [],
+        }
+        (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        assert _extract_title(run) == "example.com"
+
+    def test_extract_title_uses_url_key_not_start_url(self, tmp_path):
+        """Sources store 'url', docs scrapes store 'start_url'. Both must work."""
+        from iofast_engine.vault.filer import _extract_title
+
+        run = tmp_path / "web-run"
+        run.mkdir()
+        manifest = {
+            "schema": 1,
+            "info": {"url": "https://docs.example.org/guide"},
+            "counts": {"ok": 1},
+            "pages": [{"file": "guide.md"}],
+        }
+        (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        # No heading in content, should fall back to host from 'url' key
+        assert _extract_title(run) == "docs.example.org"
+
+
+class TestEntityLinkFiltering:
+    """Regression: Related section linked [[Bard]], [[DALL-E]] etc. that don't exist."""
+
+    def test_only_existing_notes_get_linked(self, fixture_vault):
+        from iofast_engine.vault.writer import write_source_note
+
+        classification = {
+            "tags": ["ai"],
+            "aliases": [],
+            "source_note": {
+                "summary": "A summary.",
+                "key_points": [],
+                "notable_quotes": [],
+                "entities": ["Python", "Bard", "DALL-E", "NewConcept"],
+            },
+            "new_notes": [{"title": "NewConcept", "folder": "AI", "tags": [], "content": ""}],
+            "append_sections": [],
+            "moc_line": "",
+        }
+        raw_path = fixture_vault / "Research (RAW)" / "iofast" / "2026-01-01 Test.md"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text("---\nsource: \"\"\n---\n", encoding="utf-8")
+
+        # Python exists in fixture vault; NewConcept is being created; Bard/DALL-E do not.
+        path = write_source_note(
+            fixture_vault, "AI", "Test Note", classification,
+            "https://example.com", raw_path,
+            existing_titles={"Python"},
+            new_note_titles={"NewConcept"},
+        )
+        text = path.read_text(encoding="utf-8")
+        assert "[[Python]]" in text
+        assert "[[NewConcept]]" in text
+        assert "[[Bard]]" not in text
+        assert "[[DALL-E]]" not in text
+        # Plain text for non-existent entities
+        assert "- Bard\n" in text or "- Bard" in text
+        assert "- DALL-E\n" in text or "- DALL-E" in text
+
+    def test_no_linkable_sets_links_nothing(self, fixture_vault):
+        """When no title sets are passed, no entities get linked (safe default)."""
+        from iofast_engine.vault.writer import write_source_note
+
+        classification = {
+            "tags": [],
+            "aliases": [],
+            "source_note": {
+                "summary": "",
+                "key_points": [],
+                "notable_quotes": [],
+                "entities": ["Something"],
+            },
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "",
+        }
+        raw_path = fixture_vault / "Research (RAW)" / "iofast" / "2026-01-01 T2.md"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text("---\nsource: \"\"\n---\n", encoding="utf-8")
+
+        path = write_source_note(
+            fixture_vault, "AI", "T2", classification,
+            "https://example.com", raw_path,
+        )
+        text = path.read_text(encoding="utf-8")
+        assert "[[Something]]" not in text
+        assert "- Something" in text
+
+        

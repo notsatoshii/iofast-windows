@@ -259,7 +259,13 @@ class YouTubeSource:
             })
 
         counts = ledger.counts()
-        write_run(str(run_dir), ledger, {"source": "youtube", "url": url})
+        # Store title in manifest info so vault filing uses the real video title
+        # instead of the run folder name. For playlists, use the first video's title.
+        first_title = videos[0].get("title", "") if videos else ""
+        info = {"source": "youtube", "url": url}
+        if first_title:
+            info["title"] = first_title
+        write_run(str(run_dir), ledger, info)
         return GrabResult(
             source="youtube", run_dir=run_dir,
             ok=ok, thin=thin, failed=failed,

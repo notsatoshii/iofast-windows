@@ -37,7 +37,9 @@ def _detect_source_type(run_dir: Path) -> str:
     if manifest is None:
         return "web"
     info = manifest.get("info", {})
-    url = str(info.get("start_url", "") or "").lower()
+    # Sources use different keys: docs scrapes store 'start_url', multi-source
+    # grabs store 'url'. Check both.
+    url = str(info.get("url", "") or info.get("start_url", "") or "").lower()
     if "youtube.com" in url or "youtu.be" in url:
         return "youtube"
     if "github.com" in url:
@@ -53,17 +55,58 @@ def _detect_source_type(run_dir: Path) -> str:
 
 
 def _extract_title(run_dir: Path) -> str:
-    """Get title from manifest start URL or folder name."""
+    """Get title from manifest metadata, content headings, or folder name.
+
+    Priority: manifest info.title > first H1 in combined text > host from URL > folder name.
+    Sources store different keys: web/youtube use 'url', docs scrapes use 'start_url'.
+    """
     manifest = _load_manifest(run_dir)
-    if manifest is not None:
-        url = str(manifest.get("info", {}).get("start_url", "") or "")
-        if url:
-            from urllib.parse import urlparse
-            host = urlparse(url).netloc
-            if host:
-                return host.replace("www.", "")
-            pass
+    info = manifest.get("info", {}) if manifest else {}
+
+    # 1. Explicit title from source metadata (youtube stores video title here
+    #    after the fix; github stores owner/repo).
+    explicit = str(info.get("title", "") or "").strip()
+    if explicit:
+        return explicit
+
+    # 2. First H1 heading from any .md file in the run (combined or page files).
+    heading_title = _first_heading_title(run_dir)
+    if heading_title:
+        return heading_title
+
+    # 3. Host portion of the source URL (try both key names sources use).
+    url = str(info.get("url", "") or info.get("start_url", "") or "")
+    if url:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc
+        if host:
+            return host.replace("www.", "")
+
+    # 4. Last resort: folder name.
     return run_dir.name
+
+
+_HEADING_RE = __import__("re").compile(r"^#\s+(.+)$")
+
+
+def _first_heading_title(run_dir: Path) -> str | None:
+    """Return the first H1 heading found in any .md file under run_dir."""
+    for md_file in sorted(run_dir.rglob("*.md")):
+        if md_file.name in ("report.md", "README-UNTRUSTED.md"):
+            continue
+        try:
+            with md_file.open(encoding="utf-8") as f:
+                for line in f:
+                    m = _HEADING_RE.match(line.strip())
+                    if m:
+                        title = m.group(1).strip()
+                        # Skip UNTRUSTED banner lines and SOURCE lines
+                        if title.startswith("---") or "UNTRUSTED" in title:
+                            continue
+                        return title
+        except OSError:
+            continue
+    return None
 
 
 def _get_combined_text(run_dir: Path) -> str:
@@ -165,7 +208,10 @@ def file_capture(
     if manifest_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            source_url = manifest.get("info", {}).get("start url", "")
+            info = manifest.get("info", {})
+            # Sources use different keys: docs scrapes store 'start url' (with space),
+            # multi-source grabs store 'url'. Check both.
+            source_url = str(info.get("url", "") or info.get("start url", "") or info.get("start_url", "") or "")
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -209,11 +255,17 @@ def file_capture(
     topic_folder = classification["topic_folder"]
     _emit(f"topic: {topic_folder}, tags: {classification['tags']}")
 
+    # Build title sets for entity link filtering (bug fix: only link existing/created notes)
+    existing_titles = {n["title"] for n in vault_scan.get("notes", [])}
+    new_note_titles = {n["title"] for n in classification.get("new_notes", []) if n.get("title")}
+
     # Write source note
     _emit("writing source note")
     source_note_path = write_source_note(
         vault, topic_folder, title, classification,
         source_url, raw_path, captured_date=today,
+        existing_titles=existing_titles,
+        new_note_titles=new_note_titles,
     )
     _emit(f"source note: {source_note_path.relative_to(vault)}")
 

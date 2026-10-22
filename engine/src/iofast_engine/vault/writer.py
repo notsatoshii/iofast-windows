@@ -70,8 +70,15 @@ def write_source_note(
     source_url: str,
     raw_path: Path,
     captured_date: str | None = None,
+    existing_titles: set[str] | None = None,
+    new_note_titles: set[str] | None = None,
 ) -> Path:
-    """Write the main source note. Returns path written."""
+    """Write the main source note. Returns path written.
+
+    existing_titles: set of note titles that already exist in the vault.
+    new_note_titles: set of note titles being created in this filing.
+    Entity links are filtered to only these sets; others render as plain text.
+    """
     filename = f"{_safe_filename(title)}.md"
     path = _resolve_in_vault(vault, folder, filename)
 
@@ -119,8 +126,13 @@ def write_source_note(
     if sn.get("entities"):
         lines.append("## Related")
         lines.append("")
+        # Only link entities that exist or are being created; others as plain text.
+        linkable = (existing_titles or set()) | (new_note_titles or set())
         for entity in sn["entities"]:
-            lines.append(f"- [[{entity}]]")
+            if entity in linkable:
+                lines.append(f"- [[{entity}]]")
+            else:
+                lines.append(f"- {entity}")
         lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)

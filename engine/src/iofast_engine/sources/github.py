@@ -293,9 +293,12 @@ class GitHubSource:
             ledger.exclude(reason)
 
         # Finalize: manifest.json, report.md, README-UNTRUSTED.md.
+        # Use repo description or owner/repo as title for vault filing.
+        repo_title = meta.get("description") or f"{owner}/{repo}"
         info = {
             "source": "github",
             "url": url,
+            "title": repo_title,
             "owner": owner,
             "repo": repo,
             "files_kept": len(kept),
