@@ -482,3 +482,43 @@ class TestPublicResult:
         assert r.ok is False
         assert r.data is None
         assert "429" in r.error
+
+class TestMultiVideoPost:
+    def test_each_video_gets_its_own_file_and_transcript(self, tmp_path, monkeypatch):
+        """A post with several videos saves each one and keeps every transcript."""
+        import asyncio
+
+        from iofast_engine.sources import x as xmod
+        from iofast_engine.sources.base import GrabOptions
+
+        data = {
+            "id": "42", "author": "A", "handle": "a", "text": "two clips", "date": "",
+            "media": [
+                {"type": "video", "url": "https://v.example.com/1.mp4"},
+                {"type": "video", "url": "https://v.example.com/2.mp4"},
+            ],
+        }
+
+        async def fake_synd(status_id):
+            return PublicResult(ok=True, data=data)
+
+        saved = []
+
+        async def fake_download(url, dest, **kw):
+            dest.write_bytes(b"x")
+            saved.append(dest.name)
+            return True, 1
+
+        monkeypatch.setattr(xmod, "x_fetch_syndication", fake_synd)
+        monkeypatch.setattr(xmod, "download_media", fake_download)
+        monkeypatch.setattr(
+            xmod, "maybe_transcribe",
+            lambda p, emit=None: f"Transcript: whisper\n\n[00:00] words from {p.name}",
+        )
+
+        asyncio.run(xmod.XSource().grab("https://x.com/a/status/42", tmp_path, GrabOptions(), lambda e: None))
+
+        assert saved == ["42-video-1.mp4", "42-video-2.mp4"]
+        md = (tmp_path / "x" / "thread-42.md").read_text(encoding="utf-8")
+        assert "words from 42-video-1.mp4" in md
+        assert "words from 42-video-2.mp4" in md

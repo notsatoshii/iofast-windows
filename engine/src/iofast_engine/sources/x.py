@@ -116,33 +116,38 @@ class XSource:
 
         # Download video media for transcription.
         transcript_note = ""
-        for m in data.get("media", []):
-            if m.get("type") == "video" and m.get("url"):
-                vid_name = f"{status_id}-video.mp4"
-                vid_path = out_dir / vid_name
-                ok, info = await download_media(m["url"], vid_path)
-                if ok:
-                    emit({"type": "media", "url": m["url"], "file": vid_name, "size": info})
-                    tx = maybe_transcribe(vid_path, emit=emit)
-                    if tx == "no audio stream in file" and m.get("audio_url"):
-                        # Video-only stream: transcribe the separate audio track.
-                        aud_path = vid_path.with_name(vid_path.stem + "-audio.m4a")
-                        a_ok, a_info = await download_media(m["audio_url"], aud_path)
-                        if a_ok:
-                            emit({"type": "media", "url": m["audio_url"], "file": aud_path.name, "size": a_info})
-                            tx = maybe_transcribe(aud_path, emit=emit)
-                    if tx:
-                        # Distinguish success (has header) from error strings.
-                        if tx.startswith("Transcript:"):
-                            data.setdefault("transcript", tx)
-                        else:
-                            transcript_note = tx
-                            emit({"type": "warning", "url": url, "message": f"transcription: {tx}"})
+        transcripts: list[str] = []
+        videos = [m for m in data.get("media", []) if m.get("type") == "video" and m.get("url")]
+        for n, m in enumerate(videos, 1):
+            # One file per video: posts can carry several.
+            vid_name = f"{status_id}-video.mp4" if len(videos) == 1 else f"{status_id}-video-{n}.mp4"
+            vid_path = out_dir / vid_name
+            ok, info = await download_media(m["url"], vid_path)
+            if ok:
+                emit({"type": "media", "url": m["url"], "file": vid_name, "size": info})
+                tx = maybe_transcribe(vid_path, emit=emit)
+                if tx == "no audio stream in file" and m.get("audio_url"):
+                    # Video-only stream: transcribe the separate audio track.
+                    aud_path = vid_path.with_name(vid_path.stem + "-audio.m4a")
+                    a_ok, a_info = await download_media(m["audio_url"], aud_path)
+                    if a_ok:
+                        emit({"type": "media", "url": m["audio_url"], "file": aud_path.name, "size": a_info})
+                        tx = maybe_transcribe(aud_path, emit=emit)
+                if tx:
+                    # Distinguish success (has header) from error strings.
+                    if tx.startswith("Transcript:"):
+                        transcripts.append(tx if len(videos) == 1 else f"**Video {n}**\n\n{tx}")
                     else:
-                        transcript_note = "transcription not installed"
-                        emit({"type": "warning", "url": url, "message": "transcription: not installed"})
+                        transcript_note = tx
+                        emit({"type": "warning", "url": url, "message": f"transcription: {tx}"})
                 else:
-                    emit({"type": "warning", "url": m["url"], "message": f"download failed: {info}"})
+                    transcript_note = "transcription not installed"
+                    emit({"type": "warning", "url": url, "message": "transcription: not installed"})
+            else:
+                emit({"type": "warning", "url": m["url"], "message": f"download failed: {info}"})
+
+        if transcripts:
+            data.setdefault("transcript", "\n\n".join(transcripts))
 
         md = self._render_post_md(data, route=route, transcript_note=transcript_note)
         fname = f"thread-{status_id}.md"
