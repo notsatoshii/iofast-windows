@@ -1,5 +1,6 @@
 """DocSpider — the only module that imports scrapling at module level."""
 
+import asyncio
 import os
 import sys
 import re
@@ -184,6 +185,26 @@ class DocSpider(Spider):
     download_delay = 0.5
     concurrent_requests = 4
     concurrent_requests_per_domain = 2
+
+    def start(self, **kwargs):
+        """Override to force WindowsSelectorEventLoopPolicy on Windows.
+
+        Scrapling's Spider.start() calls anyio.run() with the default event
+        loop policy. On Windows that is WindowsProactorEventLoopPolicy, which
+        lacks add_reader/remove_reader and breaks anyio's task cancellation —
+        tg.cancel_scope.cancel() cannot interrupt in-flight HTTP fetches, so
+        the engine loop hangs forever after request_cancel(). The unfrozen
+        source engine happens to work because curl_cffi prints a warning that
+        triggers SelectorEventLoopPolicy as a side effect, but frozen builds
+        suppress that warning. Setting SelectorEventLoopPolicy explicitly
+        guarantees consistent cancel behavior in both environments.
+        """
+        if sys.platform == "win32":
+            try:
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            except Exception:
+                pass  # best-effort; already set or unavailable
+        return super().start(**kwargs)
 
     # Class-level defaults so partially-constructed spiders (tests build via
     # object.__new__) read as "no cancel requested, no previous run".
