@@ -133,7 +133,21 @@ class GitHubSource:
             with urllib.request.urlopen(req_meta, timeout=30) as resp:
                 meta = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            reason = f"API returned {e.code}"
+            if e.code == 404:
+                reason = "repo not found or private (GitHub returned 404)"
+            elif e.code == 403:
+                reset = e.headers.get("X-RateLimit-Reset", "")
+                if reset:
+                    import datetime
+                    try:
+                        reset_dt = datetime.datetime.fromtimestamp(int(reset), tz=datetime.timezone.utc)
+                        reason = f"rate limited (GitHub returned 403); resets at {reset_dt.isoformat()}"
+                    except (ValueError, OSError):
+                        reason = "rate limited (GitHub returned 403)"
+                else:
+                    reason = "rate limited (GitHub returned 403)"
+            else:
+                reason = f"API returned {e.code}"
             ledger.record(url, "failed_fetch", reason)
             emit({"type": "error", "message": f"❌ {reason}"})
             write_run(str(run_dir), ledger, {"source": "github", "url": url})

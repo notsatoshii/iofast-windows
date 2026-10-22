@@ -1,41 +1,116 @@
 """HTML -> markdown. Pure: takes html text in, never touches a fetcher Response."""
 
 import re
+from urllib.parse import urljoin, urlparse
 
 from lxml import html as lxml_html
 from markdownify import markdownify as md
 
 CONTENT_SELECTORS = ("main", "article", 'div[role="main"]', '[role="main"]')
 DROP_TAGS = ("nav", "aside", "footer", "header", "script", "style", "noscript", "svg", "form")
+# Noise classes/ids that are genuinely site chrome. "toc" is excluded here because
+# MkDocs Material and other doc frameworks put link-heavy TOC lists inside the
+# main article body — stripping them loses real navigation content. The selectors
+# below target only elements that are structurally outside the article flow.
 NOISE_RE = re.compile(
     r"(?i)(breadcrumb|cookie|consent|edit[-_]?(this[-_]?)?page|feedback|pagination|prev-next"
-    r"|sidebar|toc|table-of-contents|skip-link|announcement|banner|social-share|newsletter)"
+    r"|sidebar|table-of-contents|skip-link|announcement|banner|social-share|newsletter)"
 )
 
 
+def _resolve_base(html: str, url: str) -> str:
+    """Extract <base href> from the HTML if present, else derive from the URL.
+
+    Directory-style URLs must keep their trailing slash so that relative
+    ``../sibling/`` links resolve against the directory, not its parent.
+    ``urljoin("https://x.com/a/b/", "../c/")`` → ``https://x.com/a/c/`` ✓
+    ``urljoin("https://x.com/a/b",  "../c/")`` → ``https://x.com/c/``   ✗
+    """
+    try:
+        tree = lxml_html.fromstring(html)
+    except Exception:
+        pass
+    else:
+        bases = tree.xpath("//base[@href]")
+        if bases:
+            return bases[0].get("href", "").strip() or url
+
+    # Preserve trailing slash on directory URLs so ../ resolves correctly.
+    parsed = urlparse(url)
+    if parsed.path and not parsed.path.endswith("/") and "." not in parsed.path.rsplit("/", 1)[-1]:
+        return url + "/"
+    return url
+
+
+def _make_links_absolute(html: str, base: str) -> str:
+    """Resolve every relative href/src against base before conversion."""
+    try:
+        tree = lxml_html.fromstring(html)
+    except Exception:
+        return html
+    tree.make_links_absolute(base, handle_failures="discard")
+    return lxml_html.tostring(tree, encoding="unicode", method="html")
+
+
 def strip_noise(html: str) -> str:
-    """Remove nav/breadcrumb/'Edit this page'/cookie chrome before conversion."""
+    """Remove nav/breadcrumb/'Edit this page'/cookie chrome before conversion.
+
+    Only strips elements whose class/id matches NOISE_RE AND that live outside
+    the main content container (main/article/[role=main]). This preserves
+    link-heavy lists that are part of the article body while still removing
+    genuine site chrome like sidebars and footers.
+    """
     try:
         tree = lxml_html.fromstring(html)
     except Exception:
         return html
     for element in tree.xpath("|".join(f"//{tag}" for tag in DROP_TAGS)):
         element.getparent().remove(element) if element.getparent() is not None else None
+
+    # Identify content containers — noise inside these is kept (it's article content).
+    content_roots = set()
+    for sel in CONTENT_SELECTORS:
+        try:
+            for el in tree.cssselect(sel):
+                content_roots.add(id(el))
+        except Exception:
+            continue
+
     for element in tree.xpath("//*[@class or @id]"):
         marker = f"{element.get('class', '')} {element.get('id', '')}"
-        if NOISE_RE.search(marker) and element.getparent() is not None:
-            element.getparent().remove(element)
+        if not NOISE_RE.search(marker):
+            continue
+        # Skip removal if this element lives inside a content container.
+        parent = element.getparent()
+        inside_content = False
+        cur = element
+        while cur is not None:
+            if id(cur) in content_roots:
+                inside_content = True
+                break
+            cur = cur.getparent()
+        if inside_content:
+            continue
+        if parent is not None:
+            parent.remove(element)
     return lxml_html.tostring(tree, encoding="unicode", method="html")
 
 
 def extract_markdown(html: str, url: str) -> str:
-    """trafilatura markdown, favouring precision; empty string when it finds no article."""
+    """trafilatura markdown, favouring precision; empty string when it finds no article.
+
+    Links are resolved against the correct base (respecting <base href> and
+    preserving trailing slashes on directory URLs) before trafilatura sees them,
+    so relative ``../sibling/`` links never resolve against a truncated base.
+    """
     import trafilatura
 
+    base = _resolve_base(html, url)
+    resolved_html = _make_links_absolute(html, base)
     try:
         text = trafilatura.extract(
-            html,
-            url=url,
+            resolved_html,
+            url=base,
             output_format="markdown",
             favor_precision=True,
             include_links=True,
@@ -63,18 +138,56 @@ def select_first(html: str, selectors) -> str:
     return ""
 
 
+def _resolve_links_in_html(html: str, url: str) -> tuple[str, str]:
+    """Resolve relative links in html against the correct base. Returns (resolved_html, base).
+
+    Must run BEFORE strip_noise so that <base href> is still present in the tree.
+    """
+    base = _resolve_base(html, url)
+    return _make_links_absolute(html, base), base
+
+
 def page_content(html: str, url: str, selectors=CONTENT_SELECTORS):
-    """(markdown, how) using: platform selectors -> trafilatura -> nothing (never raw body)."""
-    selector_html = select_first(html, selectors)
+    """(markdown, how) using: platform selectors -> trafilatura -> markdownify fallback.
+
+    Links are resolved against the correct base (respecting <base href> and
+    preserving trailing slashes) BEFORE noise stripping, so the base tag is
+    still in the tree when we read it. When trafilatura's precision mode drops
+    link-heavy article content (common on MkDocs/Docusaurus landing sections),
+    we fall back to markdownify which preserves all list items.
+    """
+    # Resolve links once up front — before any strip_noise call removes <base>.
+    resolved_html, base = _resolve_links_in_html(html, url)
+
+    selector_html = select_first(resolved_html, selectors)
 
     if selector_html:
         cleaned = strip_noise(selector_html)
-        text = extract_markdown(cleaned, url)
+        text = extract_markdown(cleaned, base)
         if text:
+            # Trafilatura precision can drop link-only lists that are real content.
+            # Compare <li> counts: if the output has fewer list items than the HTML,
+            # fall back to markdownify which preserves all of them.
+            html_li_count = cleaned.lower().count("<li")
+            out_li_count = text.count("\n- ") + text.count("\n* ") + (1 if text.startswith("- ") or text.startswith("* ") else 0)
+            if html_li_count > 0 and out_li_count < html_li_count:
+                md_text = md(cleaned, heading_style="ATX").strip()
+                if md_text and len(md_text) > len(text):
+                    return md_text, "selector+markdownify"
             return text, "selector+trafilatura"
         text = md(cleaned, heading_style="ATX").strip()
         if text:
             return text, "selector+markdownify"
 
-    text = extract_markdown(strip_noise(html), url)
-    return (text, "trafilatura") if text else ("", "none")
+    cleaned_full = strip_noise(resolved_html)
+    text = extract_markdown(cleaned_full, base)
+    if text:
+        html_li_count = cleaned_full.lower().count("<li")
+        out_li_count = text.count("\n- ") + text.count("\n* ") + (1 if text.startswith("- ") or text.startswith("* ") else 0)
+        if html_li_count > 0 and out_li_count < html_li_count:
+            md_text = md(cleaned_full, heading_style="ATX").strip()
+            if md_text and len(md_text) > len(text):
+                return md_text, "markdownify"
+        return text, "trafilatura"
+    text = md(cleaned_full, heading_style="ATX").strip()
+    return (text, "markdownify") if text else ("", "none")
