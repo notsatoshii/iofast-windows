@@ -124,6 +124,13 @@ class XSource:
                 if ok:
                     emit({"type": "media", "url": m["url"], "file": vid_name, "size": info})
                     tx = maybe_transcribe(vid_path, emit=emit)
+                    if tx == "no audio stream in file" and m.get("audio_url"):
+                        # Video-only stream: transcribe the separate audio track.
+                        aud_path = vid_path.with_name(vid_path.stem + "-audio.m4a")
+                        a_ok, a_info = await download_media(m["audio_url"], aud_path)
+                        if a_ok:
+                            emit({"type": "media", "url": m["audio_url"], "file": aud_path.name, "size": a_info})
+                            tx = maybe_transcribe(aud_path, emit=emit)
                     if tx:
                         # Distinguish success (has header) from error strings.
                         if tx.startswith("Transcript:"):

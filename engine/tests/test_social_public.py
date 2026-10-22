@@ -116,6 +116,24 @@ class TestIGYtdlpParsing:
         assert video_item["url"] == "https://cdn.example.com/video.mp4"
         assert video_item["duration"] == 30
 
+    def test_video_prefers_stream_with_sound_and_keeps_audio_url(self):
+        # Instagram's real shape: DASH video-only streams with high bitrates,
+        # a DASH audio-only stream, and progressive streams with unknown codecs.
+        info = {
+            "id": "CDUMkliABpa",
+            "formats": [
+                {"format_id": "dash-a", "vcodec": "none", "acodec": "mp4a.40.2", "tbr": 131, "url": "https://cdn.example.com/a.m4a"},
+                {"format_id": "1", "url": "https://cdn.example.com/p1.mp4"},
+                {"format_id": "2", "url": "https://cdn.example.com/p2.mp4"},
+                {"format_id": "dash-v", "vcodec": "avc1", "acodec": "none", "tbr": 1795, "url": "https://cdn.example.com/v.mp4"},
+            ],
+            "thumbnails": [],
+        }
+        result = _parse_ytdlp_info(info, "https://www.instagram.com/reel/CDUMkliABpa/")
+        video_item = next(m for m in result["media"] if m["type"] == "video")
+        assert video_item["url"] == "https://cdn.example.com/p2.mp4"
+        assert video_item["audio_url"] == "https://cdn.example.com/a.m4a"
+
     def test_carousel_picks_best_thumbnail(self):
         info = {
             "id": "CwCarousel1",

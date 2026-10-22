@@ -93,16 +93,34 @@ def _parse_ytdlp_info(info: dict, url: str) -> dict:
     # Media items from formats (video) or thumbnails (image).
     media_items: list[dict] = []
     formats = info.get("formats") or []
-    # Pick best video format if present.
-    video_formats = [f for f in formats if f.get("vcodec") != "none" and f.get("url")]
+    # Pick best video format if present. Instagram serves DASH video-only and
+    # audio-only streams next to progressive ones with sound (codecs often
+    # unknown), so prefer anything not marked audio-less; yt-dlp lists formats
+    # worst to best, which breaks ties.
+    video_formats = [
+        (i, f) for i, f in enumerate(formats)
+        if f.get("vcodec") != "none" and f.get("url")
+    ]
     if video_formats:
-        best = max(video_formats, key=lambda f: f.get("filesize") or f.get("tbr") or 0)
-        media_items.append({
+        with_sound = [(i, f) for i, f in video_formats if f.get("acodec") != "none"]
+        pool = with_sound or video_formats
+        _, best = max(pool, key=lambda p: (p[1].get("filesize") or p[1].get("tbr") or 0, p[0]))
+        item = {
             "type": "video",
             "url": best["url"],
             "alt": info.get("description") or "",
             "duration": info.get("duration"),
-        })
+        }
+        # A separate audio stream is what transcription needs when the chosen
+        # video has none.
+        audio_formats = [
+            (i, f) for i, f in enumerate(formats)
+            if f.get("vcodec") == "none" and f.get("acodec") not in (None, "none") and f.get("url")
+        ]
+        if audio_formats:
+            _, best_audio = max(audio_formats, key=lambda p: (p[1].get("tbr") or 0, p[0]))
+            item["audio_url"] = best_audio["url"]
+        media_items.append(item)
     # Images: thumbnail or entries from thumbnails list.
     thumbs = info.get("thumbnails") or []
     if thumbs:
