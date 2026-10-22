@@ -19,12 +19,197 @@ use tauri_plugin_opener::OpenerExt;
 
 use sidecar::SidecarManager;
 
-// Hotkey modifiers are computed per-platform in quick_panel_hotkey() because
+// Hotkey modifiers are computed per-platform in default_hotkey() because
 // bitflags `|` is not const on keyboard-types 0.7 / bitflags 2.x.
 
 /// Panel geometry. Width is fixed; height follows the content (`panel_resize`).
 const PANEL_WIDTH: f64 = 680.0;
 const PANEL_TOP_FRACTION: f64 = 0.18;
+
+// ── Configurable hotkey ────────────────────────────────────────────────
+
+/// Default hotkey per platform. Used when no saved preference exists.
+fn default_hotkey() -> Shortcut {
+    #[cfg(target_os = "macos")]
+    {
+        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyK)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space)
+    }
+}
+
+/// Human-readable label for a shortcut, e.g. "Ctrl+Shift+Space".
+fn shortcut_label(s: &Shortcut) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mods = s.mods;
+    if mods.contains(Modifiers::CONTROL) {
+        parts.push("Ctrl".into());
+    }
+    if mods.contains(Modifiers::ALT) {
+        parts.push("Alt".into());
+    }
+    if mods.contains(Modifiers::SHIFT) {
+        parts.push("Shift".into());
+    }
+    if mods.contains(Modifiers::SUPER) {
+        #[cfg(target_os = "macos")]
+        parts.push("Cmd".into());
+        #[cfg(not(target_os = "macos"))]
+        parts.push("Win".into());
+    }
+    parts.push(format!("{:?}", s.key));
+    parts.join("+")
+}
+
+/// Parse a human-readable shortcut string like "Ctrl+Shift+Space" into a
+/// `Shortcut`. Returns `None` on any parse failure.
+fn parse_shortcut(s: &str) -> Option<Shortcut> {
+    let parts: Vec<&str> = s.split('+').map(str::trim).collect();
+    if parts.is_empty() || parts.len() > 5 {
+        return None;
+    }
+    let (mod_parts, key_part) = parts.split_at(parts.len() - 1);
+    let key_str = *key_part.first()?;
+
+    let code = match key_str.to_lowercase().as_str() {
+        "space" => Code::Space,
+        "enter" | "return" => Code::Enter,
+        "escape" | "esc" => Code::Escape,
+        "tab" => Code::Tab,
+        "backspace" => Code::Backspace,
+        "delete" => Code::Delete,
+        "up" => Code::ArrowUp,
+        "down" => Code::ArrowDown,
+        "left" => Code::ArrowLeft,
+        "right" => Code::ArrowRight,
+        "home" => Code::Home,
+        "end" => Code::End,
+        "pageup" => Code::PageUp,
+        "pagedown" => Code::PageDown,
+        // F1-F12
+        "f1" => Code::F1,
+        "f2" => Code::F2,
+        "f3" => Code::F3,
+        "f4" => Code::F4,
+        "f5" => Code::F5,
+        "f6" => Code::F6,
+        "f7" => Code::F7,
+        "f8" => Code::F8,
+        "f9" => Code::F9,
+        "f10" => Code::F10,
+        "f11" => Code::F11,
+        "f12" => Code::F12,
+        // Single letters
+        other if other.len() == 1 => {
+            let ch = other.chars().next()?.to_ascii_uppercase();
+            if !ch.is_ascii_alphabetic() {
+                return None;
+            }
+            // Map A-Z to Code::KeyA..Code::KeyZ
+            match ch {
+                'A' => Code::KeyA, 'B' => Code::KeyB, 'C' => Code::KeyC,
+                'D' => Code::KeyD, 'E' => Code::KeyE, 'F' => Code::KeyF,
+                'G' => Code::KeyG, 'H' => Code::KeyH, 'I' => Code::KeyI,
+                'J' => Code::KeyJ, 'K' => Code::KeyK, 'L' => Code::KeyL,
+                'M' => Code::KeyM, 'N' => Code::KeyN, 'O' => Code::KeyO,
+                'P' => Code::KeyP, 'Q' => Code::KeyQ, 'R' => Code::KeyR,
+                'S' => Code::KeyS, 'T' => Code::KeyT, 'U' => Code::KeyU,
+                'V' => Code::KeyV, 'W' => Code::KeyW, 'X' => Code::KeyX,
+                'Y' => Code::KeyY, 'Z' => Code::KeyZ,
+                _ => return None,
+            }
+        }
+        // Digits
+        other if other.len() == 1 && other.chars().next()?.is_ascii_digit() => {
+            match other {
+                "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2,
+                "3" => Code::Digit3, "4" => Code::Digit4, "5" => Code::Digit5,
+                "6" => Code::Digit6, "7" => Code::Digit7, "8" => Code::Digit8,
+                "9" => Code::Digit9,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+
+    let mut mods = Modifiers::empty();
+    for m in mod_parts {
+        match m.to_lowercase().as_str() {
+            "ctrl" | "control" => mods |= Modifiers::CONTROL,
+            "alt" | "option" => mods |= Modifiers::ALT,
+            "shift" => mods |= Modifiers::SHIFT,
+            "super" | "cmd" | "win" | "meta" => mods |= Modifiers::SUPER,
+            _ => return None,
+        }
+    }
+
+    Some(Shortcut::new(Some(mods), code))
+}
+
+fn hotkey_config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("hotkey.json"))
+}
+
+fn read_saved_hotkey(app: &AppHandle) -> Option<String> {
+    let text = std::fs::read_to_string(hotkey_config_path(app).ok()?).ok()?;
+    serde_json::from_str::<String>(&text).ok()
+}
+
+fn save_hotkey(app: &AppHandle, label: &str) -> Result<(), String> {
+    let path = hotkey_config_path(app)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string(label).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn hotkey_get(app: AppHandle) -> Value {
+    let saved = read_saved_hotkey(&app);
+    let current = saved.as_deref().map(|s| s.to_string());
+    let default_label = shortcut_label(&default_hotkey());
+    json!({
+        "current": current.clone().unwrap_or_else(|| default_label.clone()),
+        "default": default_label,
+        "is_default": current.is_none(),
+    })
+}
+
+#[tauri::command]
+fn hotkey_set(app: AppHandle, shortcut: String) -> Result<Value, String> {
+    let parsed = parse_shortcut(&shortcut)
+        .ok_or_else(|| format!("invalid shortcut format: {shortcut}"))?;
+
+    // Unregister the old hotkey first (ignore errors — may not be registered).
+    let _ = app.global_shortcut().unregister_all();
+
+    // Try to register the new one.
+    if let Err(e) = app.global_shortcut().register(parsed) {
+        // Re-register the previous working hotkey so the user isn't left
+        // without any way to open the panel.
+        let fallback = read_saved_hotkey(&app)
+            .and_then(|s| parse_shortcut(&s))
+            .unwrap_or_else(default_hotkey);
+        let _ = app.global_shortcut().register(fallback);
+        return Ok(json!({
+            "ok": false,
+            "error": format!("could not register: {e}"),
+        }));
+    }
+
+    // Persist only after successful registration.
+    let label = shortcut_label(&parsed);
+    save_hotkey(&app, &label)?;
+
+    Ok(json!({ "ok": true, "label": label }))
+}
 
 #[tauri::command]
 async fn sidecar_initialize(app: AppHandle, sc: State<'_, SidecarManager>) -> Result<Value, String> {
@@ -145,11 +330,16 @@ pub(crate) fn fire_scrape(
                  $notifier.Show($toast)",
                 title, body
             );
-            let _ = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let _ = std::process::Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn();
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -345,30 +535,28 @@ fn place_panel(panel: &tauri::WebviewWindow) {
 }
 
 /// Read the active browser tab's URL via Windows UI Automation.
-/// Walks the foreground window's UIA tree looking for an Edit/Document control
-/// whose Value or Name looks like a URL. Supports Chrome, Edge, Brave, Firefox.
-/// Returns None when no browser is focused or UIA fails — the panel falls back
-/// to clipboard text in that case.
+/// windows-sys 0.59 lacks VARIANT, IUIAutomationElementArray, and SysFreeString
+/// so direct COM UIA is not viable without pulling the full `windows` crate.
+/// Uses a hidden PowerShell with CREATE_NO_WINDOW instead — ~200-400ms on
+/// modern hardware, no console flash. The panel opens instantly with clipboard
+/// text and updates when this returns.
 #[cfg(target_os = "windows")]
 fn active_browser_url() -> Option<String> {
-    // PowerShell + UIAutomation is the pragmatic route: the windows-sys UIA
-    // bindings are incomplete in 0.59 and pulling a full COM UIA crate adds
-    // weight for a best-effort feature. The script runs in <100ms on modern
-    // hardware and only fires once per panel show.
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
     let script = r#"
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 try {
     $fg = [System.Windows.Automation.AutomationElement]::FocusedElement
     if (-not $fg) { exit }
-    # Walk up to the top-level window so we can search its full tree.
     $root = $fg
     while ($root.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) {
         $parent = [TreeWalker]::ParentWalker.GetParent($root)
         if (-not $parent) { break }
         $root = $parent
     }
-    # Browser address bars are Edit or Document controls with a URL value.
     $cond = New-Object System.Windows.Automation.OrCondition(
         (New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
@@ -389,6 +577,7 @@ try {
 "#;
     let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
     if !out.status.success() {
@@ -449,14 +638,15 @@ fn show_main(app: &AppHandle) {
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quick = MenuItem::with_id(app, "quick", "Quick panel", true, None::<&str>)?;
     let library = MenuItem::with_id(app, "library", "Library…", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&quick, &library, &quit])?;
+    let menu = Menu::with_items(app, &[&quick, &library, &settings, &quit])?;
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().expect("bundled icon").clone())
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quick" => toggle_panel(app),
-            "library" => show_main(app),
+            "library" | "settings" => show_main(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -464,31 +654,28 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// macOS: Cmd+Shift+K. Windows: Ctrl+Shift+Space (Ctrl+Space is taken on this PC).
-fn quick_panel_hotkey() -> Shortcut {
-    #[cfg(target_os = "macos")]
-    {
-        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyK)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space)
-    }
-}
-
 fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
+    // Load saved hotkey or fall back to platform default.
+    let hotkey = read_saved_hotkey(app)
+        .and_then(|s| parse_shortcut(&s))
+        .unwrap_or_else(default_hotkey);
+
     app.plugin(
         tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(|app, pressed, event| {
-                if event.state() == ShortcutState::Pressed && pressed == &quick_panel_hotkey() {
+            .with_handler(move |app, pressed, event| {
+                if event.state() == ShortcutState::Pressed && pressed == &hotkey {
                     toggle_panel(app);
                 }
             })
             .build(),
     )?;
-    // A taken hotkey is a nuisance, not a fatal error.
-    if let Err(e) = app.global_shortcut().register(quick_panel_hotkey()) {
-        log::warn!("global shortcut CmdOrCtrl+Shift+K not registered: {e}");
+    // A taken hotkey is a nuisance, not a fatal error — the user can pick
+    // another in Settings. Log it so they see why nothing happens.
+    if let Err(e) = app.global_shortcut().register(hotkey) {
+        log::warn!(
+            "global shortcut {} not registered: {e}",
+            shortcut_label(&hotkey)
+        );
     }
     Ok(())
 }
@@ -527,6 +714,8 @@ fn main() {
             schedule::schedule_set,
             autostart::autostart_get,
             autostart::autostart_set,
+            hotkey_get,
+            hotkey_set,
             about::about_info
         ])
         .setup(|app| {

@@ -283,10 +283,15 @@ pub fn pick_folder(start: Option<String>) -> Result<Option<String>, String> {
                Write-Output $d.SelectedPath \
              }}"
         );
-        let out = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()
-            .map_err(|e| e.to_string())?;
+        let out = {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            std::process::Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map_err(|e| e.to_string())?
+        };
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
             return Err(err.trim().to_string());
@@ -305,7 +310,7 @@ pub fn pick_folder(start: Option<String>) -> Result<Option<String>, String> {
 }
 
 /// Read one secret from the platform store. macOS uses `security find-generic-password`;
-/// Windows uses PowerShell's `Get-StoredCredential` against Credential Manager.
+/// Windows uses Win32 CredReadW (no PowerShell, no argv leakage).
 /// Returns None when the entry does not exist or the read fails.
 fn keychain_get(name: &str) -> Option<String> {
     #[cfg(target_os = "macos")]
@@ -322,24 +327,31 @@ fn keychain_get(name: &str) -> Option<String> {
     }
     #[cfg(target_os = "windows")]
     {
-        // Credential Manager target: "iofast:<ACCOUNT>". Get-StoredCredential
-        // returns $null when the target does not exist; we print only on hit so
-        // an empty stdout means "not stored" without parsing error text.
-        let target = format!("{KEYCHAIN_SERVICE}:{name}");
-        let script = format!(
-            "$c = Get-StoredCredential -Target '{}' -ErrorAction SilentlyContinue; \
-             if ($c) {{ $c.GetNetworkCredential().Password }}",
-            target.replace('\'', "''")
-        );
-        let out = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        unsafe {
+            use windows_sys::Win32::Security::Credentials::{CredReadW, CREDENTIALW, CRED_TYPE_GENERIC};
+            let target: Vec<u16> = OsStr::new(&format!("{KEYCHAIN_SERVICE}:{name}"))
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
+            if CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred) == 0 {
+                return None;
+            }
+            if cred.is_null() || (*cred).CredentialBlobSize == 0 || (*cred).CredentialBlob.is_null() {
+                windows_sys::Win32::Security::Credentials::CredFree(cred as *mut _);
+                return None;
+            }
+            let blob = std::slice::from_raw_parts(
+                (*cred).CredentialBlob,
+                (*cred).CredentialBlobSize as usize,
+            );
+            // Credentials are stored as UTF-8 bytes (written by keychain_set).
+            let value = String::from_utf8_lossy(blob).trim().to_string();
+            windows_sys::Win32::Security::Credentials::CredFree(cred as *mut _);
+            (!value.is_empty()).then_some(value)
         }
-        let value = String::from_utf8(out.stdout).ok()?.trim().to_string();
-        (!value.is_empty()).then_some(value)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -359,10 +371,8 @@ pub fn keychain_status() -> Map<String, Value> {
 }
 
 /// Store one secret. macOS uses `security add-generic-password` with the value
-/// on stdin (argv is world-readable in `ps`). Windows uses `cmdkey /generic:`
-/// which accepts the password on `/pass:` — also visible in `tasklist /v` for
-/// the brief spawn, but there is no stdin alternative on Windows; the sidecar
-/// still receives keys only in the request body, never on argv.
+/// on stdin (argv is world-readable in `ps`). Windows uses Win32 CredWriteW
+/// directly — no command line, no PowerShell, no argv leakage.
 #[tauri::command]
 pub fn keychain_set(name: String, value: String) -> Result<(), String> {
     if !KEY_NAMES.contains(&name.as_str()) {
@@ -401,16 +411,38 @@ pub fn keychain_set(name: String, value: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        let target = format!("{KEYCHAIN_SERVICE}:{name}");
-        // cmdkey /generic:TARGET /user:ACCOUNT /pass:VALUE — upsert semantics.
-        let status = std::process::Command::new("cmdkey")
-            .args(["/generic:", &target, "/user:", &name, "/pass:", &value])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err("Credential Manager refused the item".into());
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        unsafe {
+            use windows_sys::Win32::Security::Credentials::{
+                CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+            };
+            let target: Vec<u16> = OsStr::new(&format!("{KEYCHAIN_SERVICE}:{name}"))
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let blob = value.as_bytes();
+            let mut target_mut = target.clone();
+            let cred = CREDENTIALW {
+                Flags: 0,
+                Type: CRED_TYPE_GENERIC,
+                TargetName: target_mut.as_mut_ptr(),
+                Comment: std::ptr::null_mut(),
+                LastWritten: windows_sys::Win32::Foundation::FILETIME {
+                    dwLowDateTime: 0,
+                    dwHighDateTime: 0,
+                },
+                CredentialBlobSize: blob.len() as u32,
+                CredentialBlob: blob.as_ptr() as *mut u8,
+                Persist: CRED_PERSIST_LOCAL_MACHINE,
+                AttributeCount: 0,
+                Attributes: std::ptr::null_mut(),
+                TargetAlias: std::ptr::null_mut(),
+                UserName: std::ptr::null_mut(),
+            };
+            if CredWriteW(&cred, 0) == 0 {
+                return Err("Credential Manager refused the item".into());
+            }
         }
         if keychain_get(&name).as_deref() != Some(value.as_str()) {
             return Err("Credential Manager did not store the value".into());
@@ -440,14 +472,23 @@ pub fn keychain_clear(name: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        let target = format!("{KEYCHAIN_SERVICE}:{name}");
-        // /delete is silent on missing targets — same idempotency as macOS.
-        std::process::Command::new("cmdkey")
-            .args(["/delete:", &target])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| e.to_string())?;
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        unsafe {
+            use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
+            let target: Vec<u16> = OsStr::new(&format!("{KEYCHAIN_SERVICE}:{name}"))
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            // CredDeleteW returns 0 on failure; ERROR_NOT_FOUND (1168) is fine.
+            let rc = CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0);
+            if rc == 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() != Some(1168) {
+                    return Err(format!("could not delete credential: {err}"));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -753,6 +794,12 @@ fn stdio_config_json(npx: &Path, store: &Path) -> String {
 /// breaks if the user later removes that node version. Re-index to refresh it.
 fn npx_command(npx: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new(npx);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     if let Some(parent) = npx.parent() {
         let path = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", format!("{}:{}", parent.display(), path));
