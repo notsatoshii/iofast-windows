@@ -96,6 +96,12 @@ hiddenimports = [
 # detection works in the frozen sidecar.
 _yt_dlp_datas, _yt_dlp_binaries, _yt_dlp_hiddenimports = collect_all("yt_dlp")
 
+# patchright's driver/ tree (node.exe + package/cli.js) is binary data that
+# hiddenimports alone cannot capture. collect_all gathers the full driver so
+# scrapling sessions and browser_helper can spawn the node subprocess in
+# frozen builds. Without this, every browser launch fails with FileNotFoundError.
+_patchright_datas, _patchright_binaries, _patchright_hiddenimports = collect_all("patchright")
+
 datas = (
     collect_data_files("trafilatura")  # settings.cfg + language data
     # Fingerprint datapoints: scrapling's static header generation reads these
@@ -103,6 +109,7 @@ datas = (
     + collect_data_files("apify_fingerprint_datapoints")
     + collect_data_files("browserforge")
     + _yt_dlp_datas
+    + _patchright_datas
 )
 
 a = Analysis(
@@ -125,8 +132,10 @@ _PLAYWRIGHT_PREFIXES = ("playwright/driver",)
 a.datas = [e for e in a.datas if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
 a.binaries = [e for e in a.binaries if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
 
-# Merge yt_dlp binaries from collect_all into the analysis.
-a.binaries += _yt_dlp_binaries
+# Merge yt_dlp and patchright binaries from collect_all into the analysis.
+# patchright's node.exe driver is a binary that must be present for any
+# browser launch (social_browser, dynamic tier, spider sessions).
+a.binaries += _yt_dlp_binaries + _patchright_binaries
 
 pyz = PYZ(a.pure)
 exe = EXE(
