@@ -215,33 +215,146 @@ fn succeeded(payload: &Value) -> bool {
         && result.get("exit_code").and_then(Value::as_i64) == Some(0)
 }
 
+/// Global schedule state for vault.check, digest.make, and watch.run.
+/// Stored in config.json alongside other settings. Shape:
+/// `{ "vault_check": {"every":"daily"|"weekly","last_ms":u64},
+///   "digest": {"every":"weekly","last_ms":u64},
+///   "watch": {"every":"daily"|"weekly","last_ms":u64} }`
+fn global_schedule_key(key: &str) -> String {
+    format!("__global__:{key}")
+}
+
+fn read_global_last_ms(app: &AppHandle, key: &str) -> u64 {
+    let map = read_schedules(app);
+    let gk = global_schedule_key(key);
+    map.get(&gk)
+        .and_then(|v| v.get("last_ms"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn stamp_global(app: &AppHandle, key: &str, ms: u64) {
+    let gk = global_schedule_key(key);
+    let mut map = read_schedules(app);
+    let entry = map
+        .entry(gk)
+        .or_insert_with(|| json!({}));
+    if let Some(obj) = entry.as_object_mut() {
+        obj.insert("last_ms".to_string(), json!(ms));
+    }
+    let _ = write_schedules(app, &map);
+}
+
+/// Read the cadence for a global task from config. Returns "daily", "weekly", or None.
+fn global_cadence(app: &AppHandle, field: &str) -> Option<String> {
+    crate::store::config_get(app.clone())
+        .ok()
+        .and_then(|c| c["config"][field].as_str().map(String::from))
+}
+
+/// Fire vault.check via sidecar RPC.
+fn fire_vault_check(app: &AppHandle, sc: &SidecarManager) -> Result<(), String> {
+    let handle = app.clone();
+    let sc = sc.clone();
+    tauri::async_runtime::spawn(async move {
+        match sc.request(&handle, "vault.check", json!({})).await {
+            Ok(v) => log::info!("scheduled vault.check done: {v}"),
+            Err(e) => log::warn!("scheduled vault.check failed: {e}"),
+        }
+    });
+    Ok(())
+}
+
+/// Fire digest.make via sidecar RPC.
+fn fire_digest(app: &AppHandle, sc: &SidecarManager) -> Result<(), String> {
+    let handle = app.clone();
+    let sc = sc.clone();
+    tauri::async_runtime::spawn(async move {
+        match sc.request(&handle, "digest.make", json!({})).await {
+            Ok(v) => log::info!("scheduled digest.make done: {v}"),
+            Err(e) => log::warn!("scheduled digest.make failed: {e}"),
+        }
+    });
+    Ok(())
+}
+
+/// Fire watch.run via sidecar RPC.
+fn fire_watch_run(app: &AppHandle, sc: &SidecarManager) -> Result<(), String> {
+    let handle = app.clone();
+    let sc = sc.clone();
+    tauri::async_runtime::spawn(async move {
+        match sc
+            .request(&handle, "watch.run", json!({"if_due": true}))
+            .await
+        {
+            Ok(v) => log::info!("scheduled watch.run done: {v}"),
+            Err(e) => log::warn!("scheduled watch.run failed: {e}"),
+        }
+    });
+    Ok(())
+}
+
 pub fn spawn_scheduler(app: AppHandle, sc: SidecarManager) {
     std::thread::spawn(move || loop {
         std::thread::sleep(TICK);
+        let now = now_ms();
+
+        // --- Per-run auto re-scrape (existing) ---
         // One scrape at a time (engine enforces it with BUSY -32000). If one is
         // already running, wait for a later tick rather than stacking a doomed request.
-        if crate::scrape_in_flight() {
-            continue;
+        if !crate::scrape_in_flight() {
+            if let Some((dir, url, scope, use_proxy)) = next_due(&read_schedules(&app), now) {
+                if let Ok(rid) = crate::fire_scrape(
+                    &app,
+                    &sc,
+                    &url,
+                    &dir,
+                    scope.as_deref(),
+                    None,
+                    None,
+                    true,
+                    false,
+                    use_proxy,
+                    false, // unattended: no human to clear a challenge
+                ) {
+                    stamp(&app, &dir, "last_attempt_ms", now);
+                    stamp_on_success(&app, rid, dir);
+                }
+            }
         }
-        let now = now_ms();
-        let Some((dir, url, scope, use_proxy)) = next_due(&read_schedules(&app), now) else {
-            continue;
-        };
-        if let Ok(rid) = crate::fire_scrape(
-            &app,
-            &sc,
-            &url,
-            &dir,
-            scope.as_deref(),
-            None,
-            None,
-            true,
-            false,
-            use_proxy,
-            false, // unattended: no human to clear a challenge
-        ) {
-            stamp(&app, &dir, "last_attempt_ms", now);
-            stamp_on_success(&app, rid, dir);
+
+        // --- Global scheduled tasks: vault.check, digest.make, watch.run ---
+        // These are independent of per-run schedules and fire based on config cadences.
+        // Each has its own last_ms so they don't interfere with each other.
+
+        // vault.check
+        if let Some(cadence) = global_cadence(&app, "vault_check_schedule") {
+            let last = read_global_last_ms(&app, "vault_check");
+            if due(now, &cadence, last) {
+                if fire_vault_check(&app, &sc).is_ok() {
+                    stamp_global(&app, "vault_check", now);
+                }
+            }
+        }
+
+        // digest.make
+        if let Some(cadence) = global_cadence(&app, "digest_schedule") {
+            let last = read_global_last_ms(&app, "digest");
+            if due(now, &cadence, last) {
+                if fire_digest(&app, &sc).is_ok() {
+                    stamp_global(&app, "digest", now);
+                }
+            }
+        }
+
+        // watch.run
+        if let Some(cadence) = global_cadence(&app, "watch_schedule") {
+            let last = read_global_last_ms(&app, "watch");
+            if due(now, &cadence, last) {
+                if fire_watch_run(&app, &sc).is_ok() {
+                    stamp_global(&app, "watch", now);
+                }
+            }
         }
     });
 }

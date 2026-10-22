@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 
-import { countdown, DEFAULT_THRESHOLD, overThreshold, type Boot } from "../lib";
+import { countdown, type Boot } from "../lib";
 import { parseTarget, scopePrefix } from "./scope";
 
 /** docs/RPC.md: `params` of an `event` notification IS the engine event dict. */
@@ -15,46 +15,40 @@ type EngineEvent = {
   /** `human_required` only: the human-solve budget, in seconds. */
   timeout?: number;
 };
-type ScrapeResult = {
+
+/** docs/RPC.md `detect`: synchronous URL → source routing. */
+type DetectResult = {
+  source: string;
+  label: string;
+  modes: string[];
+  needs_signin: boolean;
+};
+
+type GrabResult = {
   written: number;
   out_dir: string;
   exit_code: number;
   cancelled: boolean;
+  vault_filed?: boolean;
+  vault_path?: string;
+  source_note?: string;
 };
-type ScrapeDone = { rid: number; result?: ScrapeResult; error?: string };
-type EstimateResult = {
-  page_count: number | null;
-  source: string | null;
-  scope: string;
-  elapsed_ms: number;
-};
-type MapNode = { pages: number; total: number; children: Record<string, MapNode> };
-type MapResult = { tree: MapNode; scope: string };
-
-type Section = { seg: string; total: number };
-type MapLanded = { total: number; sections: Section[] };
-
-/** Pre-Enter annotation. `gone` = we stopped waiting; the scrape never did. */
-type Estimate =
-  | { k: "none" }
-  | { k: "estimating" }
-  | { k: "landed"; pages: number | null }
-  | { k: "gone" };
+type GrabDone = { rid: number; result?: GrabResult; error?: string };
 
 type Phase =
   | { k: "idle" }
   | { k: "running" }
-  | { k: "done"; written: number; outDir: string }
+  | { k: "done"; written: number; outDir: string; vaultPath?: string; sourceNote?: string }
   | { k: "stopped"; written: number; outDir: string }
   | { k: "failed"; message: string; outDir?: string };
 
-type Run = { rid: number; url: string; scope: string; out: string };
+type Run = { rid: number; url: string; out: string };
 /** A visible browser window is waiting on the user (docs/RPC.md `human_required`).
  *  Absolute deadline, not a remaining count, so the countdown cannot drift. */
 type Solve = { deadline: number };
 
 const DEBOUNCE_MS = 250;
-/** Client-side abandon. docs/RPC.md: the server's own budget is 800ms. */
+/** Client-side abandon for detect. docs/RPC.md: detect is synchronous, fast. */
 const ABANDON_MS = 1000;
 /** Card gutter, kept in sync with --gutter in panel.css. */
 const GUTTER = 10;
@@ -68,29 +62,34 @@ const tidy = (message: string) =>
 
 const tail = (path: string) => `…/${path.split("/").slice(-2).join("/")}`;
 
+/** Source badge label from detect result. */
+const sourceLabel = (source: string): string => {
+  switch (source) {
+    case "web": return "Web";
+    case "github": return "GitHub";
+    case "youtube": return "YouTube";
+    case "instagram": return "Instagram";
+    case "x": return "X";
+    default: return source;
+  }
+};
+
 export default function Panel() {
   const [url, setUrl] = useState("");
   const [showSeq, setShowSeq] = useState(0);
-  const [estimate, setEstimate] = useState<Estimate>({ k: "none" });
   const [phase, setPhase] = useState<Phase>({ k: "idle" });
   const [pages, setPages] = useState(0);
   const [note, setNote] = useState("");
-  const [map, setMap] = useState<MapLanded | null>(null);
-  const [narrowing, setNarrowing] = useState(false);
-  /** Set when Enter hit the large-crawl threshold; cleared by either answer. */
-  const [gate, setGate] = useState<number | null>(null);
   const [solve, setSolve] = useState<Solve | null>(null);
   const [left, setLeft] = useState(0);
-  const threshold = useRef(DEFAULT_THRESHOLD);
+  const [fileToVault, setFileToVault] = useState(false);
+  const [detectSource, setDetectSource] = useState<string | null>(null);
+  const [needsSignin, setNeedsSignin] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<Run | null>(null);
-  /** Scope to restart with once the cancelled run lands (Narrow). */
-  const restartRef = useRef<string | null>(null);
-  const estSeq = useRef(0);
-  const lastEstimateError = useRef<string | null>(null);
-  const immediate = useRef(false);
+  const detectSeq = useRef(0);
   const timing = useRef({ shown: 0, interactive: 0, sent: true });
 
   const target = parseTarget(url);
@@ -104,97 +103,91 @@ export default function Panel() {
       show_to_interactive_ms: Math.round(timing.current.interactive),
       estimate_ms: ms === null ? null : Math.round(ms),
       estimate_outcome: outcome,
-      estimate_error: lastEstimateError.current,
+      estimate_error: null,
     });
   };
 
-  const runEstimate = useCallback(async (href: string) => {
-    const seq = ++estSeq.current;
-    setEstimate({ k: "estimating" });
-    performance.mark("iofast:estimate-fired");
+  /** Call sidecar_detect on URL change to show source badge. */
+  const runDetect = useCallback(async (href: string) => {
+    const seq = ++detectSeq.current;
+    setDetectSource(null);
+    setNeedsSignin(false);
     const started = performance.now();
     const landed = await Promise.race([
-      invoke<EstimateResult>("sidecar_estimate", { url: href }).catch((error) => {
-        lastEstimateError.current = String(error);
-        return null;
-      }),
+      invoke<DetectResult>("sidecar_detect", { url: href }).catch(() => null),
       new Promise<null>((done) => setTimeout(() => done(null), ABANDON_MS)),
     ]);
-    if (seq !== estSeq.current) return; // superseded by a keystroke or a new show
+    if (seq !== detectSeq.current) return;
     const elapsed = performance.now() - started;
-    performance.measure(
-      landed ? "iofast:estimate-landed" : "iofast:estimate-abandoned",
-      "iofast:estimate-fired",
-    );
-    setEstimate(landed ? { k: "landed", pages: landed.page_count } : { k: "gone" });
-    report(landed ? "landed" : "abandoned", elapsed);
+    if (landed) {
+      setDetectSource(landed.source);
+      setNeedsSignin(landed.needs_signin);
+      report("landed", elapsed);
+    } else {
+      report("abandoned", elapsed);
+    }
   }, []);
 
-  const startScrape = useCallback(async (href: string, at: string, out: string) => {
+  const startGrab = useCallback(async (href: string, out: string, file: boolean) => {
     setPages(0);
     setNote("");
     setPhase({ k: "running" });
     try {
-      const rid = await invoke<number>("sidecar_scrape_start", {
+      const rid = await invoke<number>("sidecar_grab_start", {
         url: href,
         out,
-        scope: at,
-        depth: null,
-        maxPages: null,
+        mode: "page",
+        limit: null,
+        lang: null,
+        file,
+        vault: null,
       });
-      runRef.current = { rid, url: href, scope: at, out };
+      runRef.current = { rid, url: href, out };
     } catch (e) {
       setPhase({ k: "failed", message: reason(e) });
     }
   }, []);
 
-  // Speed 1. Debounced while typing, immediate on a clipboard prefill. Never
-  // gates Enter — the estimate only ever writes the annotation line.
+  // Debounced detect while typing, immediate on clipboard prefill.
   useEffect(() => {
-    if (phase.k !== "idle") return; // a finished run owns the annotation line
+    if (phase.k !== "idle") return;
     if (!target) {
-      estSeq.current++;
-      setEstimate({ k: "none" });
+      detectSeq.current++;
+      setDetectSource(null);
+      setNeedsSignin(false);
       return;
     }
-    const delay = immediate.current ? 0 : DEBOUNCE_MS;
-    immediate.current = false;
+    const delay = DEBOUNCE_MS;
     const href = target.href;
-    const timer = setTimeout(() => void runEstimate(href), delay);
+    const timer = setTimeout(() => void runDetect(href), delay);
     return () => clearTimeout(timer);
-    // target is derived from url; showSeq re-fires when the same URL is re-shown.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, showSeq, phase.k, runEstimate]);
+  }, [url, showSeq, phase.k, runDetect]);
 
-  // The gate threshold is a setting; the panel reads it once and never writes it.
+  // Read file_to_vault config on mount.
   useEffect(() => {
     invoke<Boot>("config_get")
       .then((boot) => {
-        if (boot.config) threshold.current = boot.config.large_crawl_threshold;
+        if (boot.config) setFileToVault(boot.config.file_to_vault ?? false);
       })
       .catch(() => undefined);
   }, []);
 
   useEffect(() => {
     const shown = listen<{ clipboard: string | null; active_url?: string | null }>("panel-shown", (e) => {
-      estSeq.current++;
+      detectSeq.current++;
       runRef.current = null;
-      restartRef.current = null;
       setPhase({ k: "idle" });
       setPages(0);
       setNote("");
-      setMap(null);
-      setNarrowing(false);
-      setGate(null);
-      setEstimate({ k: "none" });
+      setSolve(null);
+      setDetectSource(null);
+      setNeedsSignin(false);
 
       performance.mark("iofast:panel-shown");
       timing.current = { shown: performance.now(), interactive: 0, sent: false };
-      // Prefer the active browser URL (from UI Automation on Windows) over
-      // clipboard text — it's what the user is actually looking at.
       const raw = e.payload.active_url || e.payload.clipboard || "";
       const pasted = parseTarget(raw);
-      immediate.current = pasted !== null;
       setUrl(pasted ? pasted.href : "");
       setShowSeq((n) => n + 1);
       inputRef.current?.focus();
@@ -226,17 +219,11 @@ export default function Panel() {
       if (typeof e.payload.message === "string") setNote(tidy(e.payload.message));
     });
 
-    const done = listen<ScrapeDone>("scrape-done", (e) => {
+    const done = listen<GrabDone>("grab-done", (e) => {
       const run = runRef.current;
       if (!run || e.payload.rid !== run.rid) return;
-      const restart = restartRef.current;
-      restartRef.current = null;
       runRef.current = null;
-      setSolve(null);  // a sidecar that dies mid-solve emits no human_done
-      if (restart) {
-        void startScrape(run.url, restart, run.out);
-        return;
-      }
+      setSolve(null);
       const { result, error } = e.payload;
       if (error || !result) {
         setPhase({ k: "failed", message: error ?? "the sidecar returned nothing" });
@@ -249,7 +236,13 @@ export default function Panel() {
           outDir: result.written > 0 ? result.out_dir : undefined,
         });
       } else {
-        setPhase({ k: "done", written: result.written, outDir: result.out_dir });
+        setPhase({
+          k: "done",
+          written: result.written,
+          outDir: result.out_dir,
+          vaultPath: result.vault_path,
+          sourceNote: result.source_note,
+        });
       }
     });
 
@@ -257,10 +250,9 @@ export default function Panel() {
     return () => {
       void all.then((fns) => fns.forEach((f) => f()));
     };
-  }, [startScrape]);
+  }, [startGrab]);
 
-  // Tick the human-solve countdown against an absolute deadline, so a slow
-  // paint never reads as more time than the engine actually allows.
+  // Tick the human-solve countdown against an absolute deadline.
   useEffect(() => {
     if (!solve) return;
     const tick = () => setLeft(solve.deadline - Date.now());
@@ -269,8 +261,7 @@ export default function Panel() {
     return () => clearInterval(timer);
   }, [solve]);
 
-  // Transparent window: an oversized one would eat clicks meant for what is
-  // behind it, so the window tracks the card instead of the other way round.
+  // Transparent window: track card height.
   useLayoutEffect(() => {
     const card = cardRef.current;
     if (!card) return;
@@ -285,36 +276,14 @@ export default function Panel() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (gate !== null || narrowing) {
-        setGate(null);
-        setNarrowing(false);
-        inputRef.current?.focus();
-        return;
-      }
       void invoke("panel_hide");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [narrowing, gate]);
+  }, []);
 
-  // Speed 2. Scope is derived locally, so this never waits on the estimate.
-  const submit = async (confirmed = false) => {
+  const submit = async () => {
     if (!target || !scope || phase.k === "running") return;
-    // Large-crawl gate: only an estimate that actually landed can trip it, so
-    // Enter still commits immediately whenever the pre-Enter pass came back empty.
-    if (
-      !confirmed &&
-      estimate.k === "landed" &&
-      estimate.pages !== null &&
-      overThreshold(estimate.pages, threshold.current)
-    ) {
-      setGate(estimate.pages);
-      return;
-    }
-    setGate(null);
-    estSeq.current++;
-    setMap(null);
-    setNarrowing(false);
     let out: string;
     try {
       out = await invoke<string>("library_dir", { host: target.host, scope });
@@ -322,18 +291,7 @@ export default function Panel() {
       setPhase({ k: "failed", message: reason(e) });
       return;
     }
-    await startScrape(target.href, scope, out);
-    // Concurrent by contract (docs/RPC.md `map`): an offer, never a gate.
-    invoke<MapResult>("sidecar_map", { url: target.href, scope })
-      .then((r) =>
-        setMap({
-          total: r.tree.total,
-          sections: Object.entries(r.tree.children)
-            .map(([seg, node]) => ({ seg, total: node.total }))
-            .sort((a, b) => b.total - a.total),
-        }),
-      )
-      .catch(() => undefined);
+    await startGrab(target.href, out, fileToVault);
   };
 
   const cancel = () => {
@@ -343,15 +301,18 @@ export default function Panel() {
     void invoke("sidecar_cancel", { rid: run.rid }).catch(() => undefined);
   };
 
-  /** Cancel the running scrape, then restart it under the chosen section. */
-  const narrowTo = (seg: string) => {
-    const run = runRef.current;
-    if (!run) return;
-    restartRef.current = `${run.scope}${seg}/`;
-    setNarrowing(false);
-    setMap(null); // the tree described the old scope
-    setNote("switching scope…");
-    void invoke("sidecar_cancel", { rid: run.rid }).catch(() => undefined);
+  const toggleFileToVault = () => {
+    const next = !fileToVault;
+    setFileToVault(next);
+    void invoke("config_set", { patch: { file_to_vault: next } }).catch(() => undefined);
+  };
+
+  const openInObsidian = () => {
+    if (phase.k !== "done" || !phase.vaultPath || !phase.sourceNote) return;
+    // Extract vault name from vault_path (last segment).
+    const vaultName = phase.vaultPath.split(/[\\/]/).pop() ?? "";
+    const uri = `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(phase.sourceNote)}`;
+    void invoke("open_path", { path: uri });
   };
 
   const running = phase.k === "running";
@@ -373,22 +334,40 @@ export default function Panel() {
           spellCheck={false}
           autoComplete="off"
           autoCorrect="off"
-          aria-label="Documentation URL"
-          placeholder="Paste a docs URL"
+          aria-label="URL to grab"
+          placeholder="Paste a URL"
           onChange={(e) => {
             if (phase.k !== "idle" && phase.k !== "running") setPhase({ k: "idle" });
-            setGate(null);
             setUrl(e.target.value);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              void submit(gate !== null);
+              void submit();
             }
           }}
         />
+        {detectSource && !running && (
+          <span className="badge" title={detectSource}>{sourceLabel(detectSource)}</span>
+        )}
         {target && !running && <kbd className="enter">↵</kbd>}
       </div>
+
+      {needsSignin && !running && (
+        <div className="banner warn" role="status">
+          <span>This source requires sign-in first</span>
+        </div>
+      )}
+
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={fileToVault}
+          onChange={toggleFileToVault}
+          disabled={running}
+        />
+        <span>File to vault</span>
+      </label>
 
       <div className="meta">
         <div className="meta-text" aria-live="polite">
@@ -410,16 +389,10 @@ export default function Panel() {
             <span className="note bad">{phase.message}</span>
           ) : url.trim() === "" ? null : !target ? (
             <span className="note">not a URL yet</span>
-          ) : estimate.k === "estimating" ? (
-            <span className="note pulse">sizing {scope}</span>
-          ) : estimate.k === "landed" && estimate.pages !== null ? (
-            <span className="note">
-              <span className="approx">≈</span> {plural(estimate.pages, "page")} · {scope}
-            </span>
-          ) : estimate.k === "none" ? (
+          ) : detectSource ? (
             <span className="note">{scope}</span>
           ) : (
-            <span className="note">no estimate · {scope}</span>
+            <span className="note pulse">detecting…</span>
           )}
         </div>
         <div className="meta-action">
@@ -427,6 +400,21 @@ export default function Panel() {
             <button type="button" className="btn" onClick={cancel}>
               Cancel
             </button>
+          ) : phase.k === "done" ? (
+            <>
+              {phase.vaultPath && phase.sourceNote && (
+                <button type="button" className="btn" onClick={openInObsidian}>
+                  Open in Obsidian
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void invoke("open_path", { path: phase.outDir })}
+              >
+                Open folder
+              </button>
+            </>
           ) : outDir ? (
             <button
               type="button"
@@ -439,20 +427,6 @@ export default function Panel() {
         </div>
       </div>
 
-      {gate !== null && (
-        <div className="gate">
-          <span>This site maps to ≈{plural(gate, "page")} — scrape anyway?</span>
-          <div className="acts">
-            <button type="button" className="btn go" onClick={() => void submit(true)}>
-              Scrape {gate}
-            </button>
-            <button type="button" className="btn" onClick={() => setGate(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
       {solve && (
         <div className="banner solve" role="status">
           <span>
@@ -461,33 +435,7 @@ export default function Panel() {
               {countdown(left)}
             </span>
           </span>
-          {/* No Stop here: the panel's own Cancel is two rows up and does the
-              same thing (one cancel channel per run — see App.tsx). */}
         </div>
-      )}
-
-      {running && map && map.sections.length > 0 && (
-        <div className="banner">
-          <span>
-            {plural(map.total, "page")} in {plural(map.sections.length, "section")}
-          </span>
-          <button type="button" className="link" onClick={() => setNarrowing((v) => !v)}>
-            {narrowing ? "Keep all" : "Narrow"}
-          </button>
-        </div>
-      )}
-
-      {running && narrowing && map && (
-        <ul className="sections">
-          {map.sections.map((section) => (
-            <li key={section.seg}>
-              <button type="button" onClick={() => narrowTo(section.seg)}>
-                <span className="seg">{section.seg}/</span>
-                <span className="n">{section.total}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

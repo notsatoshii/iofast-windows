@@ -27,6 +27,22 @@ pub struct Config {
     // (no key) read back as off; scheduled runs never honour it (no human).
     #[serde(default)]
     pub interactive: bool,
+    /// When on, grab files the finished run into the Obsidian vault automatically.
+    /// `default` so pre-existing configs read back as off.
+    #[serde(default)]
+    pub file_to_vault: bool,
+    /// Override for the Obsidian vault path; None = auto-detect via vault/detect.py.
+    #[serde(default)]
+    pub vault_path: Option<String>,
+    /// Whisper model id for transcript steps; None = engine default.
+    #[serde(default)]
+    pub whisper_model: Option<String>,
+    /// Cron expression for periodic vault health checks; None = disabled.
+    #[serde(default)]
+    pub vault_check_schedule: Option<String>,
+    /// Cron expression for weekly digest generation; None = disabled.
+    #[serde(default)]
+    pub digest_schedule: Option<String>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {

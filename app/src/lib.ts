@@ -5,6 +5,11 @@ export type Config = {
   library_root: string;
   large_crawl_threshold: number;
   interactive: boolean;
+  file_to_vault?: boolean;
+  vault_path?: string;
+  whisper_model?: string;
+  vault_check_schedule?: string;
+  digest_schedule?: string;
 };
 /** `config_get`: a null config means first run. */
 export type Boot = { config: Config | null; suggested_root: string };
