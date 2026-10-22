@@ -1,0 +1,7 @@
+Chrome
+New Tab
+Search or type URL
+https://example.com/blog/post-123
+Bookmarks
+History
+Settings
