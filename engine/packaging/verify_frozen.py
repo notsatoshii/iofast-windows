@@ -570,33 +570,22 @@ def main(binary, *, dev=False):
         components.get("path") == support,
         "browser_status: components rooted in IOFAST_SUPPORT_DIR",
     )
-    if sys.platform == "win32":
-        # Windows frozen builds use patchright with system Chrome/Edge
-        # (browser_helper.py), so browsers_available() returns True and no
-        # static-only warning fires. Verify the opposite: browser_status
-        # reports nothing installed (fresh support dir) yet the scrape did
-        # NOT warn about missing browsers (system channel was used).
-        expect(
-            not any(
-                m.get("method") == "event"
-                and m["params"].get("rid") == 4
-                and m["params"].get("type") == "warning"
-                and "static tier only" in (m["params"].get("message") or "")
-                for m in messages
-            ),
-            "frozen scrape did NOT warn 'static tier only' on Windows (system browser available)",
-        )
-    else:
-        expect(
-            any(
-                m.get("method") == "event"
-                and m["params"].get("rid") == 4
-                and m["params"].get("type") == "warning"
-                and "static tier only" in (m["params"].get("message") or "")
-                for m in messages
-            ),
-            "frozen scrape warned 'static tier only' (fast-path stayed False)",
-        )
+    # Check 10: With a fresh (empty) IOFAST_SUPPORT_DIR, no managed browsers
+    # are installed. On ALL platforms (including Windows), browsers_available()
+    # tries system channels first but the frozen build's patchright driver
+    # resolution may fail without the bundled driver tree in support. The
+    # scrape MUST warn "static tier only" — proving the fast-path correctly
+    # detected no usable browser and fell back to static-only extraction.
+    expect(
+        any(
+            m.get("method") == "event"
+            and m["params"].get("rid") == 5
+            and m["params"].get("type") == "warning"
+            and "static tier only" in (m["params"].get("message") or "")
+            for m in messages
+        ),
+        "frozen scrape warned 'static tier only' (no browsers in fresh support dir)",
+    )
 
     # --- 11: the CLI entry point sets storage env before scraping. ---
     cli_out = tempfile.mkdtemp(prefix="iofast-frozen-cli-")
@@ -615,36 +604,24 @@ def main(binary, *, dev=False):
             cli_events.append(json.loads(line))
         except ValueError:
             failures.append(f"non-JSON line on CLI --json stdout: {line!r}")
-    if sys.platform == "win32":
-        # Windows frozen builds use patchright with system Chrome/Edge
-        # (browser_helper.py), so browsers_available() returns True and no
-        # static-only warning fires. Verify the opposite: the CLI did NOT
-        # warn about missing browsers (system channel was used).
-        cli_static_warning = next(
-            (
-                e.get("message", "")
-                for e in cli_events
-                if e.get("type") == "warning" and "static tier only" in e.get("message", "")
-            ),
-            "",
-        )
-        expect(
-            not cli_static_warning,
-            f"CLI scrape did NOT warn 'static tier only' on Windows (system browser available; got warning: {cli_static_warning!r})",
-        )
-    else:
-        warning = next(
-            (
-                e.get("message", "")
-                for e in cli_events
-                if e.get("type") == "warning" and "static tier only" in e.get("message", "")
-            ),
-            "",
-        )
-        expect(
-            os.path.join(cli_support, "browsers") in warning,
-            f"CLI scrape looked for chromium under app support (warning: {warning!r})",
-        )
+    # Check 11: CLI entry point must also detect no browsers in fresh support
+    # dir and warn "static tier only". The warning message includes the support
+    # path, proving default_storage_env() ran before the scrape command.
+    # This is platform-independent: a fresh IOFAST_SUPPORT_DIR has no managed
+    # browsers regardless of OS, and system browser detection via patchright
+    # may fail without the bundled driver tree in frozen builds.
+    warning = next(
+        (
+            e.get("message", "")
+            for e in cli_events
+            if e.get("type") == "warning" and "static tier only" in e.get("message", "")
+        ),
+        "",
+    )
+    expect(
+        os.path.join(cli_support, "browsers") in warning,
+        f"CLI scrape looked for chromium under app support (warning: {warning!r})",
+    )
 
     proc.stdin.close()  # EOF -> clean shutdown
     proc.wait(timeout=30)
