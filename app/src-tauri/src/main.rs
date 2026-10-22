@@ -2693,130 +2693,58 @@ fn run_self_test() {
         }
     }
 
-    // --- Panel timing: hotkey-to-visible latency ---
+    // --- Panel timing: hotkey-to-webview-ready latency ---
+    // Spawns the installed iofast.exe with IOFAST_SHOW_PANEL=1, which triggers
+    // show_panel() after 2s (same code path as the hotkey). The webview emits
+    // a panel-timing event that the app logs; we parse stderr for the log line.
     {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            FindWindowW, IsWindowVisible, GetForegroundWindow, SetForegroundWindow,
-        };
-        use std::ffi::OsStr;
-        use std::os::windows::ffi::OsStrExt;
+        let local_app = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let iofast_exe = std::path::PathBuf::from(&local_app)
+            .join("iofast")
+            .join("iofast.exe");
 
-        let timing_ok = (|| -> Option<u64> {
-            // Measure how fast we can find and verify the panel window.
-            // In production this is triggered by hotkey; here we measure the
-            // window-find + visibility-check path which dominates the latency.
-            let class_wide: Vec<u16> = OsStr::new("tauri_webview")
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-            let start = std::time::Instant::now();
-            unsafe {
-                // Try to find any tauri_webview window (the panel uses this class).
-                let hwnd = FindWindowW(class_wide.as_ptr(), std::ptr::null());
-                let elapsed = start.elapsed().as_millis() as u64;
-                // The check itself should be near-instant (<10ms).
-                // We report the measurement regardless of whether the window exists.
-                Some(elapsed)
-            }
-        })();
-
-        match timing_ok {
-            Some(ms) if ms <= 300 => {
-                println!("PASS  panel-timing: window lookup {}ms (≤300ms)", ms);
-                passed += 1;
-            }
-            Some(ms) => {
-                println!("FAIL  panel-timing: window lookup {}ms (>300ms)", ms);
-                failed += 1;
-            }
-            None => {
-                println!("FAIL  panel-timing: could not measure");
-                failed += 1;
-            }
-        }
-    }
-
-    // --- YouTube grab: verify transcript text content ---
-    {
-        let yt_ok = (|| -> bool {
-            // Use a short captioned video (Me at the zoo, jNQXAC9IVRw).
-            let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
-            let out_dir = std::path::PathBuf::from(&userprofile)
-                .join(".cache/iofast-selftest-yt");
-            let _ = std::fs::create_dir_all(&out_dir);
-
-            let engine_exe = {
-                let candidates = [
-                    std::path::PathBuf::from(r"C:\Users\USER\innovlabs\iofast-wt-panel\engine\.venv\Scripts\python.exe"),
-                    std::path::PathBuf::from(r"C:\Users\USER\innovlabs\iofast-wt-panel\engine\.venv\bin\python"),
-                ];
-                candidates.into_iter().find(|p| p.is_file())
-            };
-            let engine_exe = match engine_exe {
-                Some(p) => p,
-                None => return false,
-            };
-
-            let iofast_py = std::path::PathBuf::from(r"C:\Users\USER\innovlabs\iofast-wt-panel\engine\src\iofast_engine\__main__.py");
-            if !iofast_py.is_file() {
-                return false;
+        let result: Result<Option<u64>, String> = (|| {
+            if !iofast_exe.exists() {
+                return Err(format!(
+                    "installed iofast.exe not found at {}",
+                    iofast_exe.display()
+                ));
             }
 
-            let child = std::process::Command::new(&engine_exe)
-                .args([
-                    iofast_py.to_str().unwrap_or(""),
-                    "grab",
-                    "--url", "https://www.youtube.com/watch?v=jNQXAC9IVRw",
-                    "--out", out_dir.to_str().unwrap_or(""),
-                    "--mode", "page",
-                ])
+            use std::io::{BufRead, BufReader};
+            use std::process::Stdio;
+
+            let start = Instant::now();
+            let mut child = std::process::Command::new(&iofast_exe)
+                .env("IOFAST_SHOW_PANEL", "1")
+                .env("RUST_LOG", "info")
                 .creation_flags(CREATE_NO_WINDOW)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("could not spawn iofast.exe: {}", e))?;
 
-            let child = match child {
-                Ok(c) => c,
-                Err(_) => return false,
-            };
-
-            // Wait up to 30s for completion.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-            let mut done = false;
-            while std::time::Instant::now() < deadline {
-                // Check if any markdown file was written.
-                if let Ok(entries) = std::fs::read_dir(&out_dir) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_lowercase();
-                        if name.ends_with(".md") {
-                            done = true;
-                            break;
-                        }
+            // Read stderr looking for the panel-timing log line.
+            // Format: "panel-timing {"show_to_interactive_ms":NNN,...}"
+            let mut timing_ms: Option<u64> = None;
+            let deadline = Instant::now() + std::time::Duration::from_secs(10);
+            if let Some(ref mut stderr) = child.stderr {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    if Instant::now() > deadline {
+                        break;
                     }
-                }
-                if done { break; }
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-
-            if !done {
-                let _ = std::fs::remove_dir_all(&out_dir);
-                return false;
-            }
-
-            // Look for a markdown file containing "## Transcript" with actual text.
-            let mut found_transcript = false;
-            if let Ok(entries) = std::fs::read_dir(&out_dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_lowercase();
-                    if !name.ends_with(".md") { continue; }
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        // Check for transcript section with non-empty content after it.
-                        if let Some(idx) = content.find("## Transcript") {
-                            let after = &content[idx + "## Transcript".len()..];
-                            let trimmed = after.trim();
-                            // Must have substantial text (not just whitespace or another header).
-                            if trimmed.len() > 50 && !trimmed.starts_with("##") {
-                                found_transcript = true;
+                    let line = match line {
+                        Ok(l) => l,
+                        Err(_) => continue,
+                    };
+                    if let Some(idx) = line.find("panel-timing ") {
+                        let json_str = &line[idx + "panel-timing ".len()..];
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                            if let Some(ms) =
+                                json.get("show_to_interactive_ms").and_then(|v| v.as_u64())
+                            {
+                                timing_ms = Some(ms);
                                 break;
                             }
                         }
@@ -2824,16 +2752,119 @@ fn run_self_test() {
                 }
             }
 
-            let _ = std::fs::remove_dir_all(&out_dir);
-            found_transcript
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = start; // elapsed used in caller via Instant::now() - start
+            Ok(timing_ms)
         })();
 
-        if yt_ok {
-            println!("PASS  youtube-grab: transcript section with text found");
-            passed += 1;
-        } else {
-            println!("FAIL  youtube-grab: no transcript text in output");
+        match result {
+            Ok(Some(ms)) if ms <= 300 => {
+                println!("PASS  panel-timing: hotkey-to-ready {}ms (≤300ms)", ms);
+                passed += 1;
+            }
+            Ok(Some(ms)) => {
+                println!("FAIL  panel-timing: hotkey-to-ready {}ms (>300ms)", ms);
+                failed += 1;
+            }
+            Ok(None) => {
+                println!("FAIL  panel-timing: no panel-timing event in logs within 10s");
+                failed += 1;
+            }
+            Err(msg) => {
+                println!("FAIL  panel-timing: {}", msg);
+                failed += 1;
+            }
+        }
+    }
+
+    // --- YouTube grab: verify transcript text content ---
+    // Uses the same bundled frozen engine as engine-grab (no hardcoded dev paths).
+    {
+        let local_app = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let engine = std::path::PathBuf::from(&local_app)
+            .join("iofast")
+            .join("engine")
+            .join("iofast.exe");
+        let out_dir = std::env::temp_dir().join("iofast-selftest-youtube");
+        let _ = std::fs::create_dir_all(&out_dir);
+
+        if !engine.exists() {
+            println!(
+                "FAIL  youtube-grab: frozen engine not found at {}",
+                engine.display()
+            );
             failed += 1;
+        } else {
+            let start = Instant::now();
+            let result = std::process::Command::new(&engine)
+                .args([
+                    "grab",
+                    "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                    "--out",
+                    &out_dir.to_string_lossy(),
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            let elapsed = start.elapsed();
+
+            match result {
+                Ok(out) if out.status.success() => {
+                    // Walk run subfolders looking for a .md with "## Transcript" + text.
+                    let mut found_transcript = false;
+                    if let Ok(entries) = std::fs::read_dir(&out_dir) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            if !path.is_dir() { continue; }
+                            if let Ok(sub) = std::fs::read_dir(&path) {
+                                for sub_entry in sub.filter_map(|e| e.ok()) {
+                                    let name = sub_entry.file_name().to_string_lossy().to_string();
+                                    if !name.ends_with(".md") { continue; }
+                                    if let Ok(content) = std::fs::read_to_string(sub_entry.path()) {
+                                        if let Some(idx) = content.find("## Transcript") {
+                                            let after = &content[idx + "## Transcript".len()..];
+                                            let trimmed = after.trim();
+                                            if trimmed.len() > 50 && !trimmed.starts_with("##") {
+                                                found_transcript = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if found_transcript { break; }
+                        }
+                    }
+                    if found_transcript {
+                        println!(
+                            "PASS  youtube-grab: transcript section with text in {:.0?}",
+                            elapsed
+                        );
+                        passed += 1;
+                    } else {
+                        println!(
+                            "FAIL  youtube-grab: no '## Transcript' section with text in {:.0?}",
+                            elapsed
+                        );
+                        failed += 1;
+                    }
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    println!(
+                        "FAIL  youtube-grab: exit {} in {:.0?}: {}",
+                        out.status.code().unwrap_or(-1),
+                        elapsed,
+                        stderr.lines().last().unwrap_or("").trim()
+                    );
+                    failed += 1;
+                }
+                Err(e) => {
+                    println!("FAIL  youtube-grab: spawn error: {}", e);
+                    failed += 1;
+                }
+            }
+            let _ = std::fs::remove_dir_all(&out_dir);
         }
     }
 
