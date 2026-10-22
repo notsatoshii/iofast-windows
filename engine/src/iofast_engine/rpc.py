@@ -105,7 +105,10 @@ class RpcServer:
         if not isinstance(params, dict):
             self.fail(rid, INVALID_PARAMS, "params must be an object")
             return
-        handler = getattr(self, f"handle_{msg['method']}", None)
+        # Dotted methods (social.signin, vault.file, …) map to handlers with
+        # underscores replacing dots; plain methods keep their existing names.
+        handler_name = f"handle_{msg['method'].replace('.', '_')}"
+        handler = getattr(self, handler_name, None)
         if handler is None:
             self.fail(rid, METHOD_NOT_FOUND, f"unknown method: {msg['method']}")
             return
@@ -360,6 +363,8 @@ class RpcServer:
         mode = params.get("mode")
         limit = params.get("limit")
         lang = params.get("lang")
+        file_after = params.get("file", False)
+        vault_path = params.get("vault")
         if not isinstance(url, str) or not url:
             return self.fail(rid, INVALID_PARAMS, "url must be a non-empty string")
         if not isinstance(out, str) or not out:
@@ -370,6 +375,8 @@ class RpcServer:
             return self.fail(rid, INVALID_PARAMS, "limit must be a positive integer or null")
         if not (lang is None or isinstance(lang, str)):
             return self.fail(rid, INVALID_PARAMS, "lang must be a string or null")
+        if not isinstance(file_after, bool):
+            return self.fail(rid, INVALID_PARAMS, "file must be a boolean")
         with self.state:
             thread = self.threads.get("grab")
             if thread is not None and thread.is_alive():
@@ -378,13 +385,13 @@ class RpcServer:
             self.grab_cancel_event = threading.Event()
             thread = threading.Thread(
                 target=self._grab_thread,
-                args=(rid, url, os.path.abspath(out), mode, limit, lang, self.grab_cancel_event),
+                args=(rid, url, os.path.abspath(out), mode, limit, lang, self.grab_cancel_event, file_after, vault_path),
                 daemon=True,
             )
             self.threads["grab"] = thread
             thread.start()
 
-    def _grab_thread(self, rid, url, out, mode, limit, lang, cancel_event):
+    def _grab_thread(self, rid, url, out, mode, limit, lang, cancel_event, file_after=False, vault_path=None):
         import asyncio
         from pathlib import Path
 
@@ -411,19 +418,113 @@ class RpcServer:
                         manifest = json.load(fh)
                 except Exception:
                     pass
-            self.respond(rid, {
+
+            response = {
                 "written": written,
                 "out_dir": out,
                 "exit_code": exit_code,
                 "cancelled": cancelled,
                 "manifest": manifest,
-            })
+            }
+
+            # Opt-in filing: only when grab succeeded and file_after is True
+            if file_after and not cancelled and exit_code == 0:
+                try:
+                    from .vault.vault_rpc import vault_file
+                    file_result = vault_file(
+                        {"run_dir": out, "vault": vault_path},
+                        emit=lambda event: self.notify(rid, event),
+                    )
+                    response["vault_filed"] = True
+                    response["vault_path"] = file_result.get("vault_path")
+                except Exception as file_err:
+                    response["vault_filed"] = False
+                    response["vault_error"] = f"{type(file_err).__name__}: {file_err}"
+
+            self.respond(rid, response)
         except Exception as error:
             self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
         finally:
             with self.state:
                 self.grab_rid = None
                 self.grab_cancel_event = None
+
+    # ---- social methods ----
+
+    def handle_social_signin(self, rid, params):
+        """Opens a visible browser for sign-in; runs in a worker thread."""
+        site = params.get("site")
+        if site not in ("instagram", "x"):
+            return self.fail(rid, INVALID_PARAMS, "site must be 'instagram' or 'x'")
+        with self.state:
+            thread = self.threads.get("social_signin")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "social.signin already running")
+            thread = threading.Thread(
+                target=self._social_signin_thread, args=(rid, params), daemon=True
+            )
+            self.threads["social_signin"] = thread
+            thread.start()
+
+    def _social_signin_thread(self, rid, params):
+        try:
+            from .sources.social_rpc import signin
+            result = signin(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_social_status(self, rid, params):
+        """Synchronous signed-in state check."""
+        try:
+            from .sources.social_rpc import status
+            result = status(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    # ---- vault methods ----
+
+    def handle_vault_status(self, rid, params):
+        """Synchronous vault availability check."""
+        try:
+            from .vault.vault_rpc import vault_status
+            result = vault_status(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_vault_file(self, rid, params):
+        """File a capture into the vault; runs in a worker thread."""
+        run_dir = params.get("run_dir")
+        if not isinstance(run_dir, str) or not run_dir:
+            return self.fail(rid, INVALID_PARAMS, "run_dir is required and must be a string")
+        with self.state:
+            thread = self.threads.get("vault_file")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "vault.file already running")
+            thread = threading.Thread(
+                target=self._vault_file_thread, args=(rid, params), daemon=True
+            )
+            self.threads["vault_file"] = thread
+            thread.start()
+
+    def _vault_file_thread(self, rid, params):
+        try:
+            from .vault.vault_rpc import vault_file
+            result = vault_file(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_vault_lint(self, rid, params):
+        """Synchronous vault lint."""
+        try:
+            from .vault.vault_rpc import vault_lint
+            result = vault_lint(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
 
     def handle_cancel(self, rid, params):
         want = params.get("rid")

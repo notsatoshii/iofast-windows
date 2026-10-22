@@ -70,7 +70,7 @@ After any capture, one call files it into Eric's Obsidian vault:
 
 1. **Vault scan** — reads folders, note titles/aliases, tag vocabulary, MOC notes (read-only).
 2. **Raw copy** — `Research (RAW)/iofast/<YYYY-MM-DD> <Title>.md` with frontmatter (source url, type, captured date, run path) and UNTRUSTED banner. Never overwrites; appends `-2`, `-3` on collision. Caps at 200k chars inline, links to full run beyond that.
-3. **LLM classification** — returns structured JSON only (no tools): topic folder, tags (kebab-case, max 8, reuses vocabulary), aliases, source note (summary, key points, quotes, entities as `[[links]]`), up to 8 new entity notes, append-sections for existing notes, one MOC line. Backends: local `claude` CLI (preferred, `--output-format json --no-tools`) or OpenRouter API.
+3. **LLM classification** — returns structured JSON only (no tools): topic folder, tags (kebab-case, max 8, reuses vocabulary), aliases, source note (summary, key points, quotes, entities as `[[links]]`), up to 8 new entity notes, append-sections for existing notes, one MOC line. Backends: local `claude` CLI (preferred, `--output-format json --tools "" --strict-mcp-config`, cwd = `%LOCALAPPDATA%\iofast\llm-cwd`) or OpenRouter API.
 4. **Engine writes** — source note in topic folder, new entity notes, appended sections to existing notes (never modifies Eric's text), MOC line appended, log line appended. All paths resolved and verified inside vault.
 5. **Lint** — deterministic (no LLM): broken `[[links]]`, orphans, missing frontmatter, singleton tags, MOC drift. `--fix` only repairs MOC index drift.
 

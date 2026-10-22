@@ -80,7 +80,13 @@ def main(argv=None):
     grab_p.add_argument("--limit", type=int, default=None, help="max items for feeds/profiles")
     grab_p.add_argument("--lang", default=None, help="preferred transcript language (youtube)")
     grab_p.add_argument("--out", required=True, help="output directory")
+    grab_p.add_argument("--file", action="store_true", help="file the finished run into the Obsidian vault (opt-in)")
+    grab_p.add_argument("--vault", default=None, help="vault path for --file (auto-detected if omitted)")
     grab_p.add_argument("--json", action="store_true", help="NDJSON events on stdout")
+
+    # Vault subcommands (step 6): file, lint, find
+    from .cli_vault import add_vault_subcommands
+    add_vault_subcommands(sub)
 
     sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
 
@@ -117,6 +123,11 @@ def main(argv=None):
             return 1
         print(target, flush=True)
         return 0
+
+    if args.command == "vault":
+        from .cli_vault import run_vault
+
+        return run_vault(args)
 
     if args.command == "rpc":
         from .rpc import serve_stdio
@@ -209,7 +220,24 @@ def main(argv=None):
         )
         out_dir = Path(args.out).resolve()
         result = asyncio.run(source.grab(args.url, out_dir, opts, emit))
-        return 0 if result.ok > 0 and result.failed == 0 else 1
+        # thin pages count as success (e.g. YouTube without transcript)
+        written = result.ok + result.thin
+        exit_code = 0 if written > 0 and result.failed == 0 else 1
+
+        # Opt-in filing: --file files the finished run into the vault
+        if exit_code == 0 and getattr(args, "file", False):
+            from .vault.vault_rpc import vault_file
+            try:
+                file_result = vault_file(
+                    {"run_dir": str(out_dir), "vault": args.vault},
+                    emit=emit,
+                )
+                print(f"filed: {file_result.get('title', '?')} -> {file_result.get('topic_folder', '?')}", file=sys.stderr)
+            except Exception as e:
+                print(f"vault filing failed: {e}", file=sys.stderr)
+                # Don't change exit_code — grab itself succeeded
+
+        return exit_code
 
     result = run_scrape(
         args.url,

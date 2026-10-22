@@ -111,6 +111,7 @@ def _build_prompt(
         source_url=source_url,
         source_type=source_type,
         title=title,
+        date=captured_date,
         content=truncated,
         candidates=candidates,
     )
@@ -244,11 +245,17 @@ def _call_llm(prompt: str, backend: str | None = None) -> str:
 
 
 def _call_claude_cli(prompt: str) -> str:
-    """Call `claude -p --output-format json` with no tools."""
+    """Call `claude -p --output-format json` with no tools or MCP servers."""
+    # --tools "" disables built-in tools; --strict-mcp-config blocks MCP servers.
+    # cwd is an empty folder so the LLM cannot see any local files.
+    llm_cwd = Path(os.environ.get("LOCALAPPDATA", ""), "iofast", "llm-cwd")
+    llm_cwd.mkdir(parents=True, exist_ok=True)
+
     cmd = [
         "claude", "-p",
         "--output-format", "json",
-        "--no-tools",
+        "--tools", "",
+        "--strict-mcp-config",
     ]
     try:
         result = subprocess.run(
@@ -257,7 +264,7 @@ def _call_claude_cli(prompt: str) -> str:
             capture_output=True,
             text=True,
             timeout=120,
-            cwd=str(Path.home()),  # safe cwd, not the vault
+            cwd=str(llm_cwd),
         )
     except FileNotFoundError:
         raise RuntimeError("claude CLI not found on PATH")
