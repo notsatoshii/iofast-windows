@@ -5,32 +5,46 @@ Playwright is dev-only; frozen sidecar uses patchright exclusively.
 """
 from __future__ import annotations
 
+import os
+import pkgutil
 import sys
 
 
 def patch_playwright():
-    """Redirect playwright.* imports to patchright.* via sys.modules.
+    """Redirect ALL playwright.* imports to patchright.* via sys.modules.
 
     Scrapling's AsyncDynamicSession / AsyncStealthySession hard-import
-    ``playwright.async_api`` and ``playwright.sync_api``. In frozen builds
-    only patchright is bundled, so those imports fail with FileNotFoundError
-    on the node driver. Patchright is API-compatible — aliasing the modules
-    before scrapling loads them makes every third-party session class use
-    our bundled driver transparently. Safe to call multiple times (idempotent).
-    Must be called BEFORE any scrapling fetcher/session import.
+    ``playwright.async_api``, ``playwright._impl._transport``, and many
+    other internal submodules. In frozen builds only patchright is bundled,
+    so those imports either fail or resolve to a stripped playwright that
+    has no node driver → FileNotFoundError on subprocess spawn.
+
+    Patchright is API-compatible. We walk EVERY patchright submodule and
+    alias it under the corresponding playwright name so that ANY import
+    path scrapling uses resolves to our bundled driver. Safe to call
+    multiple times (idempotent via setdefault). Must be called BEFORE any
+    scrapling fetcher/session import.
     """
     if "playwright" in sys.modules and "patchright" not in sys.modules:
         return  # real playwright already loaded (dev env); don't clobber
     try:
         import patchright
-        import patchright.async_api
-        import patchright.sync_api
-        import patchright._impl  # noqa: F401 — some code paths touch this
 
+        # Alias the top-level package first.
         sys.modules.setdefault("playwright", patchright)
-        sys.modules.setdefault("playwright.async_api", patchright.async_api)
-        sys.modules.setdefault("playwright.sync_api", patchright.sync_api)
-        sys.modules.setdefault("playwright._impl", patchright._impl)
+
+        # Walk every submodule and alias patchright.X.Y → playwright.X.Y.
+        # This catches _impl._transport, _impl._connection, _impl._driver,
+        # async_api._generated, sync_api._context_manager, etc.
+        for _importer, modname, _ispkg in pkgutil.walk_packages(
+            patchright.__path__, prefix="patchright."
+        ):
+            try:
+                mod = __import__(modname, fromlist=[""])
+                pw_name = "playwright" + modname[len("patchright"):]
+                sys.modules.setdefault(pw_name, mod)
+            except Exception:
+                pass  # best-effort; skip submodules that fail to import
     except ImportError:
         pass  # patchright not installed; nothing to alias
 
@@ -89,8 +103,15 @@ def _patch_frozen_driver_path():
             return (node, cli_path)
 
         drv.compute_driver_executable = _fixed
-        # Also patch get_driver_env if needed — it reads version from the
-        # package which should still work via PYZ, but be safe.
+
+        # Also patch the ALIASED playwright._impl._driver so scrapling's
+        # import path (playwright.*, not patchright.*) hits the same fix.
+        try:
+            import playwright._impl._driver as pw_drv
+            if pw_drv is not drv:
+                pw_drv.compute_driver_executable = _fixed
+        except Exception:
+            pass
     except Exception:
         pass  # best-effort; unfrozen or already patched
 

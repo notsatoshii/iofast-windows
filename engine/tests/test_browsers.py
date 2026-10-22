@@ -205,10 +205,19 @@ def test_activate_noop_in_dev_venv(support):
 
 
 def test_browsers_available_false_when_frozen_without_components(support, monkeypatch):
+    """When no browser can launch (system or managed), browsers_available returns False."""
+    from unittest.mock import MagicMock, patch as mock_patch
     from iofast_engine import tiers
 
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    assert tiers.browsers_available() is False
+    # Simulate all launch attempts failing (no system Edge/Chrome, no managed Chromium).
+    mock_pw = MagicMock()
+    mock_pw.chromium.launch.side_effect = Exception("no browser")
+    mock_sp = MagicMock()
+    mock_sp.return_value.__enter__ = MagicMock(return_value=mock_pw)
+    mock_sp.return_value.__exit__ = MagicMock(return_value=False)
+
+    with mock_patch("iofast_engine.browser_helper.get_sync_playwright", return_value=mock_sp):
+        assert tiers.browsers_available() is False
 
 
 def test_stub_files_without_receipt_not_installed(support):

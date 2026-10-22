@@ -330,14 +330,16 @@ class DocSpider(Spider):
             manager.add(
                 "dynamic",
                 AsyncDynamicSession(
-                    headless=True, disable_resources=True, max_pages=2, **proxy_kw
+                    headless=True, disable_resources=True, real_chrome=True,
+                    max_pages=2, **proxy_kw
                 ),
                 lazy=True,
             )
             manager.add(
                 "stealth",
                 AsyncStealthySession(
-                    headless=True, solve_cloudflare=False, max_pages=1, **proxy_kw
+                    headless=True, solve_cloudflare=False, real_chrome=True,
+                    max_pages=1, **proxy_kw
                 ),
                 lazy=True,
             )
