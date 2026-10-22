@@ -28,7 +28,11 @@ TARGETS = [
 def emit(event):
     msg = event.get("message")
     if msg:
-        print(f"  {msg}", flush=True)
+        # Windows console may use cp949; replace unencodable chars (emoji) safely.
+        try:
+            print(f"  {msg}", flush=True)
+        except UnicodeEncodeError:
+            print(f"  {msg.encode('utf-8', errors='replace').decode('utf-8')}", flush=True)
 
 
 async def run_one(label, url, out_root):
