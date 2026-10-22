@@ -176,7 +176,7 @@ export default function Panel() {
   }, []);
 
   useEffect(() => {
-    const shown = listen<{ clipboard: string | null }>("panel-shown", (e) => {
+    const shown = listen<{ clipboard: string | null; active_url?: string | null }>("panel-shown", (e) => {
       estSeq.current++;
       runRef.current = null;
       restartRef.current = null;
@@ -190,7 +190,10 @@ export default function Panel() {
 
       performance.mark("iofast:panel-shown");
       timing.current = { shown: performance.now(), interactive: 0, sent: false };
-      const pasted = parseTarget(e.payload.clipboard ?? "");
+      // Prefer the active browser URL (from UI Automation on Windows) over
+      // clipboard text — it's what the user is actually looking at.
+      const raw = e.payload.active_url || e.payload.clipboard || "";
+      const pasted = parseTarget(raw);
       immediate.current = pasted !== null;
       setUrl(pasted ? pasted.href : "");
       setShowSeq((n) => n + 1);
