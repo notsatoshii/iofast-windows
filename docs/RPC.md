@@ -248,6 +248,24 @@ Result: `{"ok": bool, "packages": {name: "ok" | reason}, "status": …}` with
 skip decision re-verifies digests, so anything this check flags gets
 re-downloaded (`iofast browsers verify --repair` is the CLI one-step form).
 
+### `vault.status`
+Params: none.
+Result: `{"available": bool, "vaults": [{path, open, folders, notes, tags} | {path, open, error}]}`.
+Checks Obsidian vault availability and basic stats. Synchronous.
+
+### `vault.file`
+Params: `{"run_dir": str, "dry_run": bool=false, "vault": str|null, "backend": "claude"|"openrouter"|null}`.
+Files an iofast capture into the Obsidian vault. Runs in a worker thread.
+Progress arrives as `vault` event notifications with a `message` field.
+Result: `{vault_path, run_dir, source_type, title, topic_folder, tags, raw_path, source_note, new_notes, modified_notes, moc_updated, log_path}` (or `{dry_run: true, ...}` when dry).
+One vault.file at a time (`-32000` while one runs).
+
+### `vault.lint`
+Params: `{"vault": str|null, "fix": bool=false}`.
+Lints the vault for broken links, orphans, missing frontmatter, singleton tags, MOC drift.
+`fix: true` repairs MOC index drift only. Synchronous.
+Result: `{vault_path, total_notes, broken_links, orphans, missing_frontmatter, singleton_tags, moc_drift, fixed_mocs}`.
+
 ## Notifications (event stream)
 
 Every event the engine `emit()`s is forwarded verbatim as a notification:
