@@ -268,8 +268,8 @@ async def test_instagram_wall_writes_error_when_all_routes_fail(tmp_path):
 
     src = InstagramSource()
     with patch(
-        "iofast_engine.sources.instagram.ig_fetch_post_graphql",
-        new=AsyncMock(return_value=PublicResult(ok=False, error="gated")),
+        "iofast_engine.sources.instagram.ig_fetch_post_ytdlp",
+        new=AsyncMock(return_value=PublicResult(ok=False, error="yt-dlp failed")),
     ), patch(
         "iofast_engine.sources.instagram.ig_fetch_embed",
         new=AsyncMock(return_value=PublicResult(ok=False, error="HTTP 403")),

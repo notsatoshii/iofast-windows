@@ -16,11 +16,10 @@ import pytest
 # Import parsers directly — they are pure functions with no side effects.
 from iofast_engine.sources.social_public import (
     PublicResult,
-    _ig_node_to_media_item,
     _parse_ig_embed,
-    _parse_ig_media,
     _parse_x_oembed,
     _parse_x_syndication,
+    _parse_ytdlp_info,
     _ts_to_iso,
     _x_compute_token,
     maybe_transcribe,
@@ -30,63 +29,127 @@ FIXTURES = Path(__file__).parent / "fixtures" / "social"
 
 
 # ---------------------------------------------------------------------------
-# Instagram GraphQL parsing
+# Import sanity (reviewer finding #1)
 # ---------------------------------------------------------------------------
 
 
-class TestIGGraphQLParsing:
+class TestImportSanity:
+    """Verify the module imports cleanly and exposes expected public API."""
+
+    def test_module_imports_without_error(self):
+        import iofast_engine.sources.social_public as sp
+
+        assert hasattr(sp, "ig_fetch_post_ytdlp")
+        assert hasattr(sp, "ig_fetch_embed")
+        assert hasattr(sp, "x_fetch_syndication")
+        assert hasattr(sp, "x_fetch_oembed")
+        assert hasattr(sp, "download_media")
+        assert hasattr(sp, "maybe_transcribe")
+        assert hasattr(sp, "PublicResult")
+
+    def test_client_factory_callable(self):
+        """The lazy httpx client factory must be importable and callable."""
+        from iofast_engine.sources.social_public import _get_client
+
+        assert callable(_get_client)
+
+
+# ---------------------------------------------------------------------------
+# Instagram yt-dlp parsing
+# ---------------------------------------------------------------------------
+
+
+class TestIGYtdlpParsing:
     def test_photo_post_parses_all_fields(self):
-        data = json.loads((FIXTURES / "ig_graphql_photo.json").read_text(encoding="utf-8"))
-        media = data["data"]["xig_polaris_media"]["if_not_gated_logged_out"]
-        result = _parse_ig_media(media)
+        info = {
+            "id": "CwTestPhoto1",
+            "title": "A sunset over mountains #nature #mountains @friend",
+            "description": "Beautiful sunset #nature #mountains @friend",
+            "uploader": "testuser",
+            "upload_date": "20240115",
+            "like_count": 1234,
+            "comment_count": 56,
+            "thumbnail": "https://cdn.example.com/test-photo.jpg",
+            "formats": [],
+            "thumbnails": [],
+        }
+        result = _parse_ytdlp_info(info, "https://www.instagram.com/p/CwTestPhoto1/")
 
         assert result["shortcode"] == "CwTestPhoto1"
         assert result["author"] == "testuser"
         assert "sunset" in result["caption"].lower()
         assert result["likes"] == 1234
         assert result["comments_count"] == 56
-        assert result["location"] == "Swiss Alps"
         assert len(result["media"]) == 1
         assert result["media"][0]["type"] == "image"
         assert "test-photo" in result["media"][0]["url"]
-        assert result["media"][0]["alt"] == "A sunset over mountains"
         assert "nature" in result["hashtags"]
         assert "mountains" in result["hashtags"]
         assert "friend" in result["mentions"]
-        assert result["date"] != ""
 
-    def test_gated_response_has_no_media(self):
-        data = json.loads((FIXTURES / "ig_graphql_gated.json").read_text(encoding="utf-8"))
-        media = data["data"]["xig_polaris_media"].get("if_not_gated_logged_out")
-        assert media is None  # Caller checks this and returns error.
-
-    def test_video_node_extracts_url(self):
-        node = {
-            "is_video": True,
-            "video_url": "https://example.com/video.mp4",
-            "accessibility_caption": "A cat video",
+    def test_video_reel_extracts_video_format(self):
+        info = {
+            "id": "CwTestReel1",
+            "description": "A cat video #cats @owner",
+            "uploader": "catlover",
+            "upload_date": "20240201",
+            "like_count": 500,
+            "comment_count": 10,
+            "duration": 30,
+            "view_count": 10000,
+            "thumbnail": "https://cdn.example.com/thumb.jpg",
+            "formats": [
+                {"vcodec": "none", "url": "https://cdn.example.com/audio.m4a"},
+                {"vcodec": "h264", "url": "https://cdn.example.com/video.mp4", "filesize": 5000000, "tbr": 2000},
+            ],
+            "thumbnails": [],
         }
-        item = _ig_node_to_media_item(node)
-        assert item is not None
-        assert item["type"] == "video"
-        assert item["url"] == "https://example.com/video.mp4"
-        assert item["alt"] == "A cat video"
+        result = _parse_ytdlp_info(info, "https://www.instagram.com/reel/CwTestReel1/")
 
-    def test_image_node_extracts_url(self):
-        node = {
-            "is_video": False,
-            "display_url": "https://example.com/photo.jpg",
-            "accessibility_caption": "A landscape",
+        assert result["shortcode"] == "CwTestReel1"
+        assert result["author"] == "catlover"
+        assert result["view_count"] == 10000
+        # Should have both video and thumbnail image.
+        types = [m["type"] for m in result["media"]]
+        assert "video" in types
+        video_item = next(m for m in result["media"] if m["type"] == "video")
+        assert video_item["url"] == "https://cdn.example.com/video.mp4"
+        assert video_item["duration"] == 30
+
+    def test_carousel_picks_best_thumbnail(self):
+        info = {
+            "id": "CwCarousel1",
+            "description": "Multi-image post",
+            "uploader": "photog",
+            "formats": [],
+            "thumbnails": [
+                {"url": "https://cdn.example.com/small.jpg", "width": 150, "height": 150},
+                {"url": "https://cdn.example.com/large.jpg", "width": 1080, "height": 1080},
+            ],
         }
-        item = _ig_node_to_media_item(node)
-        assert item is not None
-        assert item["type"] == "image"
-        assert item["url"] == "https://example.com/photo.jpg"
+        result = _parse_ytdlp_info(info, "https://www.instagram.com/p/CwCarousel1/")
 
-    def test_empty_node_returns_none(self):
-        assert _ig_node_to_media_item({}) is None
-        assert _ig_node_to_media_item({"is_video": True}) is None
-        assert _ig_node_to_media_item({"is_video": False}) is None
+        assert len(result["media"]) == 1
+        assert result["media"][0]["type"] == "image"
+        assert "large.jpg" in result["media"][0]["url"]
+
+    def test_reel_url_variant(self):
+        info = {
+            "id": "CwTv1",
+            "description": "IGTV content",
+            "uploader": "creator",
+            "formats": [],
+            "thumbnails": [{"url": "https://cdn.example.com/tv.jpg", "width": 640}],
+        }
+        result = _parse_ytdlp_info(info, "https://www.instagram.com/tv/CwTv1/")
+        assert result["shortcode"] == "CwTv1"
+
+    def test_empty_info_produces_minimal_result(self):
+        result = _parse_ytdlp_info({}, "https://www.instagram.com/p/X/")
+        assert result["shortcode"] == "X"
+        assert result["author"] == ""
+        assert result["caption"] == ""
+        assert result["media"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +206,17 @@ class TestXSyndicationParsing:
         assert result["media"][0]["alt"] == "A test image"
         assert result["canonical_url"] == "https://x.com/testuser/status/1700000000000000000"
 
+    def test_syndication_html_entities_unescaped(self):
+        body = {
+            "text": "Less than &lt; greater than &gt; ampersand &amp;",
+            "user": {"screen_name": "esc", "name": "Escaper"},
+        }
+        result = _parse_x_syndication(body, "111")
+        assert "<" in result["text"]
+        assert ">" in result["text"]
+        assert "&" in result["text"]
+        assert "&lt;" not in result["text"]
+
     def test_syndication_with_video_picks_best_variant(self):
         body = {
             "text": "Video tweet",
@@ -177,6 +251,20 @@ class TestXSyndicationParsing:
         assert result["quoted"] is not None
         assert result["quoted"]["author"] == "original"
         assert result["quoted"]["text"] == "Original tweet text"
+
+    def test_syndication_tco_expansion_from_entities(self):
+        body = {
+            "text": "Read this https://t.co/xyz789 now",
+            "user": {"screen_name": "linker", "name": "Linker"},
+            "entities": {
+                "urls": [
+                    {"url": "https://t.co/xyz789", "expanded_url": "https://example.com/full-article"},
+                ]
+            },
+        }
+        result = _parse_x_syndication(body, "777")
+        assert "https://example.com/full-article" in result["text"]
+        assert "https://t.co/xyz789" not in result["text"]
 
 
 # ---------------------------------------------------------------------------

@@ -1,10 +1,12 @@
 """Public (no-login) endpoints for Instagram and X captures.
 
-These functions call the same APIs that the platforms' own logged-out web
-pages and embed widgets use. They never touch the signed-in browser profile,
-never rotate proxies, never spoof fingerprints, and never solve CAPTCHAs.
-On rate-limit or auth-wall responses they return ok=False with a reason so
-the caller can fall back to the signed-in route.
+Instagram: uses yt-dlp (already a dependency) as the primary public route.
+yt-dlp handles TLS fingerprinting, LSD tokens, and GraphQL doc_id rotation
+that raw httpx requests cannot reliably reproduce without browser impersonation.
+Falls back to /p/<shortcode>/embed/captioned/ scraping if yt-dlp fails.
+
+X: syndication API (cdn.syndication.twimg.com/tweet-result) with html.unescape
+and t.co expansion from entities.urls. Falls back to oEmbed.
 
 Transcribe hook: if ``iofast_engine.transcribe`` is importable (added by
 another worker on feat/yt-transcribe), ``maybe_transcribe(path)`` calls its
@@ -15,14 +17,17 @@ caller notes "transcript pending".
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# httpx is already a transitive dep via scrapling[fetchers]; import lazily so
-# tests can stub without installing the full stack.
+# httpx is a declared dependency (pyproject.toml); imported lazily so tests
+# can stub without installing the full stack.
 _httpx = None
 
 
@@ -47,135 +52,96 @@ class PublicResult:
 
 
 # ---------------------------------------------------------------------------
-# Instagram public endpoints
+# Instagram public endpoints (yt-dlp primary, embed fallback)
 # ---------------------------------------------------------------------------
 
-# The web app-id that Instagram's own logged-out pages send. yt-dlp uses the
-# same value; it changes rarely and is not secret.
-_IG_APP_ID = "936619743392459"
+async def ig_fetch_post_ytdlp(url: str) -> PublicResult:
+    """Fetch a public Instagram post/reel/carousel via yt-dlp --simulate -j.
 
-# GraphQL doc_id for the logged-out media detail query. This is the current
-# value used by Instagram's web client as of late 2024 / early 2025; yt-dlp
-# tracks updates. When it rotates, update here and in tests.
-_IG_MEDIA_DOC_ID = "8845758582119845"
-
-
-async def ig_fetch_post_graphql(shortcode: str) -> PublicResult:
-    """Fetch a single post/reel via Instagram's logged-out GraphQL API.
-
-    Mirrors what yt-dlp's InstagramIE does for public content: POST to
-    /graphql/web/api/v1/ with the polaris media detail doc_id and the
-    x-ig-app-id header. Returns parsed post dict on success.
+    yt-dlp handles the logged-out GraphQL flow with proper TLS impersonation,
+    LSD token fetching, and doc_id rotation that raw HTTP cannot replicate.
+    Returns parsed metadata dict on success.
     """
     try:
-        client = await _get_client()
-        variables = json.dumps({
-            "shortcode": shortcode,
-            "fetch_tagged_user_count": False,
-            "hoisted_comment_id": None,
-            "hoisted_reply_id": None,
-        })
-        payload = {
-            "variables": variables,
-            "doc_id": _IG_MEDIA_DOC_ID,
-        }
-        resp = await client.post(
-            "https://www.instagram.com/graphql/web/api/v1/",
-            data=payload,
-            headers={
-                "x-ig-app-id": _IG_APP_ID,
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": f"https://www.instagram.com/p/{shortcode}/",
-            },
+        # Find the venv python that has yt-dlp installed.
+        py = sys.executable
+        proc = await asyncio.create_subprocess_exec(
+            py, "-m", "yt_dlp", "--simulate", "-j", "--no-warnings", url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if resp.status_code == 429:
-            return PublicResult(ok=False, error="rate limited (429)")
-        if resp.status_code >= 400:
-            return PublicResult(ok=False, error=f"HTTP {resp.status_code}")
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0 or not stdout.strip():
+            err_msg = stderr.decode("utf-8", errors="replace")[:200]
+            return PublicResult(ok=False, error=f"yt-dlp failed: {err_msg}")
 
-        body = resp.json()
-        media = (
-            body.get("data", {}).get("xig_polaris_media", {})
-            .get("if_not_gated_logged_out")
-        )
-        if media is None:
-            gating = body.get("data", {}).get("xig_polaris_media", {}).get("gating_info")
-            if gating:
-                return PublicResult(ok=False, error=f"gated: {gating.get('title', 'restricted')}")
-            return PublicResult(ok=False, error="no media in response (private or deleted)")
-
-        return PublicResult(ok=True, data=_parse_ig_media(media))
+        info = json.loads(stdout.decode("utf-8").split("\n")[0])
+        return PublicResult(ok=True, data=_parse_ytdlp_info(info, url))
+    except asyncio.TimeoutError:
+        return PublicResult(ok=False, error="yt-dlp timed out (30s)")
     except Exception as exc:  # noqa: BLE001
         return PublicResult(ok=False, error=str(exc)[:200])
 
 
-def _parse_ig_media(media: dict) -> dict:
-    """Normalize an Instagram GraphQL media node into our standard shape."""
-    caption_obj = media.get("caption") or {}
-    caption_text = caption_obj.get("text", "") if isinstance(caption_obj, dict) else ""
+def _parse_ytdlp_info(info: dict, url: str) -> dict:
+    """Normalize yt-dlp info_dict into our standard post shape."""
+    caption = info.get("description") or info.get("title") or ""
+    hashtags = re.findall(r"#(\w+)", caption)
+    mentions = re.findall(r"@(\w+)", caption)
 
-    user = media.get("user") or {}
-    author = user.get("username", "")
-
-    # Extract hashtags and mentions from caption.
-    hashtags = re.findall(r"#(\w+)", caption_text)
-    mentions = re.findall(r"@(\w+)", caption_text)
-
-    # Media items: single image, video, or carousel (sidecar).
+    # Media items from formats (video) or thumbnails (image).
     media_items: list[dict] = []
-    typename = media.get("__typename", "")
+    formats = info.get("formats") or []
+    # Pick best video format if present.
+    video_formats = [f for f in formats if f.get("vcodec") != "none" and f.get("url")]
+    if video_formats:
+        best = max(video_formats, key=lambda f: f.get("filesize") or f.get("tbr") or 0)
+        media_items.append({
+            "type": "video",
+            "url": best["url"],
+            "alt": info.get("description") or "",
+            "duration": info.get("duration"),
+        })
+    # Images: thumbnail or entries from thumbnails list.
+    thumbs = info.get("thumbnails") or []
+    if thumbs:
+        # Pick highest resolution thumbnail.
+        best_thumb = max(thumbs, key=lambda t: t.get("width") or t.get("height") or 0)
+        if best_thumb.get("url"):
+            media_items.append({
+                "type": "image",
+                "url": best_thumb["url"],
+                "alt": info.get("description") or "",
+            })
+    elif info.get("thumbnail"):
+        media_items.append({
+            "type": "image",
+            "url": info["thumbnail"],
+            "alt": info.get("description") or "",
+        })
 
-    if typename == "GraphSidecar":
-        edges = (media.get("edge_sidecar_to_children") or {}).get("edges") or []
-        for edge in edges:
-            node = edge.get("node", {})
-            item = _ig_node_to_media_item(node)
-            if item:
-                media_items.append(item)
-    else:
-        item = _ig_node_to_media_item(media)
-        if item:
-            media_items.append(item)
-
-    location = media.get("location")
-    location_name = location.get("name", "") if isinstance(location, dict) else ""
+    # Extract shortcode from URL.
+    sc_m = re.search(r"/(?:p|reel|tv)/([A-Za-z0-9_-]+)", url)
+    shortcode = sc_m.group(1) if sc_m else ""
 
     return {
-        "url": f"https://www.instagram.com/p/{media.get('shortcode', '')}/",
-        "shortcode": media.get("shortcode", ""),
-        "author": author,
-        "caption": caption_text,
-        "date": _ts_to_iso(media.get("taken_at")),
-        "likes": media.get("like_count"),
-        "comments_count": media.get("comment_count"),
+        "url": url,
+        "shortcode": shortcode,
+        "author": info.get("uploader") or info.get("channel") or "",
+        "caption": caption,
+        "date": info.get("upload_date") or "",
+        "likes": info.get("like_count"),
+        "comments_count": info.get("comment_count"),
         "media": media_items,
         "hashtags": hashtags,
         "mentions": mentions,
-        "location": location_name,
+        "location": "",
+        "view_count": info.get("view_count"),
     }
 
 
-def _ig_node_to_media_item(node: dict) -> dict | None:
-    """Convert one GraphQL media node (image or video) to our media dict."""
-    is_video = node.get("is_video", False)
-    if is_video:
-        url = node.get("video_url") or ""
-        if not url:
-            return None
-        return {"type": "video", "url": url, "alt": node.get("accessibility_caption", "")}
-    else:
-        url = node.get("display_url") or ""
-        if not url:
-            return None
-        return {"type": "image", "url": url, "alt": node.get("accessibility_caption", "")}
-
-
 async def ig_fetch_embed(shortcode: str) -> PublicResult:
-    """Fallback: scrape the /p/<shortcode>/embed/captioned/ page.
-
-    This page is always public and renders enough metadata for basic capture
-    when the GraphQL endpoint is blocked or rotated.
-    """
+    """Fallback: scrape the /p/<shortcode>/embed/captioned/ page."""
     try:
         client = await _get_client()
         resp = await client.get(
@@ -184,9 +150,7 @@ async def ig_fetch_embed(shortcode: str) -> PublicResult:
         )
         if resp.status_code >= 400:
             return PublicResult(ok=False, error=f"HTTP {resp.status_code}")
-
-        html = resp.text
-        data = _parse_ig_embed(html, shortcode)
+        data = _parse_ig_embed(resp.text, shortcode)
         if data is None:
             return PublicResult(ok=False, error="could not parse embed page")
         return PublicResult(ok=True, data=data)
@@ -194,25 +158,19 @@ async def ig_fetch_embed(shortcode: str) -> PublicResult:
         return PublicResult(ok=False, error=str(exc)[:200])
 
 
-def _parse_ig_embed(html: str, shortcode: str) -> dict | None:
+def _parse_ig_embed(html_text: str, shortcode: str) -> dict | None:
     """Extract structured data from an Instagram embed page's HTML."""
-    # Author
-    author_m = re.search(r'class="Username"[^>]*>([^<]+)</a>', html)
+    author_m = re.search(r'class="Username"[^>]*>([^<]+)</a>', html_text)
     author = author_m.group(1).strip() if author_m else ""
 
-    # Caption
-    cap_m = re.search(r'class="Caption"[^>]*>(.*?)</div>', html, re.DOTALL)
-    caption = ""
-    if cap_m:
-        caption = re.sub(r"<[^>]+>", "", cap_m.group(1)).strip()
+    cap_m = re.search(r'class="Caption"[^>]*>(.*?)</div>', html_text, re.DOTALL)
+    caption = re.sub(r"<[^>]+>", "", cap_m.group(1)).strip() if cap_m else ""
 
-    # Date
-    date_m = re.search(r'<time[^>]*datetime="([^"]+)"', html)
+    date_m = re.search(r'<time[^>]*datetime="([^"]+)"', html_text)
     date = date_m.group(1) if date_m else ""
 
-    # Image
-    img_m = re.search(r'class="EmbeddedMediaImage"[^>]*src="([^"]+)"', html)
     media_items: list[dict] = []
+    img_m = re.search(r'class="EmbeddedMediaImage"[^>]*src="([^"]+)"', html_text)
     if img_m:
         media_items.append({"type": "image", "url": img_m.group(1), "alt": ""})
 
@@ -239,25 +197,24 @@ def _parse_ig_embed(html: str, shortcode: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 async def x_fetch_syndication(status_id: str) -> PublicResult:
-    """Fetch a tweet via X's syndication API (what the embed widget calls).
-
-    Endpoint: cdn.syndication.twimg.com/tweet-result?id=<id>&token=<computed>
-    The token is derived from the status ID using the same algorithm the
-    official embed widget uses (simple base64-like encoding).
-    """
+    """Fetch a tweet via X's syndication API with html.unescape and t.co expansion."""
     try:
         token = _x_compute_token(status_id)
         client = await _get_client()
         resp = await client.get(
             "https://cdn.syndication.twimg.com/tweet-result",
-            params={"id": status_id, "token": token},
+            params={
+                "id": status_id,
+                "token": token,
+                "lang": "en",
+                "features": "tfw_timeline_list:;tfw_follower_count_sunset:true;tfw_tweet_edit_backend:on;tfw_refsrc_session:on;tfw_show_blue_verified_badge:on;tfw_legacy_timeline_sunset:true;tfw_tweet_edit_frontend:on",
+            },
             headers={"Referer": "https://platform.twitter.com/"},
         )
         if resp.status_code == 429:
             return PublicResult(ok=False, error="rate limited (429)")
         if resp.status_code >= 400:
             return PublicResult(ok=False, error=f"HTTP {resp.status_code}")
-
         body = resp.json()
         if not body or "text" not in body:
             return PublicResult(ok=False, error="empty or malformed syndication response")
@@ -267,14 +224,7 @@ async def x_fetch_syndication(status_id: str) -> PublicResult:
 
 
 def _x_compute_token(status_id: str) -> str:
-    """Compute the syndication token for a given status ID.
-
-    The embed widget derives this from the tweet ID. The algorithm has been
-    stable: it's essentially str(int(id) % 10) padded, but the exact form
-    varies. We use the known-working formula from community reverse-engineering.
-    """
-    # Simple modular hash that matches what the widget sends. If this breaks,
-    # the oEmbed fallback will still work.
+    """Compute the syndication token. Simple modular hash matching the widget."""
     try:
         num = int(status_id)
         return str(num % 10) + str((num >> 4) % 10)
@@ -283,21 +233,24 @@ def _x_compute_token(status_id: str) -> str:
 
 
 def _parse_x_syndication(body: dict, status_id: str) -> dict:
-    """Normalize a syndication API response into our standard shape."""
+    """Normalize syndication response with html.unescape and t.co expansion."""
     user = body.get("user") or {}
     handle = user.get("screen_name", "")
     author_name = user.get("name", "")
 
-    # Expand t.co URLs in text.
-    text = body.get("text", "")
-    urls = body.get("urls") or []
-    for u in urls:
+    # Unescape HTML entities first, then expand t.co links.
+    text = html.unescape(body.get("text", ""))
+
+    # Expand t.co URLs from entities.urls (more reliable than top-level urls).
+    entities = body.get("entities") or {}
+    url_entities = entities.get("urls") or body.get("urls") or []
+    for u in url_entities:
         short = u.get("url", "")
         expanded = u.get("expanded_url", "")
         if short and expanded:
             text = text.replace(short, expanded)
 
-    # Media
+    # Media from mediaDetails.
     media_items: list[dict] = []
     for md in body.get("mediaDetails") or []:
         mtype = md.get("type", "")
@@ -308,31 +261,26 @@ def _parse_x_syndication(body: dict, status_id: str) -> dict:
                 "alt": md.get("ext_alt_text", ""),
             })
         elif mtype == "video":
-            # Pick highest bitrate variant.
-            variants = md.get("variants") or []
-            best = max(
-                (v for v in variants if v.get("content_type") == "video/mp4"),
-                key=lambda v: v.get("bitrate", 0),
-                default=None,
-            )
-            if best:
+            variants = md.get("video_info", {}).get("variants") or md.get("variants") or []
+            mp4s = [v for v in variants if "mp4" in (v.get("content_type", ""))]
+            if mp4s:
+                best = max(mp4s, key=lambda v: v.get("bitrate", 0))
                 media_items.append({
                     "type": "video",
                     "url": best.get("url", ""),
                     "alt": md.get("ext_alt_text", ""),
                 })
 
-    # Quoted tweet
+    # Quoted tweet.
     quoted = None
     qt = body.get("quoted_tweet")
-    if qt:
+    if qt and isinstance(qt, dict):
         qt_user = qt.get("user") or {}
         quoted = {
             "author": qt_user.get("screen_name", ""),
-            "text": qt.get("text", ""),
+            "text": html.unescape(qt.get("text", "")),
         }
 
-    # Reply-to
     reply_to = body.get("in_reply_to_screen_name", "")
 
     return {
@@ -347,18 +295,14 @@ def _parse_x_syndication(body: dict, status_id: str) -> dict:
         "reply_to_id": body.get("in_reply_to_status_id_str", ""),
         "likes": body.get("favorite_count"),
         "retweets": body.get("retweet_count"),
-        "replies": body.get("reply_count"),
+        "replies": body.get("conversation_count") or body.get("reply_count"),
         "quotes": body.get("quote_count"),
         "canonical_url": f"https://x.com/{handle}/status/{status_id}" if handle else "",
     }
 
 
 async def x_fetch_oembed(url: str) -> PublicResult:
-    """Fallback: fetch tweet data via Twitter's oEmbed endpoint.
-
-    Less structured than syndication (HTML blob instead of JSON fields), but
-    very stable and doesn't require a token.
-    """
+    """Fallback: fetch tweet data via Twitter's oEmbed endpoint."""
     try:
         client = await _get_client()
         resp = await client.get(
@@ -367,7 +311,6 @@ async def x_fetch_oembed(url: str) -> PublicResult:
         )
         if resp.status_code >= 400:
             return PublicResult(ok=False, error=f"HTTP {resp.status_code}")
-
         body = resp.json()
         data = _parse_x_oembed(body, url)
         if data is None:
@@ -379,25 +322,18 @@ async def x_fetch_oembed(url: str) -> PublicResult:
 
 def _parse_x_oembed(body: dict, url: str) -> dict | None:
     """Extract structured data from an oEmbed response's HTML field."""
-    html = body.get("html", "")
-    if not html:
+    raw_html = body.get("html", "")
+    if not raw_html:
         return None
 
-    # Extract text from blockquote.
-    text_m = re.search(r"<p>(.*?)</p>", html, re.DOTALL)
-    text = re.sub(r"<[^>]+>", "", text_m.group(1)).strip() if text_m else ""
+    text_m = re.search(r"<p>(.*?)</p>", raw_html, re.DOTALL)
+    text = html.unescape(re.sub(r"<[^>]+>", "", text_m.group(1))).strip() if text_m else ""
 
-    # Author
     author = body.get("author_name", "")
     author_url = body.get("author_url", "")
-    handle_m = re.search(r"twitter\.com/(\w+)", author_url)
+    handle_m = re.search(r"(?:twitter|x)\.com/(\w+)", author_url)
     handle = handle_m.group(1) if handle_m else ""
 
-    # Date from the link text.
-    date_m = re.search(r"<a[^>]*>(\w+ \d+, \d{4})</a>", html)
-    date_str = date_m.group(1) if date_m else ""
-
-    # Status ID from URL.
     id_m = re.search(r"/status/(\d+)", url)
     status_id = id_m.group(1) if id_m else ""
 
@@ -409,8 +345,8 @@ def _parse_x_oembed(body: dict, url: str) -> dict | None:
         "author": author,
         "handle": handle,
         "text": text,
-        "date": date_str,
-        "media": [],  # oEmbed doesn't include media URLs
+        "date": "",
+        "media": [],
         "quoted": None,
         "reply_to": "",
         "reply_to_id": "",
@@ -427,11 +363,7 @@ def _parse_x_oembed(body: dict, url: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 async def download_media(url: str, dest: Path, *, max_bytes: int = 500_000_000) -> tuple[bool, Any]:
-    """Stream-download a media file to dest with a size cap.
-
-    Returns (ok, info) where info is the file size on success or an error
-    string on failure. Respects max_bytes (default 500 MB).
-    """
+    """Stream-download a media file to dest with a size cap."""
     try:
         client = await _get_client()
         async with client.stream("GET", url) as resp:
@@ -454,11 +386,7 @@ async def download_media(url: str, dest: Path, *, max_bytes: int = 500_000_000) 
 
 
 def maybe_transcribe(video_path: Path) -> str | None:
-    """Call iofast_engine.transcribe.transcribe(path) if available.
-
-    Another worker adds that module on feat/yt-transcribe. Until then, or
-    if import fails, returns None so the caller can note "transcript pending".
-    """
+    """Call iofast_engine.transcribe.transcribe(path) if available."""
     try:
         from ..transcribe import transcribe  # type: ignore[attr-defined]
         return transcribe(video_path)

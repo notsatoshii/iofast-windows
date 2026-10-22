@@ -22,7 +22,7 @@ from .social_public import (
     PublicResult,
     download_media,
     ig_fetch_embed,
-    ig_fetch_post_graphql,
+    ig_fetch_post_ytdlp,
     maybe_transcribe,
 )
 
@@ -75,13 +75,14 @@ class InstagramSource:
         route = "public"
         data: dict | None = None
 
-        # Route 1: GraphQL logged-out API.
-        result = await ig_fetch_post_graphql(shortcode)
+        # Route 1: yt-dlp (handles TLS impersonation + GraphQL doc_id rotation).
+        # Pass full URL so yt-dlp can resolve reel/p/tv variants itself.
+        result = await ig_fetch_post_ytdlp(url)
         if result.ok:
             data = result.data
-            emit({"type": "info", "url": url, "message": "captured via public GraphQL"})
+            emit({"type": "info", "url": url, "message": "captured via public yt-dlp"})
         else:
-            emit({"type": "info", "url": url, "message": f"GraphQL failed ({result.error}); trying embed"})
+            emit({"type": "info", "url": url, "message": f"yt-dlp failed ({result.error}); trying embed"})
 
             # Route 2: embed page fallback.
             result = await ig_fetch_embed(shortcode)
