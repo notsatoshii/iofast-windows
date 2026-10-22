@@ -124,7 +124,51 @@ pub(crate) fn fire_scrape(
             Err(_) => json!({ "rid": rid, "error": "sidecar exited before replying" }),
         };
         SCRAPE_IN_FLIGHT.store(false, Ordering::SeqCst);
-        let _ = tauri::Emitter::emit(&app, "scrape-done", payload);
+        let _ = tauri::Emitter::emit(&app, "scrape-done", payload.clone());
+        // Toast notification on completion so the user knows without watching.
+        #[cfg(target_os = "windows")]
+        {
+            let (title, body) = if payload.get("error").is_some() {
+                ("iofast", "Scrape failed — check the library for details.")
+            } else {
+                ("iofast", "Scrape complete.")
+            };
+            // PowerShell toast via BurntToast-free inline XML. Fire-and-forget;
+            // a missing toast module is never fatal.
+            let script = format!(
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
+                 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null; \
+                 $xml = '<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>'; \
+                 $doc = New-Object Windows.Data.Xml.Dom.XmlDocument; $doc.LoadXml($xml); \
+                 $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('iofast'); \
+                 $toast = New-Object Windows.UI.Notifications.ToastNotification $doc; \
+                 $notifier.Show($toast)",
+                title, body
+            );
+            let _ = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let (title, body) = if payload.get("error").is_some() {
+                ("iofast", "Scrape failed — check the library for details.")
+            } else {
+                ("iofast", "Scrape complete.")
+            };
+            let script = format!(
+                "display notification \"{}\" with title \"{}\"",
+                body.replace('"', "\\\""),
+                title.replace('"', "\\\"")
+            );
+            let _ = std::process::Command::new("/usr/bin/osascript")
+                .args(["-e", &script])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
     });
     Ok(rid)
 }
