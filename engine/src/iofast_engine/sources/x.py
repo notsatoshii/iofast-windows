@@ -123,11 +123,17 @@ class XSource:
                 ok, info = await download_media(m["url"], vid_path)
                 if ok:
                     emit({"type": "media", "url": m["url"], "file": vid_name, "size": info})
-                    tx = maybe_transcribe(vid_path)
+                    tx = maybe_transcribe(vid_path, emit=emit)
                     if tx:
-                        data.setdefault("transcript", tx)
+                        # Distinguish success (has header) from error strings.
+                        if tx.startswith("Transcript:"):
+                            data.setdefault("transcript", tx)
+                        else:
+                            transcript_note = tx
+                            emit({"type": "warning", "url": url, "message": f"transcription: {tx}"})
                     else:
-                        transcript_note = "transcript pending"
+                        transcript_note = "transcription not installed"
+                        emit({"type": "warning", "url": url, "message": "transcription: not installed"})
                 else:
                     emit({"type": "warning", "url": m["url"], "message": f"download failed: {info}"})
 

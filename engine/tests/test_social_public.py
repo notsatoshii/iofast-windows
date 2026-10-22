@@ -321,10 +321,130 @@ class TestUtilities:
         token = _x_compute_token("not-a-number")
         assert token == "0"
 
-    def test_maybe_transcribe_returns_none_when_missing(self):
-        # transcribe module doesn't exist yet — should return None gracefully.
-        result = maybe_transcribe(Path("/nonexistent/video.mp4"))
+    def test_maybe_transcribe_success_with_header(self):
+        """maybe_transcribe returns formatted transcript with header on success."""
+        from unittest.mock import patch
+
+        with patch(
+            "iofast_engine.transcribe.transcribe_local_video",
+            return_value="Transcript: whisper small (local) (en)\n\n[00:00] Hello world\n[00:05] Testing",
+        ):
+            result = maybe_transcribe(Path("/fake/video.mp4"))
+        assert result is not None
+        assert result.startswith("Transcript: whisper small (local) (en)")
+        assert "[00:00] Hello world" in result
+
+    def test_maybe_transcribe_no_speech(self):
+        """maybe_transcribe returns 'no speech detected' when whisper finds nothing."""
+        from unittest.mock import patch
+
+        with patch(
+            "iofast_engine.transcribe.transcribe_local_video",
+            return_value="no speech detected",
+        ):
+            result = maybe_transcribe(Path("/fake/silent.mp4"))
+        assert result == "no speech detected"
+
+    def test_maybe_transcribe_not_installed(self):
+        """maybe_transcribe returns 'transcription not installed' when whisper missing."""
+        from unittest.mock import patch
+
+        with patch(
+            "iofast_engine.transcribe.transcribe_local_video",
+            return_value="transcription not installed",
+        ):
+            result = maybe_transcribe(Path("/fake/video.mp4"))
+        assert result == "transcription not installed"
+
+    def test_maybe_transcribe_error_propagated(self):
+        """maybe_transcribe returns error description instead of swallowing it."""
+        from unittest.mock import patch
+
+        with patch(
+            "iofast_engine.transcribe.transcribe_local_video",
+            side_effect=RuntimeError("CUDA out of memory"),
+        ):
+            result = maybe_transcribe(Path("/fake/video.mp4"))
+        assert result is not None
+        assert "CUDA out of memory" in result
+
+    def test_maybe_transcribe_returns_none_when_module_missing(self):
+        """maybe_transcribe returns None when transcribe_local_video cannot be imported."""
+        from unittest.mock import patch
+        import iofast_engine.sources.social_public as sp_mod
+
+        # Simulate the ImportError path by making the local import fail.
+        original = sp_mod.maybe_transcribe
+
+        def fake_maybe_transcribe(video_path, emit=None):
+            try:
+                raise ImportError("no transcribe module")
+            except ImportError:
+                return None
+
+        with patch.object(sp_mod, "maybe_transcribe", side_effect=fake_maybe_transcribe):
+            result = sp_mod.maybe_transcribe(Path("/fake/video.mp4"))
         assert result is None
+
+    def test_maybe_transcribe_no_audio_stream(self):
+        """transcribe_local_video returns warning when file has no audio stream."""
+        from unittest.mock import patch, MagicMock
+        from iofast_engine.transcribe import transcribe_local_video
+
+        # Mock PyAV to simulate a video with no audio streams
+        mock_container = MagicMock()
+        mock_container.streams.audio = []  # No audio streams
+        mock_container.__enter__ = MagicMock(return_value=mock_container)
+        mock_container.__exit__ = MagicMock(return_value=False)
+
+        with patch("av.open", return_value=mock_container):
+            events = []
+            result = transcribe_local_video(Path("/fake/no-audio.mp4"), lambda e: events.append(e))
+        assert "no audio stream" in result
+
+    def test_maybe_transcribe_vad_retry_on_music(self):
+        """transcribe_local_video retries without VAD when VAD filters everything."""
+        from unittest.mock import patch, MagicMock
+        from iofast_engine.transcribe import transcribe_local_video
+
+        # Mock PyAV to report audio streams exist
+        mock_container = MagicMock()
+        mock_audio_stream = MagicMock()
+        mock_container.streams.audio = [mock_audio_stream]
+        mock_container.__enter__ = MagicMock(return_value=mock_container)
+        mock_container.__exit__ = MagicMock(return_value=False)
+
+        # Mock WhisperModel: first call (VAD=True) returns empty, second (VAD=False) returns segments
+        mock_model = MagicMock()
+        mock_info_vad = MagicMock()
+        mock_info_vad.language = "en"
+        mock_info_novad = MagicMock()
+        mock_info_novad.language = "en"
+
+        mock_seg = MagicMock()
+        mock_seg.start = 0.0
+        mock_seg.end = 2.0
+        mock_seg.text = "Like a woman, ooh"
+
+        # First transcribe call (VAD=True) returns empty iterator
+        # Second transcribe call (VAD=False) returns one segment
+        mock_model.transcribe.side_effect = [
+            (iter([]), mock_info_vad),  # VAD=True: nothing
+            (iter([mock_seg]), mock_info_novad),  # VAD=False: found speech
+        ]
+
+        with patch("av.open", return_value=mock_container), \
+             patch("faster_whisper.WhisperModel", return_value=mock_model), \
+             patch("iofast_engine.transcribe.pick_device_and_model", return_value=("cpu", "int8", "small")), \
+             patch("iofast_engine.transcribe._models_root", return_value=Path("/fake/models")):
+            events = []
+            result = transcribe_local_video(Path("/fake/music.mp4"), lambda e: events.append(e))
+
+        assert result.startswith("Transcript:")
+        assert "Like a woman" in result
+        # Verify retry event was emitted
+        retry_events = [e for e in events if "retrying" in e.get("message", "")]
+        assert len(retry_events) == 1
 
 
 # ---------------------------------------------------------------------------
