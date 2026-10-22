@@ -617,6 +617,66 @@ class RpcServer:
         except Exception as error:
             self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
 
+    def handle_vault_ask(self, rid, params):
+        """Ask a question against the vault; runs in a worker thread."""
+        with self.state:
+            thread = self.threads.get("vault_ask")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "vault.ask already running")
+            thread = threading.Thread(
+                target=self._vault_ask_thread, args=(rid, params), daemon=True
+            )
+            self.threads["vault_ask"] = thread
+            thread.start()
+
+    def _vault_ask_thread(self, rid, params):
+        try:
+            from .vault.extras_rpc import vault_ask
+            result = vault_ask(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_vault_check(self, rid, params):
+        """Weekly vault health check; runs in a worker thread."""
+        with self.state:
+            thread = self.threads.get("vault_check")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "vault.check already running")
+            thread = threading.Thread(
+                target=self._vault_check_thread, args=(rid, params), daemon=True
+            )
+            self.threads["vault_check"] = thread
+            thread.start()
+
+    def _vault_check_thread(self, rid, params):
+        try:
+            from .vault.extras_rpc import vault_check
+            result = vault_check(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_digest_make(self, rid, params):
+        """Generate weekly digest; runs in a worker thread."""
+        with self.state:
+            thread = self.threads.get("digest_make")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "digest.make already running")
+            thread = threading.Thread(
+                target=self._digest_make_thread, args=(rid, params), daemon=True
+            )
+            self.threads["digest_make"] = thread
+            thread.start()
+
+    def _digest_make_thread(self, rid, params):
+        try:
+            from .vault.extras_rpc import digest_make
+            result = digest_make(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
     def handle_cancel(self, rid, params):
         want = params.get("rid")
         if not (want is None or _is_int(want)):

@@ -48,47 +48,15 @@ def _resolve_vault(vault_arg):
 
 
 def _check_if_due(job_name: str) -> bool:
-    """Check if a weekly job is due based on jobs.json. Returns True if due."""
-    import os
-    from datetime import date
-    jobs_path = os.path.join(os.environ.get("APPDATA", ""), "iofast", "jobs.json")
-    if not os.path.isfile(jobs_path):
-        return True
-    try:
-        with open(jobs_path, encoding="utf-8") as f:
-            jobs = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return True
-    last_run = jobs.get(job_name, "")
-    if not last_run:
-        return True
-    try:
-        last_date = date.fromisoformat(last_run)
-        today = date.today()
-        # Due if last run was in a different ISO week
-        return last_date.isocalendar()[1] != today.isocalendar()[1] or \
-               last_date.isocalendar()[0] != today.isocalendar()[0]
-    except ValueError:
-        return True
+    """Check if a weekly job is due. Delegates to jobs.is_job_due."""
+    from .jobs import is_job_due
+    return is_job_due(job_name)
 
 
 def _record_job_run(job_name: str) -> None:
-    """Record that a job ran today in jobs.json."""
-    import os
-    from datetime import date
-    jobs_dir = os.path.join(os.environ.get("APPDATA", ""), "iofast")
-    os.makedirs(jobs_dir, exist_ok=True)
-    jobs_path = os.path.join(jobs_dir, "jobs.json")
-    jobs = {}
-    if os.path.isfile(jobs_path):
-        try:
-            with open(jobs_path, encoding="utf-8") as f:
-                jobs = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    jobs[job_name] = date.today().isoformat()
-    with open(jobs_path, "w", encoding="utf-8") as f:
-        json.dump(jobs, f, indent=2)
+    """Record that a job ran today. Delegates to jobs.record_job_run."""
+    from .jobs import record_job_run
+    record_job_run(job_name)
 
 
 def run_vault_extras(args):
