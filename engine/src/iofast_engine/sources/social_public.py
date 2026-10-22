@@ -425,15 +425,27 @@ async def download_media(url: str, dest: Path, *, max_bytes: int = 500_000_000) 
         return False, str(exc)[:200]
 
 
-def maybe_transcribe(video_path: Path) -> str | None:
-    """Call iofast_engine.transcribe.transcribe(path) if available."""
+def maybe_transcribe(video_path: Path, emit=None) -> str | None:
+    """Transcribe a local video file via iofast_engine.transcribe.
+
+    Returns the formatted transcript string (with header) on success, or an
+    error description string on failure. Returns None only when the
+    transcribe module is entirely unavailable (should not happen in normal
+    installs since it ships with the engine).
+
+    Never swallows errors silently — callers should treat any non-None,
+    non-transcript return as a warning to surface in the note.
+    """
+    if emit is None:
+        emit = lambda _e: None  # noqa: E731
     try:
-        from ..transcribe import transcribe  # type: ignore[attr-defined]
-        return transcribe(video_path)
+        from ..transcribe import transcribe_local_video
     except ImportError:
         return None
-    except Exception:  # noqa: BLE001
-        return None
+    try:
+        return transcribe_local_video(video_path, emit)
+    except Exception as exc:  # noqa: BLE001
+        return f"transcription error: {exc}"
 
 
 def _ts_to_iso(ts: Any) -> str:

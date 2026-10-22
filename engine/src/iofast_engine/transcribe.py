@@ -290,6 +290,20 @@ def transcribe_audio(
 
     emit({"type": "progress", "message": f"🗣️ transcribing {audio_path.name}"})
 
+    # Guard: check if the file has any audio streams before transcribing.
+    # Videos with no audio stream cause "tuple index out of range" inside
+    # faster-whisper's PyAV backend when it tries container.streams.audio[0].
+    try:
+        import av as _av
+        with _av.open(str(audio_path)) as _container:
+            if not _container.streams.audio:
+                return TranscriptResult(
+                    text="", language="", model=model_name, device=device,
+                    warnings=[*warnings, "no audio stream in file"],
+                )
+    except Exception:
+        pass  # If probe fails, let whisper handle it
+
     try:
         segments_iter, info = model.transcribe(
             str(audio_path),
@@ -305,6 +319,22 @@ def transcribe_audio(
         )
 
     language = getattr(info, "language", "") or ""
+
+    # Retry without VAD if VAD filtered everything out but audio exists.
+    # Music, singing, and some short-form content defeat Silero VAD.
+    if not segments:
+        try:
+            emit({"type": "progress", "message": "🗣️ retrying without VAD filter"})
+            segments_iter2, info2 = model.transcribe(
+                str(audio_path),
+                beam_size=5,
+                vad_filter=False,
+            )
+            segments = list(segments_iter2)
+            language = getattr(info2, "language", "") or language
+        except Exception:
+            pass  # Keep empty segments; will report "no speech detected"
+
     paragraphs = _group_segments(segments)
     text = _format_paragraphs(paragraphs)
 
@@ -342,3 +372,52 @@ def should_skip_transcribe(duration_s: int | None) -> bool:
     if ceiling <= 0:
         return False
     return duration_s > ceiling
+
+
+# ---------------------------------------------------------------------------
+# Public helper for social sources (Instagram, X)
+# ---------------------------------------------------------------------------
+
+def transcribe_local_video(
+    video_path: Path,
+    emit: Callable,
+) -> str:
+    """Transcribe a local video file and return a formatted transcript string.
+
+    Uses the same model choice, duration cap, and models folder as YouTube.
+    faster-whisper reads video containers directly via PyAV (the shim above
+    handles version differences).
+
+    Returns a string that includes the header line matching YouTube's format:
+        "Transcript: whisper small (local) (en)\\n\\n[00:00] ..."
+
+    On failure returns an error description string (never empty, never raises):
+        - "transcription not installed" when faster-whisper is missing
+        - "no speech detected" when whisper ran but found nothing
+        - the warning text for any other failure
+    """
+    result = transcribe_audio(video_path, emit)
+
+    # Whisper not installed.
+    install_warns = [w for w in result.warnings if "not installed" in w.lower()]
+    if install_warns:
+        return "transcription not installed"
+
+    # No audio stream in file (video-only container).
+    no_audio_warns = [w for w in result.warnings if "no audio stream" in w.lower()]
+    if no_audio_warns:
+        return "no audio stream in file"
+
+    # Transcription failed entirely (load error, CUDA failure, etc.).
+    fail_warns = [w for w in result.warnings if "failed" in w.lower()]
+    if fail_warns and not result.text.strip():
+        return "; ".join(result.warnings)
+
+    # No speech detected.
+    if not result.text.strip():
+        return "no speech detected"
+
+    # Success — format with header.
+    lang_tag = f" ({result.language})" if result.language else ""
+    header = f"Transcript: whisper {result.model} (local){lang_tag}"
+    return f"{header}\n\n{result.text}"
