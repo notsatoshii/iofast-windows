@@ -1048,6 +1048,12 @@ fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
         Code::KeyS,
     );
 
+    // Screenshot capture hotkey: Ctrl+Shift+X (fixed, not user-configurable).
+    let screenshot_hotkey = Shortcut::new(
+        Some(Modifiers::CONTROL | Modifiers::SHIFT),
+        Code::KeyX,
+    );
+
     app.plugin(
         tauri_plugin_global_shortcut::Builder::new()
             .with_handler(move |app, pressed, event| {
@@ -1065,6 +1071,15 @@ fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
                             Err(e) => log::warn!("selection capture failed: {e}"),
                         }
                     });
+                } else if pressed == &screenshot_hotkey {
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let sc = handle.state::<SidecarManager>();
+                        match capture_screenshot(handle.clone(), sc).await {
+                            Ok(v) => log::info!("screenshot capture: {v}"),
+                            Err(e) => log::warn!("screenshot capture failed: {e}"),
+                        }
+                    });
                 }
             })
             .build(),
@@ -1080,6 +1095,9 @@ fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
     }
     if let Err(e) = app.global_shortcut().register(capture_hotkey) {
         log::warn!("Ctrl+Shift+S (selection capture) not registered: {e}");
+    }
+    if let Err(e) = app.global_shortcut().register(screenshot_hotkey) {
+        log::warn!("Ctrl+Shift+X (screenshot capture) not registered: {e}");
     }
     Ok(())
 }
@@ -1490,6 +1508,265 @@ async fn watch_run(
     sc.request(&app, "watch.run", params)
         .await
         .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Feature 5: Screenshot capture (Ctrl+Shift+X) — GDI BitBlt + WinRT OCR
+// ---------------------------------------------------------------------------
+
+/// Capture a screen region via GDI BitBlt, encode as PNG, run WinRT OCR,
+/// save to library/captures/, and optionally file into the vault.
+#[tauri::command]
+async fn capture_screenshot(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (&app, &sc);
+        return Err("screenshot capture is Windows-only".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Graphics::Gdi::{
+            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+            GetDIBits, GetDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
+            BI_RGB, DIB_RGB_COLORS, SRCCOPY,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetDesktopWindow, GetSystemMetrics};
+        use windows::Media::Ocr::OcrEngine;
+        use windows::Graphics::Imaging::BitmapDecoder;
+        use windows::Storage::Streams::InMemoryRandomAccessStream;
+        use windows::Globalization::Language;
+
+        const SM_XVIRTUALSCREEN: i32 = 76;
+        const SM_YVIRTUALSCREEN: i32 = 77;
+        const SM_CXVIRTUALSCREEN: i32 = 78;
+        const SM_CYVIRTUALSCREEN: i32 = 79;
+
+        // Capture the full virtual screen (all monitors).
+        let (x, y, w, h) = tokio::task::spawn_blocking(|| unsafe {
+            let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            (x, y, w, h)
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+
+        if w <= 0 || h <= 0 {
+            return Err("no display detected".into());
+        }
+
+        // GDI capture in a blocking task.
+        let png_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+            unsafe {
+                let hdc_screen = GetDC(GetDesktopWindow());
+                if hdc_screen.is_null() {
+                    return Err("GetDC failed".into());
+                }
+                let hdc_mem = CreateCompatibleDC(hdc_screen);
+                if hdc_mem.is_null() {
+                    let _ = ReleaseDC(GetDesktopWindow(), hdc_screen);
+                    return Err("CreateCompatibleDC failed".into());
+                }
+                let hbitmap = CreateCompatibleBitmap(hdc_screen, w, h);
+                if hbitmap.is_null() {
+                    let _ = DeleteDC(hdc_mem);
+                    let _ = ReleaseDC(GetDesktopWindow(), hdc_screen);
+                    return Err("CreateCompatibleBitmap failed".into());
+                }
+                let old = SelectObject(hdc_mem, hbitmap);
+                if BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY) == 0 {
+                    let _ = SelectObject(hdc_mem, old);
+                    let _ = DeleteObject(hbitmap);
+                    let _ = DeleteDC(hdc_mem);
+                    let _ = ReleaseDC(GetDesktopWindow(), hdc_screen);
+                    return Err("BitBlt failed".into());
+                }
+
+                // Extract raw BGRA pixels.
+                let mut bmi = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: w,
+                        biHeight: -h, // top-down
+                        biPlanes: 1,
+                        biBitCount: 32,
+                        biCompression: BI_RGB,
+                        biSizeImage: 0,
+                        biXPelsPerMeter: 0,
+                        biYPelsPerMeter: 0,
+                        biClrUsed: 0,
+                        biClrImportant: 0,
+                    },
+                    bmiColors: [windows_sys::Win32::Graphics::Gdi::RGBQUAD {
+                        rgbBlue: 0,
+                        rgbGreen: 0,
+                        rgbRed: 0,
+                        rgbReserved: 0,
+                    }; 1],
+                };
+                let buf_size = (w * h * 4) as usize;
+                let mut buf = vec![0u8; buf_size];
+                let got = GetDIBits(
+                    hdc_screen,
+                    hbitmap,
+                    0,
+                    h as u32,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut bmi,
+                    DIB_RGB_COLORS,
+                );
+                let _ = SelectObject(hdc_mem, old);
+                let _ = DeleteObject(hbitmap);
+                let _ = DeleteDC(hdc_mem);
+                let _ = ReleaseDC(GetDesktopWindow(), hdc_screen);
+
+                if got == 0 {
+                    return Err("GetDIBits failed".into());
+                }
+
+                // Convert BGRA → RGBA for PNG.
+                for px in buf.chunks_exact_mut(4) {
+                    px.swap(0, 2); // B↔R
+                }
+
+                // Encode as PNG.
+                let mut png_buf = Vec::new();
+                {
+                    let mut encoder = png::Encoder::new(&mut png_buf, w as u32, h as u32);
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+                    writer.write_image_data(&buf).map_err(|e| e.to_string())?;
+                }
+                Ok(png_buf)
+            }
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))??;
+
+        // Save PNG to library/captures/.
+        let lib = store::config_get(app.clone())
+            .map(|c| c["config"]["library_path"].as_str().map(String::from))
+            .ok()
+            .flatten()
+            .ok_or("no library path configured")?;
+
+        let captures_dir = std::path::PathBuf::from(&lib).join("captures");
+        std::fs::create_dir_all(&captures_dir).map_err(|e| e.to_string())?;
+
+        let ts = chrono_like_timestamp();
+        let filename = format!("{ts}_screenshot.png");
+        let filepath = captures_dir.join(&filename);
+        std::fs::write(&filepath, &png_bytes).map_err(|e| e.to_string())?;
+
+        // Run WinRT OCR on the captured image.
+        let ocr_text = tokio::task::spawn_blocking(move || -> Result<String, String> {
+            // Write PNG bytes to an InMemoryRandomAccessStream for BitmapDecoder.
+            let stream = InMemoryRandomAccessStream::new().map_err(|e| e.to_string())?;
+            use windows::Storage::Streams::DataWriter;
+            let writer = DataWriter::new().map_err(|e| e.to_string())?;
+            writer.WriteBytes(&png_bytes).map_err(|e| e.to_string())?;
+            let buffer = writer.DetachBuffer().map_err(|e| e.to_string())?;
+            stream.WriteAsync(&buffer).map_err(|e| e.to_string())?
+                .get().map_err(|e| e.to_string())?;
+            stream.Seek(0).map_err(|e| e.to_string())?;
+
+            let decoder = BitmapDecoder::CreateAsync(&stream)
+                .map_err(|e| e.to_string())?
+                .get()
+                .map_err(|e| e.to_string())?;
+            let bitmap = decoder.GetSoftwareBitmapAsync().map_err(|e| e.to_string())?
+                .get().map_err(|e| e.to_string())?;
+
+            // Try Korean first, fall back to English, then user-profile default.
+            let engine = Language::CreateLanguage(&"ko-KR".into())
+                .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
+                .or_else(|_| {
+                    Language::CreateLanguage(&"en-US".into())
+                        .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
+                })
+                .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())
+                .map_err(|e| format!("OCR engine unavailable: {e}"))?;
+
+            let result = engine
+                .RecognizeAsync(&bitmap)
+                .map_err(|e| e.to_string())?
+                .get()
+                .map_err(|e| e.to_string())?;
+            let text = result.Text().map_err(|e| e.to_string())?.to_string_lossy();
+            Ok(text)
+        })
+        .await
+        .map_err(|e| format!("OCR spawn_blocking failed: {e}"))?;
+
+        let ocr_text = match ocr_text {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("OCR failed (non-fatal): {e}");
+                String::new()
+            }
+        };
+
+        // Write OCR text alongside the PNG as a markdown note.
+        let md_filename = format!("{ts}_screenshot.md");
+        let md_filepath = captures_dir.join(&md_filename);
+        let title = foreground_window_title().unwrap_or_else(|| "Screenshot".to_string());
+        let md_content = format!(
+            "---\ntitle: \"{}\"\nsource: screenshot-capture\ndate: {}\n---\n\n{}",
+            title.replace('"', "\\\""),
+            ts,
+            ocr_text
+        );
+        std::fs::write(&md_filepath, md_content).map_err(|e| e.to_string())?;
+
+        // Optionally file into vault.
+        let file_to_vault = store::config_get(app.clone())
+            .map(|c| c["config"]["file_to_vault"].as_bool().unwrap_or(false))
+            .unwrap_or(false);
+
+        if file_to_vault {
+            let run_dir = captures_dir.to_string_lossy().to_string();
+            match sc
+                .request(&app, "vault.file", json!({ "run_dir": run_dir, "dry_run": false }))
+                .await
+            {
+                Ok(result) => {
+                    return Ok(json!({
+                        "captured": true,
+                        "image": filepath.to_string_lossy(),
+                        "note": md_filepath.to_string_lossy(),
+                        "ocr_chars": ocr_text.len(),
+                        "vault_filed": true,
+                        "vault_result": result,
+                    }));
+                }
+                Err(e) => {
+                    log::warn!("vault.file failed for screenshot: {e}");
+                    return Ok(json!({
+                        "captured": true,
+                        "image": filepath.to_string_lossy(),
+                        "note": md_filepath.to_string_lossy(),
+                        "ocr_chars": ocr_text.len(),
+                        "vault_filed": false,
+                        "vault_error": e,
+                    }));
+                }
+            }
+        }
+
+        Ok(json!({
+            "captured": true,
+            "image": filepath.to_string_lossy(),
+            "note": md_filepath.to_string_lossy(),
+            "ocr_chars": ocr_text.len(),
+            "vault_filed": false,
+        }))
+    }
 }
 
 /// Scripted self-test: runs four checks without the Tauri app or screen control.
@@ -2279,6 +2556,7 @@ fn main() {
             vault_check,
             digest_make,
             watch_run,
+            capture_screenshot,
             about::about_info
         ])
         .setup(|app| {
