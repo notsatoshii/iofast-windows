@@ -731,6 +731,16 @@ class RpcServer:
 
 def serve_stdio():
     """Entry point for `iofast rpc`: harden stdout, then serve until EOF."""
+    # On Windows, the default ProactorEventLoopPolicy lacks add_reader/
+    # remove_reader, which breaks anyio task cancellation and subprocess
+    # creation in frozen builds. Set SelectorEventLoopPolicy once at
+    # process start, before any event loop is created.
+    if sys.platform == "win32":
+        try:
+            import asyncio as _asyncio
+            _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
+        except Exception:
+            pass
     default_storage_env()
     # Dup the real stdout for protocol lines, then point fd 1 at stderr so a
     # dependency that print()s can never corrupt the protocol stream.

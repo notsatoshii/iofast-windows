@@ -30,6 +30,16 @@ def ndjson_emit(event):
 
 
 def main(argv=None):
+    # On Windows, the default ProactorEventLoopPolicy lacks add_reader/
+    # remove_reader, which breaks anyio task cancellation and subprocess
+    # creation in frozen builds. Set SelectorEventLoopPolicy once at
+    # process start, before any event loop is created.
+    if sys.platform == "win32":
+        try:
+            import asyncio as _asyncio
+            _asyncio.set_event_loop_policy(_asyncio.WindowsSelectorEventLoopPolicy())
+        except Exception:
+            pass
     ap = argparse.ArgumentParser(
         prog="iofast",
         description="Scrape a docs site into markdown.",
