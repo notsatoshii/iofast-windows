@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">iofast</string>
+    <string name="queue_title">Captured Links</string>
+    <string name="a11y_service_summary">iofast URL capture</string>
+    <string name="a11y_service_description">Reads the current URL from Chrome, Samsung Internet, YouTube, X, and Instagram so the side-key shortcut can capture it without a screenshot.</string>
+    <string name="toast_captured">Captured: %1$s</string>
+    <string name="toast_no_url">No URL found on screen</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_share">Share</string>
+    <string name="action_delete">Delete</string>
+    <string name="empty_queue">No captured links yet.\nDouble-press the side key or share a link to iofast.</string>
+</resources>
