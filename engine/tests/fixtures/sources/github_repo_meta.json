@@ -1,0 +1,10 @@
+{
+  "full_name": "test-owner/test-repo",
+  "description": "A small test repository for offline fixture testing.",
+  "stargazers_count": 42,
+  "language": "Python",
+  "topics": ["test", "fixture"],
+  "license": {"spdx_id": "MIT"},
+  "default_branch": "main",
+  "html_url": "https://github.com/test-owner/test-repo"
+}

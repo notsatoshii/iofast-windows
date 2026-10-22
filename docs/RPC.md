@@ -248,6 +248,27 @@ Result: `{"ok": bool, "packages": {name: "ok" | reason}, "status": …}` with
 skip decision re-verifies digests, so anything this check flags gets
 re-downloaded (`iofast browsers verify --repair` is the CLI one-step form).
 
+### `detect`
+Params: `{"url": str}`.
+Result: `{"source": str, "label": str, "modes": ["page"] | ["page","site"],
+"needs_signin": bool}`.
+Synchronous URL → source routing. No network, no thread — answered on the
+main dispatch loop. `source` is one of `"web"`, `"youtube"`, `"github"`,
+`"instagram"`, `"x"`. `modes` lists which grab modes the source supports
+(only `"web"` offers `"site"`). `needs_signin` is true for instagram/x
+(those sources require a prior `social.signin`). The panel calls this
+before showing mode options to the user.
+
+### `grab`
+Params: `{"url": str, "out": str, "mode": "page"|"site"|null,
+"limit": int|null, "lang": str|null}`.
+Multi-source content grab. Routes via `detect()`, then runs the matched
+source's `grab()` in a worker thread (one grab at a time — `-32000` while
+running). Same progress events and final result shape as `scrape`:
+`{written, out_dir, exit_code, cancelled, manifest}`. Supports cancel
+via the same `cancel` method (matches by rid). Events carry `rid` like
+all other threaded methods. `out` is required.
+
 ## Notifications (event stream)
 
 Every event the engine `emit()`s is forwarded verbatim as a notification:

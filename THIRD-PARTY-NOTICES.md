@@ -13,7 +13,7 @@ License ids come from each distribution's `License-Expression`, `License`, or
 **Chromium** is listed but is NOT a pip package and is NOT bundled: the dynamic
 browser tier downloads it at runtime.
 
-### anyio 4.14.2
+### anyio 4.15.1
 License: MIT
 License file (in package): LICENSE
 
@@ -33,7 +33,7 @@ License file (in package): LICENSE
 License: Apache-2.0
 License file (in package): LICENSE
 
-### certifi 2026.7.22
+### certifi 2026.10.19
 License: MPL-2.0
 License file (in package): LICENSE
 
@@ -41,11 +41,11 @@ License file (in package): LICENSE
 License: MIT-0
 License file (in package): LICENSE
 
-### charset-normalizer 3.4.9
+### charset-normalizer 3.5.2
 License: MIT
 License file (in package): LICENSE
 
-### click 8.4.2
+### click 8.5.0
 License: BSD-3-Clause
 License file (in package): LICENSE.txt
 
@@ -57,15 +57,15 @@ License file (in package): LICENSE
 License: BSD-3-Clause
 License file (in package): LICENSE
 
-### curl_cffi 0.16.0
+### curl_cffi 0.16.3
 License: MIT
 License file (in package): LICENSE
 
-### dateparser 1.4.2
+### dateparser 1.4.3
 License: BSD-3-Clause
 License file (in package): LICENSE
 
-### greenlet 3.5.5
+### greenlet 3.5.6
 License: MIT AND PSF-2.0
 License file (in package): LICENSE
 
@@ -73,7 +73,7 @@ License file (in package): LICENSE
 License: Apache-2.0
 License file (in package): LICENSE
 
-### idna 3.18
+### idna 3.20
 License: BSD-3-Clause
 License file (in package): LICENSE.md
 
@@ -89,11 +89,11 @@ License file (in package): LICENSE.txt
 License: MIT
 License file (in package): LICENSE
 
-### msgspec 0.21.1
+### msgspec 0.22.0
 License: BSD-3-Clause
 License file (in package): LICENSE
 
-### orjson 3.11.9
+### orjson 3.13.0
 License: MPL-2.0 AND (Apache-2.0 OR MIT)
 License file (in package): LICENSE-APACHE
 
@@ -105,7 +105,7 @@ License file (in package): LICENSE
 License: Apache-2.0
 License file (in package): LICENSE
 
-### pycparser 3.0
+### pycparser 3.11
 License: BSD-3-Clause
 License file (in package): LICENSE
 
@@ -113,15 +113,15 @@ License file (in package): LICENSE
 License: MIT
 License file (in package): LICENSE
 
-### python-dateutil 2.9.0.post0
+### python-dateutil 3.0.0
 License: Dual License
 License file (in package): LICENSE
 
-### pytz 2026.3.post1
+### pytz 2026.5
 License: MIT
 License file (in package): LICENSE.txt
 
-### regex 2026.7.19
+### regex 2026.9.29
 License: Apache-2.0 AND CNRI-Python
 License file (in package): LICENSE.txt
 
@@ -133,7 +133,7 @@ License file (in package): LICENSE
 License: MIT
 License file (in package): LICENSE
 
-### soupsieve 2.9.2
+### soupsieve 3.0.4
 License: MIT
 License file (in package): LICENSE.md
 
@@ -149,16 +149,24 @@ License file (in package): LICENSE
 License: PSF-2.0
 License file (in package): LICENSE
 
+### tzdata 2026.5
+License: Apache-2.0
+License file (in package): LICENSE
+
 ### tzlocal 5.4.4
 License: MIT
 License file (in package): LICENSE.txt
 
-### urllib3 2.7.0
+### urllib3 2.8.0
 License: MIT
 License file (in package): LICENSE.txt
 
-### w3lib 2.4.1
+### w3lib 2.5.0
 License: BSD-3-Clause
+License file (in package): LICENSE
+
+### yt-dlp 2026.10.21
+License: Unlicense
 License file (in package): LICENSE
 
 ### Chromium (runtime download)

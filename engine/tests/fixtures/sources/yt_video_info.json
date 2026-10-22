@@ -1,0 +1,16 @@
+{
+  "id": "dQw4w9WgXcQ",
+  "title": "Rick Astley - Never Gonna Give You Up (Official Music Video)",
+  "channel": "Rick Astley",
+  "upload_date": "20091025",
+  "duration": 212,
+  "description": "The official video for \"Never Gonna Give You Up\" by Rick Astley.",
+  "chapters": null,
+  "subtitles": {
+    "en": [{"ext": "vtt", "url": "https://example.com/en.vtt"}],
+    "ko": [{"ext": "vtt", "url": "https://example.com/ko.vtt"}]
+  },
+  "automatic_captions": {
+    "en": [{"ext": "vtt", "url": "https://example.com/auto-en.vtt"}]
+  }
+}
