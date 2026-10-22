@@ -18,11 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import html
-import json
 import math
 import re
-import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,25 +60,23 @@ async def ig_fetch_post_ytdlp(url: str) -> PublicResult:
     LSD token fetching, and doc_id rotation that raw HTTP cannot replicate.
     Returns parsed metadata dict on success.
     """
-    try:
-        # Find the venv python that has yt-dlp installed.
-        py = sys.executable
-        proc = await asyncio.create_subprocess_exec(
-            py, "-m", "yt_dlp", "--simulate", "-j", "--no-warnings", url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        if proc.returncode != 0 or not stdout.strip():
-            err_msg = stderr.decode("utf-8", errors="replace")[:200]
-            return PublicResult(ok=False, error=f"yt-dlp failed: {err_msg}")
+    # In-process, not `python -m yt_dlp`: in the frozen app sys.executable is
+    # iofast.exe, which cannot run modules.
+    def _extract() -> dict:
+        import yt_dlp
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noprogress": True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.sanitize_info(ydl.extract_info(url, download=False))
 
-        info = json.loads(stdout.decode("utf-8").split("\n")[0])
+    try:
+        info = await asyncio.wait_for(asyncio.to_thread(_extract), timeout=30)
+        if not info:
+            return PublicResult(ok=False, error="yt-dlp failed: no info")
         return PublicResult(ok=True, data=_parse_ytdlp_info(info, url))
     except asyncio.TimeoutError:
         return PublicResult(ok=False, error="yt-dlp timed out (30s)")
     except Exception as exc:  # noqa: BLE001
-        return PublicResult(ok=False, error=str(exc)[:200])
+        return PublicResult(ok=False, error=f"yt-dlp failed: {str(exc)[:200]}")
 
 
 def _parse_ytdlp_info(info: dict, url: str) -> dict:
