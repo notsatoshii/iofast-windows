@@ -46,7 +46,7 @@
       "method": "cancel"
     },
     "expect": [
-      "{\"jsonrpc\": \"2.0\", \"id\": 4, \"error\": {\"code\": -32001, \"message\": \"no matching scrape running\"}}"
+      "{\"jsonrpc\": \"2.0\", \"id\": 4, \"error\": {\"code\": -32001, \"message\": \"no matching scrape or grab running\"}}"
     ]
   }
 ]
