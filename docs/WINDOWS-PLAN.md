@@ -29,6 +29,9 @@ version, and the three ways to use a run (open in agent, MCP index, API push).
    (used by `sources/social_public.py` and `watch/checker.py`); add it to the PyInstaller
    `hiddenimports` or `collect_all` list in `freeze.ps1`.
 5. **Installer.** NSIS `.exe` installer from `pnpm tauri build`, tray icon, autostart option.
+   The frozen build must bundle `faster-whisper` and `ctranslate2` (and their CUDA runtime
+   deps when shipping GPU support) so local YouTube transcription works offline. Worker A
+   owns `scripts/windows/freeze.ps1`; this note is the contract for that step.
 
 ## Shared engine contract (all workers code against this)
 

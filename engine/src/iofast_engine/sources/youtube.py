@@ -1,14 +1,21 @@
-"""YouTube source: metadata + transcript via yt-dlp, no media download.
+"""YouTube source: metadata + transcript via yt-dlp, with local whisper fallback.
 
-Uses yt-dlp as a library (download=False) to extract video info and captions.
-Each video becomes one markdown file with envelope; playlists expand to their
-entries. Caption priority: manual over auto; opts.lang first, then Korean,
-then English, then whatever exists. No transcript = thin outcome.
+Uses yt-dlp as a library to extract video info and captions. Each video becomes
+one markdown file with envelope; playlists expand to their entries.
+
+Transcript priority:
+  1. Uploader-made (manual) captions in the video's language → use them.
+  2. Otherwise → download audio-only and transcribe locally with faster-whisper.
+
+Caption language order: opts.lang first, then Korean, then English, then any.
+Videos over the configurable length ceiling (default 3 h) skip transcription
+and set a result warning instead of running silently.
 """
 
 import asyncio
 import os
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -16,6 +23,12 @@ from urllib.parse import parse_qs, urlparse
 import yt_dlp
 
 from ..ledger import Ledger
+from ..transcribe import (
+    TranscriptResult,
+    download_audio,
+    should_skip_transcribe,
+    transcribe_audio,
+)
 from ..writer import Writer, write_run
 from .base import GrabOptions, GrabResult
 
@@ -49,6 +62,20 @@ def _format_duration(seconds: int | None) -> str:
     h, rem = divmod(int(seconds), 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _has_manual_captions(info: dict, preferred_lang: str | None) -> bool:
+    """True when uploader-made captions exist in a usable language."""
+    subs = info.get("subtitles") or {}
+    if not subs:
+        return False
+    if preferred_lang and preferred_lang in subs:
+        return bool(subs[preferred_lang])
+    for lang in ("ko", "en"):
+        if lang in subs and subs[lang]:
+            return True
+    # Any language counts as manual.
+    return any(bool(entries) for entries in subs.values())
 
 
 def _pick_caption(info: dict, preferred_lang: str | None) -> list[dict] | None:
@@ -119,7 +146,13 @@ def _transcript_text(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _video_md(info: dict, transcript: str) -> str:
+def _video_md(
+    info: dict,
+    transcript: str,
+    *,
+    transcript_header: str = "",
+    warnings: list[str] | None = None,
+) -> str:
     """Build the markdown body for one video (without envelope)."""
     parts: list[str] = []
     title = info.get("title") or "Untitled"
@@ -167,10 +200,21 @@ def _video_md(info: dict, transcript: str) -> str:
         parts.append("")
 
     # Transcript.
+    if transcript_header:
+        parts.append(f"*{transcript_header}*")
+        parts.append("")
     if transcript:
         parts.append("## Transcript")
         parts.append("")
         parts.append(transcript)
+        parts.append("")
+
+    # Warnings (loud, never silent).
+    if warnings:
+        parts.append("## ⚠️ Warnings")
+        parts.append("")
+        for w in warnings:
+            parts.append(f"- {w}")
         parts.append("")
 
     return "\n".join(parts)
@@ -233,24 +277,6 @@ class YouTubeSource:
             vid_url = vid.get("webpage_url") or vid.get("original_url") or url
             ledger.enqueue(vid_url)
 
-            # Pick and render transcript.
-            caption_entries = _pick_caption(vid, opts.lang)
-            transcript = _transcript_text(caption_entries) if caption_entries else ""
-
-            body = _video_md(vid, transcript)
-            has_transcript = bool(transcript.strip())
-
-            if has_transcript:
-                writer.write(vid_url, body, tier="static", how="yt-dlp+caption", outcome="ok")
-                ok += 1
-            else:
-                # Still save the metadata-only file, but mark thin so the report flags it.
-                writer.write(
-                    vid_url, body, tier="static", how="yt-dlp",
-                    outcome="thin_escalated_ok", status="no transcript",
-                )
-                thin += 1
-
             emit({
                 "type": "progress",
                 "n": i,
@@ -258,18 +284,129 @@ class YouTubeSource:
                 "message": f"🎬 {i}/{len(videos)}: {vid.get('title', vid_url)}",
             })
 
+            # --- Transcript resolution ---
+            transcript = ""
+            header = ""
+            warnings: list[str] = []
+            how = "yt-dlp"
+            outcome = "thin_escalated_ok"
+            status = "no transcript"
+
+            has_manual = _has_manual_captions(vid, opts.lang)
+            caption_entries = _pick_caption(vid, opts.lang)
+            duration_s = vid.get("duration")
+
+            if has_manual and caption_entries:
+                # Rule 1: uploader-made captions win.
+                transcript = _transcript_text(caption_entries)
+                header = "Transcript: uploader captions"
+                how = "yt-dlp+caption"
+                outcome = "ok"
+                status = ""
+            elif should_skip_transcribe(duration_s):
+                # Length guard: don't transcribe silently.
+                dur_str = _format_duration(duration_s)
+                warnings.append(
+                    f"Video is {dur_str}; exceeds transcription ceiling "
+                    f"({_format_duration(_max_seconds())}). "
+                    "Set IOFAST_TRANSCRIBE_MAX_SECONDS to override."
+                )
+                # Still use auto-captions if available as a partial fallback.
+                if caption_entries:
+                    transcript = _transcript_text(caption_entries)
+                    header = "Transcript: auto-generated captions (partial)"
+                    how = "yt-dlp+auto-caption"
+                    outcome = "ok"
+                    status = ""
+            else:
+                # Rule 2: no manual captions → local whisper.
+                result = await _whisper_fallback(vid_url, run_dir, emit)
+                if result and result.text.strip():
+                    transcript = result.text
+                    lang_tag = f" ({result.language})" if result.language else ""
+                    header = f"Transcript: whisper {result.model} (local){lang_tag}"
+                    how = "yt-dlp+whisper"
+                    outcome = "ok"
+                    status = ""
+                    warnings.extend(result.warnings)
+                else:
+                    # Transcription failed — keep auto-captions if any, plus loud warning.
+                    fail_msg = ""
+                    if result:
+                        fail_msg = "; ".join(result.warnings) or "unknown error"
+                    warnings.append(
+                        f"Local transcription failed ({fail_msg}). "
+                        "Falling back to auto-captions if available."
+                    )
+                    if caption_entries:
+                        transcript = _transcript_text(caption_entries)
+                        header = "Transcript: auto-generated captions (fallback)"
+                        how = "yt-dlp+auto-caption"
+                        outcome = "ok"
+                        status = ""
+
+            body = _video_md(vid, transcript, transcript_header=header, warnings=warnings)
+
+            if outcome == "ok":
+                writer.write(vid_url, body, tier="static", how=how, outcome="ok")
+                ok += 1
+            else:
+                writer.write(
+                    vid_url, body, tier="static", how=how,
+                    outcome=outcome, status=status,
+                )
+                thin += 1
+
         counts = ledger.counts()
         # Store title in manifest info so vault filing uses the real video title
         # instead of the run folder name. For playlists, use the first video's title.
         first_title = videos[0].get("title", "") if videos else ""
-        info = {"source": "youtube", "url": url}
+        info_out = {"source": "youtube", "url": url}
         if first_title:
-            info["title"] = first_title
-        write_run(str(run_dir), ledger, info)
+            info_out["title"] = first_title
+        write_run(str(run_dir), ledger, info_out)
         return GrabResult(
             source="youtube", run_dir=run_dir,
             ok=ok, thin=thin, failed=failed,
         )
+
+
+def _max_seconds() -> int:
+    """Read the transcription ceiling (mirrors transcribe.max_transcribe_seconds)."""
+    raw = os.environ.get("IOFAST_TRANSCRIBE_MAX_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return 3 * 3600
+
+
+async def _whisper_fallback(
+    vid_url: str, run_dir: Path, emit
+) -> TranscriptResult | None:
+    """Download audio + transcribe in a thread. Cleans up temp audio after."""
+    loop = asyncio.get_running_loop()
+    tmp_dir = run_dir / "_audio_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        audio_path = await loop.run_in_executor(
+            None, lambda: download_audio(vid_url, tmp_dir, emit)
+        )
+        if not audio_path:
+            return None
+        result = await loop.run_in_executor(
+            None, lambda: transcribe_audio(audio_path, emit)
+        )
+        return result
+    finally:
+        # Clean up downloaded audio regardless of outcome.
+        try:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def _extract(ydl_opts: dict, url: str) -> dict | None:

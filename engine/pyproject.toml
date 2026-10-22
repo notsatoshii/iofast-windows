@@ -22,10 +22,20 @@ dependencies = [
     "yt-dlp>=2024.1.0",
     # Public social endpoints (sources/social_public.py) and watch/checker.py.
     "httpx>=0.27.0",
+    # Local speech-to-text fallback when YouTube has no manual captions.
+    # MIT license. Ships ctranslate2 (CPU); CUDA wheels are an optional extra.
+    "faster-whisper>=1.1.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
+gpu = [
+    # CUDA runtime libs for faster-whisper on NVIDIA GPUs. Install with:
+    #   pip install iofast-engine[gpu]
+    # or standalone: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+    "nvidia-cublas-cu12>=12.0",
+    "nvidia-cudnn-cu12>=9.0",
+]
 build = [
     "pyinstaller==6.16.0",
     # iofast.spec collect_data_files()s these two; both otherwise arrive only
