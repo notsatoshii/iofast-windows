@@ -1025,15 +1025,34 @@ fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
         .and_then(|s| parse_shortcut(&s))
         .unwrap_or_else(default_hotkey);
 
+    // Selection capture hotkey: Ctrl+Shift+S (fixed, not user-configurable).
+    let capture_hotkey = Shortcut::new(
+        Some(Modifiers::CONTROL | Modifiers::SHIFT),
+        Code::KeyS,
+    );
+
     app.plugin(
         tauri_plugin_global_shortcut::Builder::new()
             .with_handler(move |app, pressed, event| {
-                if event.state() == ShortcutState::Pressed && pressed == &hotkey {
+                if event.state() != ShortcutState::Pressed {
+                    return;
+                }
+                if pressed == &hotkey {
                     toggle_panel(app);
+                } else if pressed == &capture_hotkey {
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let sc = handle.state::<SidecarManager>();
+                        match capture_selection(handle.clone(), sc).await {
+                            Ok(v) => log::info!("selection capture: {v}"),
+                            Err(e) => log::warn!("selection capture failed: {e}"),
+                        }
+                    });
                 }
             })
             .build(),
     )?;
+
     // A taken hotkey is a nuisance, not a fatal error — the user can pick
     // another in Settings. Log it so they see why nothing happens.
     if let Err(e) = app.global_shortcut().register(hotkey) {
@@ -1042,7 +1061,309 @@ fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
             shortcut_label(&hotkey)
         );
     }
+    if let Err(e) = app.global_shortcut().register(capture_hotkey) {
+        log::warn!("Ctrl+Shift+S (selection capture) not registered: {e}");
+    }
     Ok(())
+}
+
+/// Simulate Ctrl+C via SendInput to copy the current selection, then read the
+/// clipboard. Returns None if the clipboard was empty or unchanged after the
+/// simulated copy. Saves and restores the previous clipboard content so the
+/// user's paste buffer isn't clobbered.
+#[cfg(target_os = "windows")]
+fn capture_selected_text() -> Option<String> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, VK_CONTROL, VK_C,
+        KEYEVENTF_KEYUP,
+    };
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable,
+        OpenClipboard, SetClipboardData,
+    };
+    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    const CF_UNICODETEXT: u32 = 13;
+
+    unsafe {
+        // Save existing clipboard content.
+        let saved = if IsClipboardFormatAvailable(CF_UNICODETEXT) != 0
+            && OpenClipboard(std::ptr::null_mut()) != 0
+        {
+            let handle = GetClipboardData(CF_UNICODETEXT as u32);
+            if !handle.is_null() {
+                let ptr = GlobalLock(handle) as *const u16;
+                if !ptr.is_null() {
+                    let mut len = 0;
+                    while *ptr.add(len) != 0 {
+                        len += 1;
+                    }
+                    let text = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+                    let _ = GlobalUnlock(handle);
+                    let _ = CloseClipboard();
+                    Some(text)
+                } else {
+                    let _ = CloseClipboard();
+                    None
+                }
+            } else {
+                let _ = CloseClipboard();
+                None
+            }
+        } else {
+            None
+        };
+
+        // Send Ctrl+C via SendInput.
+        let inputs: [INPUT; 4] = [
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL as u16,
+                        wScan: 0,
+                        dwFlags: 0,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_C as u16,
+                        wScan: 0,
+                        dwFlags: 0,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_C as u16,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_CONTROL as u16,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+        ];
+        SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32);
+
+        // Wait for the target app to process Ctrl+C and update the clipboard.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        // Read the new clipboard content.
+        let captured = if IsClipboardFormatAvailable(CF_UNICODETEXT) != 0
+            && OpenClipboard(std::ptr::null_mut()) != 0
+        {
+            let handle = GetClipboardData(CF_UNICODETEXT as u32);
+            if !handle.is_null() {
+                let ptr = GlobalLock(handle) as *const u16;
+                if !ptr.is_null() {
+                    let mut len = 0;
+                    while *ptr.add(len) != 0 {
+                        len += 1;
+                    }
+                    let text = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+                    let _ = GlobalUnlock(handle);
+                    let _ = CloseClipboard();
+                    (!text.trim().is_empty()).then_some(text)
+                } else {
+                    let _ = CloseClipboard();
+                    None
+                }
+            } else {
+                let _ = CloseClipboard();
+                None
+            }
+        } else {
+            None
+        };
+
+        // Restore the original clipboard content.
+        if let Some(orig) = saved {
+            if OpenClipboard(std::ptr::null_mut()) != 0 {
+                let _ = EmptyClipboard();
+                let wide: Vec<u16> = orig.encode_utf16().chain(std::iter::once(0)).collect();
+                let bytes = wide.len() * 2;
+                let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+                if !mem.is_null() {
+                    let dst = GlobalLock(mem) as *mut u16;
+                    if !dst.is_null() {
+                        std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
+                        let _ = GlobalUnlock(mem);
+                        let _ = SetClipboardData(CF_UNICODETEXT as u32, mem);
+                    }
+                }
+                let _ = CloseClipboard();
+            }
+        }
+
+        captured
+    }
+}
+
+/// Get the foreground window's title bar text via GetWindowTextW.
+#[cfg(target_os = "windows")]
+fn foreground_window_title() -> Option<String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 512];
+        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        if len <= 0 {
+            return None;
+        }
+        let title = String::from_utf16_lossy(&buf[..len as usize]);
+        (!title.trim().is_empty()).then_some(title)
+    }
+}
+
+/// Capture the user's text selection (Ctrl+Shift+S hotkey): simulate Ctrl+C,
+/// read the clipboard, get the foreground window title, write to a temp file
+/// in the library, and optionally file into the vault via vault.file RPC.
+#[tauri::command]
+async fn capture_selection(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (&app, &sc);
+        return Err("selection capture is Windows-only".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Run the synchronous Win32 calls off the async runtime thread.
+        let (text, title) = tokio::task::spawn_blocking(|| {
+            (capture_selected_text(), foreground_window_title())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+
+        let text = text.ok_or("no text selected (clipboard empty after Ctrl+C)")?;
+        let title = title.unwrap_or_else(|| "Selection".to_string());
+
+        // Write captured text to a temp file in the library.
+        let lib = store::config_get(app.clone())
+            .map(|c| c["config"]["library_path"].as_str().map(String::from))
+            .ok()
+            .flatten()
+            .ok_or("no library path configured")?;
+
+        let captures_dir = std::path::PathBuf::from(&lib).join("captures");
+        std::fs::create_dir_all(&captures_dir).map_err(|e| e.to_string())?;
+
+        let ts = chrono_like_timestamp();
+        let safe_title: String = title
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .take(60)
+            .collect();
+        let filename = format!("{}_{}.md", ts, safe_title);
+        let filepath = captures_dir.join(&filename);
+
+        let md_content = format!(
+            "---\ntitle: \"{}\"\nsource: selection-capture\ndate: {}\n---\n\n{}",
+            title.replace('"', "\\\""),
+            ts,
+            text
+        );
+        std::fs::write(&filepath, md_content).map_err(|e| e.to_string())?;
+
+        // Check if vault filing is enabled.
+        let file_to_vault = store::config_get(app.clone())
+            .map(|c| c["config"]["file_to_vault"].as_bool().unwrap_or(false))
+            .unwrap_or(false);
+
+        if file_to_vault {
+            let run_dir = filepath.parent().unwrap().to_string_lossy().to_string();
+            match sc
+                .request(
+                    &app,
+                    "vault.file",
+                    json!({ "run_dir": run_dir, "dry_run": false }),
+                )
+                .await
+            {
+                Ok(result) => {
+                    return Ok(json!({
+                        "captured": true,
+                        "title": title,
+                        "file": filepath.to_string_lossy(),
+                        "vault_filed": true,
+                        "vault_result": result,
+                    }));
+                }
+                Err(e) => {
+                    log::warn!("vault.file failed for selection capture: {e}");
+                    return Ok(json!({
+                        "captured": true,
+                        "title": title,
+                        "file": filepath.to_string_lossy(),
+                        "vault_filed": false,
+                        "vault_error": e,
+                    }));
+                }
+            }
+        }
+
+        Ok(json!({
+            "captured": true,
+            "title": title,
+            "file": filepath.to_string_lossy(),
+            "vault_filed": false,
+        }))
+    }
+}
+
+/// Simple timestamp without pulling in chrono: YYYYMMDD-HHmmss from SystemTime.
+fn chrono_like_timestamp() -> String {
+    use std::time::SystemTime;
+    let d = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    // Rough UTC conversion; good enough for filenames.
+    let days = secs / 86400;
+    let time = secs % 86400;
+    let h = time / 3600;
+    let min = (time % 3600) / 60;
+    let s = time % 60;
+    // Days since epoch to Y-M-D (civil_from_days algorithm).
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}{mo:02}{d:02}-{h:02}{min:02}{s:02}")
 }
 
 /// Scripted self-test: runs four checks without the Tauri app or screen control.
@@ -1822,6 +2143,7 @@ fn main() {
             autostart::autostart_set,
             hotkey_get,
             hotkey_set,
+            capture_selection,
             about::about_info
         ])
         .setup(|app| {
