@@ -74,6 +74,14 @@ def main(argv=None):
     )
     combine_p.add_argument("site_dir")
 
+    grab_p = sub.add_parser("grab", help="grab content from a URL (web/youtube/github)")
+    grab_p.add_argument("url")
+    grab_p.add_argument("--site", action="store_true", help="crawl entire site (web source only)")
+    grab_p.add_argument("--limit", type=int, default=None, help="max items for feeds/profiles")
+    grab_p.add_argument("--lang", default=None, help="preferred transcript language (youtube)")
+    grab_p.add_argument("--out", required=True, help="output directory")
+    grab_p.add_argument("--json", action="store_true", help="NDJSON events on stdout")
+
     sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
 
     browsers_p = sub.add_parser(
@@ -186,6 +194,22 @@ def main(argv=None):
                 file=sys.stderr,
             )
         return 0 if result["pages"] else 3
+
+    if args.command == "grab":
+        import asyncio
+        from pathlib import Path
+
+        from .sources import GrabOptions, detect
+
+        source = detect(args.url)
+        opts = GrabOptions(
+            mode="site" if args.site else "page",
+            limit=args.limit,
+            lang=args.lang,
+        )
+        out_dir = Path(args.out).resolve()
+        result = asyncio.run(source.grab(args.url, out_dir, opts, emit))
+        return 0 if result.ok > 0 and result.failed == 0 else 1
 
     result = run_scrape(
         args.url,

@@ -18,6 +18,8 @@ dependencies = [
     "patchright==1.58.2",
     "cssselect==1.4.0",
     "lxml==6.1.1",
+    # YouTube transcript/metadata extraction (sources/youtube.py). Unlicense — compatible.
+    "yt-dlp>=2024.1.0",
 ]
 
 [project.optional-dependencies]

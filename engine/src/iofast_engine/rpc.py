@@ -16,6 +16,7 @@ from .estimate import run_estimate
 from .manifest import SCHEMA
 from .push import run_push
 from .runner import run_map, run_scrape, validate
+from .sources import GrabOptions, detect as detect_source
 
 PROTOCOL = 1
 JOIN_TIMEOUT = 10  # seconds granted to run threads on EOF before hard exit
@@ -54,6 +55,8 @@ class RpcServer:
         self.cancel_event = None
         self.spider = None
         self.cancelling = False
+        self.grab_rid = None
+        self.grab_cancel_event = None
         self.closed = False  # EOF seen: the sink is a no-op from here on
 
     # ---- wire ----
@@ -325,26 +328,135 @@ class RpcServer:
         except Exception as error:
             self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
 
+    def handle_detect(self, rid, params):
+        """Synchronous URL -> source routing. No network, no thread."""
+        url = params.get("url")
+        if not isinstance(url, str) or not url:
+            return self.fail(rid, INVALID_PARAMS, "url must be a non-empty string")
+        try:
+            source = detect_source(url)
+        except RuntimeError as error:
+            return self.fail(rid, INTERNAL_ERROR, str(error))
+        modes = ["page", "site"] if source.name == "web" else ["page"]
+        needs_signin = source.name in ("instagram", "x")
+        label = {
+            "web": "Web page / site",
+            "youtube": "YouTube video / playlist",
+            "github": "GitHub repository",
+            "instagram": "Instagram (sign-in required)",
+            "x": "X / Twitter (sign-in required)",
+        }.get(source.name, source.name)
+        self.respond(rid, {
+            "source": source.name,
+            "label": label,
+            "modes": modes,
+            "needs_signin": needs_signin,
+        })
+
+    def handle_grab(self, rid, params):
+        """Multi-source grab: routes via detect(), runs in a worker thread."""
+        url = params.get("url")
+        out = params.get("out")
+        mode = params.get("mode")
+        limit = params.get("limit")
+        lang = params.get("lang")
+        if not isinstance(url, str) or not url:
+            return self.fail(rid, INVALID_PARAMS, "url must be a non-empty string")
+        if not isinstance(out, str) or not out:
+            return self.fail(rid, INVALID_PARAMS, "out is required and must be a string")
+        if not (mode is None or mode in ("page", "site")):
+            return self.fail(rid, INVALID_PARAMS, "mode must be 'page' or 'site'")
+        if not (limit is None or (_is_int(limit) and limit > 0)):
+            return self.fail(rid, INVALID_PARAMS, "limit must be a positive integer or null")
+        if not (lang is None or isinstance(lang, str)):
+            return self.fail(rid, INVALID_PARAMS, "lang must be a string or null")
+        with self.state:
+            thread = self.threads.get("grab")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "grab already running")
+            self.grab_rid = rid
+            self.grab_cancel_event = threading.Event()
+            thread = threading.Thread(
+                target=self._grab_thread,
+                args=(rid, url, os.path.abspath(out), mode, limit, lang, self.grab_cancel_event),
+                daemon=True,
+            )
+            self.threads["grab"] = thread
+            thread.start()
+
+    def _grab_thread(self, rid, url, out, mode, limit, lang, cancel_event):
+        import asyncio
+        from pathlib import Path
+
+        try:
+            source = detect_source(url)
+            opts = GrabOptions(
+                mode=mode or "page",
+                limit=limit,
+                lang=lang,
+            )
+
+            def emit_with_rid(event):
+                self.notify(rid, event)
+
+            result = asyncio.run(source.grab(url, Path(out), opts, emit_with_rid))
+            written = result.ok + result.thin
+            exit_code = 0 if result.ok > 0 and result.failed == 0 else 1
+            cancelled = cancel_event.is_set()
+            manifest_path = Path(out) / "manifest.json"
+            manifest = {}
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, encoding="utf-8") as fh:
+                        manifest = json.load(fh)
+                except Exception:
+                    pass
+            self.respond(rid, {
+                "written": written,
+                "out_dir": out,
+                "exit_code": exit_code,
+                "cancelled": cancelled,
+                "manifest": manifest,
+            })
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+        finally:
+            with self.state:
+                self.grab_rid = None
+                self.grab_cancel_event = None
+
     def handle_cancel(self, rid, params):
         want = params.get("rid")
         if not (want is None or _is_int(want)):
             return self.fail(rid, INVALID_PARAMS, "rid must be an integer or null")
         with self.state:
-            thread = self.threads.get("scrape")
-            running = thread is not None and thread.is_alive() and self.scrape_rid is not None
-            if not running or (want is not None and want != self.scrape_rid):
-                return self.fail(rid, NO_SCRAPE, "no matching scrape running")
-            target = self.scrape_rid
-            first = not self.cancelling
-            self.cancelling = True
-            self.cancel_event.set()
-            spider = self.spider
-        # Engine pause only on the FIRST cancel: a second request_pause() would
-        # escalate to a force-stop mid-write. request_cancel is itself guarded,
-        # so the parse-time backstop cannot double-fire either.
-        if first and spider is not None:
-            spider.request_cancel()
-        self.respond(rid, {"cancelling": True, "rid": target})
+            # Cancel targets whichever run matches the rid (scrape or grab).
+            scrape_running = (
+                self.threads.get("scrape") is not None
+                and self.threads["scrape"].is_alive()
+                and self.scrape_rid is not None
+            )
+            grab_running = (
+                self.threads.get("grab") is not None
+                and self.threads["grab"].is_alive()
+                and getattr(self, "grab_rid", None) is not None
+            )
+            if scrape_running and (want is None or want == self.scrape_rid):
+                target = self.scrape_rid
+                first = not self.cancelling
+                self.cancelling = True
+                self.cancel_event.set()
+                spider = self.spider
+                if first and spider is not None:
+                    spider.request_cancel()
+                self.respond(rid, {"cancelling": True, "rid": target})
+                return
+            if grab_running and (want is None or want == self.grab_rid):
+                target = self.grab_rid
+                self.grab_cancel_event.set()
+                self.respond(rid, {"cancelling": True, "rid": target})
+                return
+            return self.fail(rid, NO_SCRAPE, "no matching scrape or grab running")
 
     # ---- lifecycle ----
 
@@ -355,6 +467,8 @@ class RpcServer:
         with self.state:
             if self.cancel_event is not None:
                 self.cancel_event.set()
+            if self.grab_cancel_event is not None:
+                self.grab_cancel_event.set()
             spider = self.spider
         if spider is not None:
             spider.request_cancel()
