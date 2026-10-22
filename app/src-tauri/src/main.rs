@@ -550,57 +550,114 @@ fn active_browser_url() -> Option<String> {
     active_browser_url_powershell(None)
 }
 
+/// Check whether the given HWND belongs to a known browser process.
+/// Prevents COM UIA from walking non-browser window trees, which causes
+/// SEH access violations (0xC0000005) that catch_unwind cannot intercept.
+#[cfg(target_os = "windows")]
+fn is_known_browser_process(hwnd: *mut std::ffi::c_void) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::Foundation::CloseHandle;
+
+    const KNOWN_BROWSERS: &[&str] = &[
+        "msedge.exe", "chrome.exe", "brave.exe", "firefox.exe",
+        "opera.exe", "vivaldi.exe", "arc.exe", "whale.exe",
+    ];
+
+    unsafe {
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd as _, &mut pid);
+        if pid == 0 {
+            return false;
+        }
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut buf = [0u16; 512];
+        let mut size = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size);
+        CloseHandle(handle);
+        if ok == 0 || size == 0 {
+            return false;
+        }
+        let path = String::from_utf16_lossy(&buf[..size as usize]);
+        let lower = path.to_lowercase();
+        KNOWN_BROWSERS.iter().any(|b| lower.ends_with(b))
+    }
+}
+
 /// Native COM UI Automation via the `windows` crate. Returns the first URL
 /// found in an Edit or Document control under the foreground window.
+/// Gates on browser process name to avoid SEH crashes on non-browser windows.
 fn active_browser_url_native() -> Option<String> {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd.0.is_null() {
         return None;
     }
+    if !is_known_browser_process(hwnd.0) {
+        return None;
+    }
     active_browser_url_from_hwnd(hwnd.0)
 }
 
 /// Read the URL from a specific browser window via COM UI Automation.
-/// Used by the self-test to avoid GetForegroundWindow() races — the caller
-/// passes the raw HWND pointer obtained from FindWindowW("Example Domain").
+/// Gates on browser process name to avoid SEH crashes on non-browser windows.
+/// Uses catch_unwind as a secondary safety net for COM errors that manifest
+/// as panics. The browser process gate is the primary defense against SEH.
 fn active_browser_url_from_hwnd(
     hwnd: *mut std::ffi::c_void,
 ) -> Option<String> {
+    // Gate on browser process before touching COM at all.
+    if !is_known_browser_process(hwnd) {
+        return None;
+    }
+
+    // catch_unwind catches Rust panics but NOT Windows SEH exceptions.
+    // The browser process gate above prevents SEH by refusing non-browser
+    // HWNDs before any COM call touches them.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        active_browser_url_from_hwnd_inner(hwnd)
+    }));
+
+    match result {
+        Ok(url) => url,
+        Err(_) => None,
+    }
+}
+
+/// Inner COM UIA implementation. Caller must ensure hwnd belongs to a
+/// known browser process via is_known_browser_process before calling.
+/// Does NOT call CoInitializeEx/CoUninitialize — the caller's thread
+/// must already have COM initialized (Tauri/WRY initializes STA on the
+/// main thread; the self-test initializes MTA once at startup).
+fn active_browser_url_from_hwnd_inner(
+    hwnd: *mut std::ffi::c_void,
+) -> Option<String> {
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED,
+        CoCreateInstance, CLSCTX_INPROC_SERVER,
     };
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, UIA_EditControlTypeId, UIA_DocumentControlTypeId,
     };
 
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-
         let uia: IUIAutomation = match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
             Ok(u) => u,
-            Err(_) => {
-                let _ = CoUninitialize();
-                return None;
-            }
+            Err(_) => return None,
         };
 
-        // Convert raw pointer to windows crate HWND.
         let win_hwnd = windows::Win32::Foundation::HWND(hwnd);
         let root = match uia.ElementFromHandle(win_hwnd) {
             Ok(r) => r,
-            Err(_) => {
-                let _ = CoUninitialize();
-                return None;
-            }
+            Err(_) => return None,
         };
 
-        let result = search_uia_elements(&uia, &root, UIA_EditControlTypeId.0)
-            .or_else(|| search_uia_elements(&uia, &root, UIA_DocumentControlTypeId.0));
-
-        let _ = CoUninitialize();
-        result
+        search_uia_elements(&uia, &root, UIA_EditControlTypeId.0)
+            .or_else(|| search_uia_elements(&uia, &root, UIA_DocumentControlTypeId.0))
     }
 }
 
@@ -854,6 +911,14 @@ fn run_self_test() {
     use std::time::Instant;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+    // Initialize COM once for the entire self-test. The inner UIA function
+    // no longer calls CoInitializeEx/CoUninitialize per invocation, which
+    // avoids deadlocks from repeated init/uninit on the same thread.
+    unsafe {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
+
     let mut passed = 0u32;
     let mut failed = 0u32;
 
@@ -959,100 +1024,102 @@ fn run_self_test() {
 
                 match child {
                     Ok(mut proc) => {
-                        // Wait for the browser window to fully initialize.
-                        // Chrome/Edge with --new-window on an existing profile
-                        // reuses the process; the new tab takes time to render.
-                        std::thread::sleep(std::time::Duration::from_secs(6));
-
-                        // Find the browser window by partial title match.
-                        // FindWindowW requires an exact match but Edge/Chrome
-                        // append profile names ("Example Domain - Personal -
-                        // Microsoft Edge"), so we enumerate all visible
-                        // windows and check for a prefix match instead.
-                        let browser_hwnd = unsafe {
-                            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                                EnumWindows, GetWindowTextW, IsWindowVisible,
-                            };
-                            use std::sync::atomic::{AtomicIsize, Ordering};
-                            static FOUND: AtomicIsize = AtomicIsize::new(0);
-                            FOUND.store(0, Ordering::SeqCst);
-                            unsafe extern "system" fn enum_cb(
-                                hwnd: windows_sys::Win32::Foundation::HWND,
-                                _lparam: windows_sys::Win32::Foundation::LPARAM,
-                            ) -> windows_sys::Win32::Foundation::BOOL {
-                                if IsWindowVisible(hwnd) == 0 {
-                                    return 1; // continue
-                                }
-                                let mut buf = [0u16; 512];
-                                let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
-                                if len > 0 {
-                                    let title = String::from_utf16_lossy(&buf[..len as usize]);
-                                    if title.contains("Example Domain") {
-                                        FOUND.store(hwnd as isize, Ordering::SeqCst);
-                                        return 0; // stop enumeration
+                        // Poll for the browser window instead of a hard-coded
+                        // sleep. Chrome/Edge with --new-window on an existing
+                        // profile reuses the process; the new tab takes time
+                        // to render. We search by partial title match up to
+                        // 15 seconds in 200ms steps.
+                        let poll_deadline = Instant::now() + std::time::Duration::from_secs(15);
+                        let mut browser_hwnd: *mut std::ffi::c_void = std::ptr::null_mut();
+                        while Instant::now() < poll_deadline {
+                            let found = unsafe {
+                                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                    EnumWindows, GetWindowTextW, IsWindowVisible,
+                                };
+                                use std::sync::atomic::{AtomicIsize, Ordering};
+                                static FOUND: AtomicIsize = AtomicIsize::new(0);
+                                FOUND.store(0, Ordering::SeqCst);
+                                unsafe extern "system" fn enum_cb(
+                                    hwnd: windows_sys::Win32::Foundation::HWND,
+                                    _lparam: windows_sys::Win32::Foundation::LPARAM,
+                                ) -> windows_sys::Win32::Foundation::BOOL {
+                                    if IsWindowVisible(hwnd) == 0 {
+                                        return 1; // continue
                                     }
+                                    let mut buf = [0u16; 512];
+                                    let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+                                    if len > 0 {
+                                        let title = String::from_utf16_lossy(&buf[..len as usize]);
+                                        if title.contains("Example Domain") {
+                                            FOUND.store(hwnd as isize, Ordering::SeqCst);
+                                            return 0; // stop enumeration
+                                        }
+                                    }
+                                    1 // continue
                                 }
-                                1 // continue
+                                let _ = EnumWindows(Some(enum_cb), 0);
+                                let raw = FOUND.load(Ordering::SeqCst);
+                                if raw != 0 {
+                                    raw as *mut std::ffi::c_void
+                                } else {
+                                    std::ptr::null_mut()
+                                }
+                            };
+                            if !found.is_null() {
+                                browser_hwnd = found;
+                                break;
                             }
-                            let _ = EnumWindows(Some(enum_cb), 0);
-                            let raw = FOUND.load(Ordering::SeqCst);
-                            if raw != 0 {
-                                raw as *mut std::ffi::c_void
-                            } else {
-                                std::ptr::null_mut()
-                            }
-                        };
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
 
-                        // Skip native COM UIA in self-test: Edge's multi-process
-                        // window tree causes SEH access violations in
-                        // ElementFromHandle/FindAll that catch_unwind cannot
-                        // intercept (only catches Rust panics, not Windows SEH).
-                        // PowerShell fallback works reliably here. Native UIA
-                        // remains available in production via the Tauri app's
-                        // UI thread where COM apartment threading is correct.
-                        let start_native = Instant::now();
-                        let url_native: Option<String> = None;
-                        let native_ms = start_native.elapsed().as_millis();
-
-                        // Bring the browser window to foreground so the
-                        // PowerShell UIAutomation script can find it.
-                        if !browser_hwnd.is_null() {
+                        if browser_hwnd.is_null() {
+                            println!("FAIL  url-reader: browser window not found after 15s poll");
+                            failed += 1;
+                            let _ = proc.kill();
+                            let _ = proc.wait();
+                        } else {
+                            // Bring the browser window to foreground so both
+                            // native UIA and PowerShell can read it.
                             unsafe {
                                 use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
                                 SetForegroundWindow(browser_hwnd);
                             }
-                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+
+                            // Try native COM UIA first — now safe because
+                            // is_known_browser_process gates the walk.
+                            let start_native = Instant::now();
+                            let url_native = active_browser_url_from_hwnd(browser_hwnd);
+                            let native_ms = start_native.elapsed().as_millis();
+
+                            // PowerShell fallback for comparison / if native fails.
+                            let start_ps = Instant::now();
+                            let url_ps = active_browser_url_powershell(Some("Example Domain"));
+                            let ps_ms = start_ps.elapsed().as_millis();
+
+                            let method = if url_native.is_some() { "native" } else { "powershell" };
+                            let url = url_native.or(url_ps);
+
+                            if url.as_deref() == Some("https://example.com/")
+                                || url.as_deref() == Some("https://example.com")
+                            {
+                                println!(
+                                    "PASS  url-reader: {} got {:?} (native={}ms, ps={}ms)",
+                                    method, url, native_ms, ps_ms
+                                );
+                                passed += 1;
+                            } else {
+                                println!(
+                                    "FAIL  url-reader: expected https://example.com/, got {:?} (native={}ms, ps={}ms)",
+                                    url, native_ms, ps_ms
+                                );
+                                failed += 1;
+                            }
+
+                            // Close only the window we opened.
+                            let _ = proc.kill();
+                            let _ = proc.wait();
                         }
-
-                        // Try PowerShell fallback with title hint so it searches by
-                        // window name instead of FocusedElement (which returns null
-                        // when the self-test process owns the foreground).
-                        let start_ps = Instant::now();
-                        let url_ps = active_browser_url_powershell(Some("Example Domain"));
-                        let ps_ms = start_ps.elapsed().as_millis();
-
-                        let method = if url_native.is_some() { "native" } else { "powershell" };
-                        let url = url_native.or(url_ps);
-
-                        if url.as_deref() == Some("https://example.com/")
-                            || url.as_deref() == Some("https://example.com")
-                        {
-                            println!(
-                                "PASS  url-reader: {} got {:?} (native={}ms, ps={}ms)",
-                                method, url, native_ms, ps_ms
-                            );
-                            passed += 1;
-                        } else {
-                            println!(
-                                "FAIL  url-reader: expected https://example.com/, got {:?} (native={}ms, ps={}ms)",
-                                url, native_ms, ps_ms
-                            );
-                            failed += 1;
-                        }
-
-                        // Close only the window we opened.
-                        let _ = proc.kill();
-                        let _ = proc.wait();
                     }
                     Err(e) => {
                         println!("FAIL  url-reader: could not launch {}: {}", name, e);
@@ -1356,6 +1423,79 @@ fn run_self_test() {
             }
             // Clean up temp output.
             let _ = std::fs::remove_dir_all(&out_dir);
+        }
+    }
+
+    // (g) Non-browser safety: URL reader against a non-browser window must
+    // return None cleanly — no crash, no hang, under 500ms. The browser
+    // process gate (is_known_browser_process) prevents SEH access violations
+    // that previously crashed when ElementFromHandle walked non-browser trees.
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+        };
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+
+        let class_name: Vec<u16> = OsStr::new("IOFAST_TEST_NON_BROWSER")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let title: Vec<u16> = OsStr::new("iofast non-browser test")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                RegisterClassW, WNDCLASSW, DefWindowProcW, LoadCursorW, IDC_ARROW,
+            };
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(DefWindowProcW),
+                lpszClassName: class_name.as_ptr(),
+                hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
+                ..std::mem::zeroed()
+            };
+            RegisterClassW(&wc);
+        }
+
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                title.as_ptr(),
+                WS_OVERLAPPEDWINDOW,
+                CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+
+        if hwnd.is_null() {
+            println!("FAIL  url-reader-non-browser: could not create test window");
+            failed += 1;
+        } else {
+            let start = Instant::now();
+            let result = active_browser_url_from_hwnd(hwnd as *mut std::ffi::c_void);
+            let elapsed_ms = start.elapsed().as_millis();
+
+            unsafe { DestroyWindow(hwnd); }
+
+            if result.is_none() && elapsed_ms < 500 {
+                println!(
+                    "PASS  url-reader-non-browser: clean None in {}ms (no crash)",
+                    elapsed_ms
+                );
+                passed += 1;
+            } else {
+                println!(
+                    "FAIL  url-reader-non-browser: got {:?} in {}ms (expected None <500ms)",
+                    result, elapsed_ms
+                );
+                failed += 1;
+            }
         }
     }
 

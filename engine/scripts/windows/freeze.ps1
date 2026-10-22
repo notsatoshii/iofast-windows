@@ -7,11 +7,11 @@
 #   3. Run PyInstaller with packaging/iofast.spec
 #   4. Verify the frozen bundle via packaging/verify_frozen.py
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot\..\..
 
 Write-Host "=== Syncing venv with pyproject.toml deps ==="
-& .venv\Scripts\pip.exe install -e ".[dev,build]" --quiet 2>$null
+& .venv\Scripts\pip.exe install -e ".[dev,build]" --quiet
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
 Write-Host "=== Verifying runtime dependencies ==="
@@ -42,9 +42,9 @@ Write-Host "=== Running PyInstaller ==="
 & .venv\Scripts\pyinstaller.exe --noconfirm packaging\iofast.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
-# NOTE: verify_frozen.py is skipped here — it requires a clean git tree
-# with committed bundle inputs, which doesn't hold during active development.
-# The app's --self-test validates the frozen sidecar end-to-end instead.
+Write-Host "=== Verifying frozen bundle ==="
+& .venv\Scripts\python.exe packaging\verify_frozen.py dist\iofast\iofast --dev
+if ($LASTEXITCODE -ne 0) { throw "verify_frozen.py failed" }
 
 Write-Host "=== Freeze complete ==="
 Write-Host "Output: dist\iofast\"

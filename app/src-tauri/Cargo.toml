@@ -48,6 +48,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Com",
+    "Win32_System_ProcessStatus",
 ] }
 # High-level `windows` crate for COM UI Automation (VARIANT, IUIAutomation,
 # IUIAutomationElementArray, SysFreeString — missing from windows-sys 0.59).
