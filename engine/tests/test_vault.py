@@ -392,21 +392,20 @@ class TestEntityLinkFiltering:
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         raw_path.write_text("---\nsource: \"\"\n---\n", encoding="utf-8")
 
-        # Python exists in fixture vault; NewConcept is being created; Bard/DALL-E do not.
+        # All entities become wikilinks. The filer ensures stubs exist for
+        # entities not in existing_titles or new_note_titles before calling
+        # write_source_note, so the writer always emits [[wikilink]] form.
         path = write_source_note(
             fixture_vault, "AI", "Test Note", classification,
             "https://example.com", raw_path,
             existing_titles={"Python"},
-            new_note_titles={"NewConcept"},
+            new_note_titles={"NewConcept", "Bard", "DALL-E"},
         )
         text = path.read_text(encoding="utf-8")
         assert "[[Python]]" in text
         assert "[[NewConcept]]" in text
-        assert "[[Bard]]" not in text
-        assert "[[DALL-E]]" not in text
-        # Plain text for non-existent entities
-        assert "- Bard\n" in text or "- Bard" in text
-        assert "- DALL-E\n" in text or "- DALL-E" in text
+        assert "[[Bard]]" in text
+        assert "[[DALL-E]]" in text
 
     def test_no_linkable_sets_links_nothing(self, fixture_vault):
         """When no title sets are passed, no entities get linked (safe default)."""
@@ -429,12 +428,123 @@ class TestEntityLinkFiltering:
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         raw_path.write_text("---\nsource: \"\"\n---\n", encoding="utf-8")
 
+        # When no title sets are passed, writer still emits [[wikilink]] form.
+        # The filer is responsible for creating stubs before calling this.
         path = write_source_note(
             fixture_vault, "AI", "T2", classification,
             "https://example.com", raw_path,
+            existing_titles=set(),
+            new_note_titles={"Something"},
         )
         text = path.read_text(encoding="utf-8")
-        assert "[[Something]]" not in text
-        assert "- Something" in text
+        assert "[[Something]]" in text
+
+
+class TestEntityStubCreation:
+    """Filer creates stub notes for entities not in existing/new title sets."""
+
+    def test_filer_creates_stubs_for_unlinked_entities(self, tmp_path):
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "AI").mkdir(parents=True)  # topic_folder must exist
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text(
+            '{"info": {"url": "https://example.com/test", "title": "Test Post"}}',
+            encoding="utf-8",
+        )
+        (run_dir / "content.md").write_text("# Test Post\nBody text.", encoding="utf-8")
+        # Mock classify to return entities not in new_notes
+        mock_classify = {
+            "topic_folder": "AI",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {
+                "summary": "A test post.",
+                "key_points": ["point 1"],
+                "notable_quotes": [],
+                "entities": ["Lilian Weng", "AutoGPT"],
+            },
+            "new_notes": [],  # LLM didn't create entity notes
+            "append_sections": [],
+            "moc_line": "- [[Test Post]] - a test",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            result = file_capture(run_dir, vault_path=vault)
+        # Entity stubs should have been created
+        assert (vault / "AI" / "Lilian Weng.md").exists()
+        assert (vault / "AI" / "AutoGPT.md").exists()
+        # Source note should have wikilinks, not plain text
+        source = (vault / "AI" / "Test Post.md").read_text(encoding="utf-8")
+        assert "[[Lilian Weng]]" in source
+        assert "[[AutoGPT]]" in source
+        assert "- Lilian Weng\n" not in source  # no plain text
+
+
+class TestMocIdempotency:
+    """append_moc_line must not add duplicate lines."""
+
+    def test_duplicate_moc_line_skipped(self, tmp_path):
+        from iofast_engine.vault.writer import append_moc_line
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        line = "- [[Test Note]] - a description"
+        p1 = append_moc_line(vault, "AI", line)
+        p2 = append_moc_line(vault, "AI", line)
+        assert p1 == p2
+        text = p1.read_text(encoding="utf-8")
+        assert text.count(line) == 1
+
+    def test_different_moc_lines_both_added(self, tmp_path):
+        from iofast_engine.vault.writer import append_moc_line
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        append_moc_line(vault, "AI", "- [[Note A]] - first")
+        append_moc_line(vault, "AI", "- [[Note B]] - second")
+        moc = (vault / "AI" / "AI MOC.md").read_text(encoding="utf-8")
+        assert "[[Note A]]" in moc
+        assert "[[Note B]]" in moc
+
+
+class TestDedupeBlocksFiling:
+    """check_duplicate must prevent all writes on re-file of same URL."""
+
+    def test_duplicate_url_blocks_raw_copy(self, tmp_path):
+        from iofast_engine.vault.dedupe import check_duplicate
+        vault = tmp_path / "vault"
+        raw_dir = vault / "Research (RAW)" / "iofast"
+        raw_dir.mkdir(parents=True)
+        note = raw_dir / "2026-01-01 Test.md"
+        note.write_text(
+            '---\nsource: "https://youtube.com/watch?v=abc"\n---\n# Test\n',
+            encoding="utf-8",
+        )
+        dup = check_duplicate("https://youtu.be/abc", vault_path=vault)
+        assert dup is not None
+        assert dup["match_type"] == "url"
+
+
+class TestYoutubeTypeDetection:
+    """_detect_source_type returns 'youtube' for YouTube manifests."""
+
+    def test_detects_youtube_from_nested_manifest(self, tmp_path):
+        from iofast_engine.vault.filer import _detect_source_type
+        run_dir = tmp_path / "run"
+        sub = run_dir / "youtube"
+        sub.mkdir(parents=True)
+        (sub / "manifest.json").write_text(
+            '{"info": {"source": "youtube", "url": "https://www.youtube.com/watch?v=x"}}',
+            encoding="utf-8",
+        )
+        assert _detect_source_type(run_dir) == "youtube"
+
+    def test_detects_web_when_no_manifest(self, tmp_path):
+        from iofast_engine.vault.filer import _detect_source_type
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        assert _detect_source_type(run_dir) == "web"
 
         

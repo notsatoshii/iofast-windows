@@ -126,13 +126,11 @@ def write_source_note(
     if sn.get("entities"):
         lines.append("## Related")
         lines.append("")
-        # Only link entities that exist or are being created; others as plain text.
-        linkable = (existing_titles or set()) | (new_note_titles or set())
+        # All entities become wikilinks. The filer ensures each entity either
+        # matches an existing note, gets a new entity note created, or is dropped
+        # before reaching here. Never emit plain text where a link was intended.
         for entity in sn["entities"]:
-            if entity in linkable:
-                lines.append(f"- [[{entity}]]")
-            else:
-                lines.append(f"- {entity}")
+            lines.append(f"- [[{entity}]]")
         lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +233,10 @@ def append_moc_line(
         moc_path.write_text("\n".join(lines), encoding="utf-8")
 
     existing = moc_path.read_text(encoding="utf-8")
+    # Idempotent: skip if this exact line already present
+    for line in existing.splitlines():
+        if line.strip() == moc_line.strip():
+            return moc_path
     if not existing.endswith("\n"):
         existing += "\n"
     existing += moc_line + "\n"

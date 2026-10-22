@@ -21,8 +21,14 @@ from .writer import (
 
 
 def _load_manifest(run_dir: Path) -> dict | None:
-    """Load manifest.json from a run dir. Returns None on failure."""
+    """Load manifest.json from a run dir. Searches recursively (e.g. web/manifest.json)."""
     manifest_path = run_dir / "manifest.json"
+    if not manifest_path.is_file():
+        found = list(run_dir.rglob("manifest.json"))
+        if found:
+            manifest_path = found[0]
+        else:
+            return None
     if not manifest_path.is_file():
         return None
     try:
@@ -282,9 +288,32 @@ def file_capture(
     topic_folder = classification["topic_folder"]
     _emit(f"topic: {topic_folder}, tags: {classification['tags']}")
 
-    # Build title sets for entity link filtering (bug fix: only link existing/created notes)
+    # Build title sets for entity linking
     existing_titles = {n["title"] for n in vault_scan.get("notes", [])}
+    existing_titles_lower = {t.lower() for t in existing_titles}
+
+    # Ensure every entity from classification becomes a note.
+    # The LLM may list entities in source_note.entities but not create
+    # new_notes entries for all of them. Fill gaps with stub notes so
+    # every [[wikilink]] in Related resolves to an actual file.
     new_note_titles = {n["title"] for n in classification.get("new_notes", []) if n.get("title")}
+    new_note_titles_lower = {t.lower() for t in new_note_titles}
+    for entity in classification.get("source_note", {}).get("entities", []):
+        e_stripped = str(entity).strip()
+        if not e_stripped:
+            continue
+        e_lower = e_stripped.lower()
+        if e_lower in existing_titles_lower or e_lower in new_note_titles_lower:
+            continue
+        # Create a stub entity note so the wikilink resolves
+        classification["new_notes"].append({
+            "title": e_stripped,
+            "folder": topic_folder,
+            "tags": ["entity"],
+            "content": f"Entity mentioned in [[{title}]].\n",
+        })
+        new_note_titles.add(e_stripped)
+        new_note_titles_lower.add(e_lower)
 
     # Write source note
     _emit("writing source note")
