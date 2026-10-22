@@ -261,13 +261,45 @@ before showing mode options to the user.
 
 ### `grab`
 Params: `{"url": str, "out": str, "mode": "page"|"site"|null,
-"limit": int|null, "lang": str|null}`.
+"limit": int|null, "lang": str|null, "file": bool=false, "vault": str|null}`.
 Multi-source content grab. Routes via `detect()`, then runs the matched
 source's `grab()` in a worker thread (one grab at a time — `-32000` while
 running). Same progress events and final result shape as `scrape`:
 `{written, out_dir, exit_code, cancelled, manifest}`. Supports cancel
 via the same `cancel` method (matches by rid). Events carry `rid` like
 all other threaded methods. `out` is required.
+`file: true` files the finished run into the Obsidian vault after grab
+completes (opt-in; default false). `vault` overrides the auto-detected
+vault path; omitted uses the vault `vault/detect.py` finds. When filing
+runs, the result adds `vault_filed: true` and `vault_path`.
+
+### `social.signin`
+Params: `{"site": "instagram"|"x"}`.
+Opens a visible browser on the dedicated profile for the user to sign in.
+Resolves `{signed_in: bool}` when the window closes. One signin at a time
+(`-32000` while one runs).
+
+### `social.status`
+Params: none.
+Result: `{"instagram": bool, "x": bool}`. Synchronous.
+
+### `vault.status`
+Params: none.
+Result: `{"available": bool, "vaults": [{path, open, folders, notes, tags} | {path, open, error}]}`.
+Checks Obsidian vault availability and basic stats. Synchronous.
+
+### `vault.file`
+Params: `{"run_dir": str, "dry_run": bool=false, "vault": str|null, "backend": "claude"|"openrouter"|null}`.
+Files an iofast capture into the Obsidian vault. Runs in a worker thread.
+Progress arrives as `vault` event notifications with a `message` field.
+Result: `{vault_path, run_dir, source_type, title, topic_folder, tags, raw_path, source_note, new_notes, modified_notes, moc_updated, log_path}` (or `{dry_run: true, ...}` when dry).
+One vault.file at a time (`-32000` while one runs).
+
+### `vault.lint`
+Params: `{"vault": str|null, "fix": bool=false}`.
+Lints the vault for broken links, orphans, missing frontmatter, singleton tags, MOC drift.
+`fix: true` repairs MOC index drift only. Synchronous.
+Result: `{vault_path, total_notes, broken_links, orphans, missing_frontmatter, singleton_tags, moc_drift, fixed_mocs}`.
 
 ## Notifications (event stream)
 
