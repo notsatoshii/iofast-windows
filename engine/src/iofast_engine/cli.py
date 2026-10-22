@@ -1,5 +1,5 @@
-"""CLI. The only module allowed to write to stdout/stderr (the RPC server
-front end hardens its own stdout — see rpc.py)."""
+﻿"""CLI. The only module allowed to write to stdout/stderr (the RPC server
+front end hardens its own stdout ??see rpc.py)."""
 
 import argparse
 import json
@@ -18,7 +18,7 @@ exit codes:
 
 
 def human_emit(event):
-    """Pretty one-liners to STDERR — stdout stays a contract."""
+    """Pretty one-liners to STDERR ??stdout stays a contract."""
     message = event.get("message")
     if message:
         print(message, file=sys.stderr, flush=True)
@@ -114,7 +114,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     # Every command needs browsers/caches rooted in app support (the frozen
-    # bundle dir is read-only in a signed .app) — not just the browsers
+    # bundle dir is read-only in a signed .app) ??not just the browsers
     # subcommand: a scrape that skips this never finds installed chromium.
     from .browsers import default_storage_env
 
@@ -144,7 +144,7 @@ def main(argv=None):
         from .cli_vault import run_vault
         return run_vault(args)
 
-if args.command == "digest":
+    if args.command == "digest":
         from .cli_vault_extras import run_digest
         return run_digest(args)
 
@@ -192,7 +192,7 @@ if args.command == "digest":
             print(json.dumps(result), flush=True)
         else:
             state = "installed" if result["installed"] else (
-                "drivers only — chromium missing" if result["drivers"] else "not installed"
+                "drivers only ??chromium missing" if result["drivers"] else "not installed"
             )
             print(f"browser components: {state} ({result['path']})", file=sys.stderr)
         return 0 if result["installed"] else 1
@@ -210,7 +210,7 @@ if args.command == "digest":
             print(json.dumps(result), flush=True)
         elif result["source"]:
             print(
-                f"≈{result['page_count']} pages via {result['source']} "
+                f"{result['page_count']} pages via {result['source']} "
                 f"in {result['scope']} ({result['elapsed_ms']}ms)",
                 file=sys.stderr,
             )
@@ -230,7 +230,7 @@ if args.command == "digest":
             print(render_tree(result["tree"], result["scope"]), flush=True)
             print(
                 f"\n{result['tree']['total']} pages in scope via {result['discovery']}"
-                f" · platform: {result['platform'] or 'none'}",
+                f" 쨌 platform: {result['platform'] or 'none'}",
                 file=sys.stderr,
             )
         return 0 if result["pages"] else 3
@@ -264,7 +264,7 @@ if args.command == "digest":
                 print(f"filed: {file_result.get('title', '?')} -> {file_result.get('topic_folder', '?')}", file=sys.stderr)
             except Exception as e:
                 print(f"vault filing failed: {e}", file=sys.stderr)
-                # Don't change exit_code — grab itself succeeded
+                # Don't change exit_code ??grab itself succeeded
 
         return exit_code
 
