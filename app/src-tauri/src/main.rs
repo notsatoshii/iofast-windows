@@ -1004,14 +1004,31 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quick = MenuItem::with_id(app, "quick", "Quick panel", true, None::<&str>)?;
     let library = MenuItem::with_id(app, "library", "Library…", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let signin_ig = MenuItem::with_id(app, "signin-instagram", "Sign in: Instagram", true, None::<&str>)?;
+    let signin_x = MenuItem::with_id(app, "signin-x", "Sign in: X", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&quick, &library, &settings, &quit])?;
+    let menu = Menu::with_items(app, &[&quick, &library, &settings, &signin_ig, &signin_x, &quit])?;
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().expect("bundled icon").clone())
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quick" => toggle_panel(app),
             "library" | "settings" => show_main(app),
+            "signin-instagram" | "signin-x" => {
+                let site = if event.id.as_ref() == "signin-instagram" {
+                    "instagram"
+                } else {
+                    "x"
+                };
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let sc = handle.state::<SidecarManager>();
+                    match social_signin(handle.clone(), sc, site.to_string()).await {
+                        Ok(v) => log::info!("social.signin {site}: {v}"),
+                        Err(e) => log::warn!("social.signin {site} failed: {e}"),
+                    }
+                });
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -1364,6 +1381,80 @@ fn chrono_like_timestamp() -> String {
     let mo = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if mo <= 2 { y + 1 } else { y };
     format!("{y:04}{mo:02}{d:02}-{h:02}{min:02}{s:02}")
+}
+
+// ---------------------------------------------------------------------------
+// Feature 3: Watch list, Ask vault, Sign-in helper — thin RPC proxies
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn watch_list(app: AppHandle, sc: State<'_, SidecarManager>) -> Result<Value, String> {
+    sc.request(&app, "watch.list", json!({})).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn watch_add(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    url: String,
+    every: Option<String>,
+    file: Option<bool>,
+    limit: Option<u32>,
+) -> Result<Value, String> {
+    let params = json!({
+        "url": url,
+        "every": every.unwrap_or_else(|| "daily".into()),
+        "file": file.unwrap_or(false),
+        "limit": limit.unwrap_or(10),
+    });
+    sc.request(&app, "watch.add", params).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn watch_remove(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    id: String,
+) -> Result<Value, String> {
+    sc.request(&app, "watch.remove", json!({ "id": id }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn vault_ask(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    question: String,
+    vault: Option<String>,
+    top_k: Option<u32>,
+    save: Option<bool>,
+) -> Result<Value, String> {
+    let params = json!({
+        "question": question,
+        "vault": vault,
+        "top_k": top_k.unwrap_or(5),
+        "save": save.unwrap_or(false),
+    });
+    sc.request(&app, "vault.ask", params).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn social_signin(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    site: String,
+) -> Result<Value, String> {
+    sc.request(&app, "social.signin", json!({ "site": site }))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn social_status(app: AppHandle, sc: State<'_, SidecarManager>) -> Result<Value, String> {
+    sc.request(&app, "social.status", json!({}))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Scripted self-test: runs four checks without the Tauri app or screen control.
@@ -2144,6 +2235,12 @@ fn main() {
             hotkey_get,
             hotkey_set,
             capture_selection,
+            watch_list,
+            watch_add,
+            watch_remove,
+            vault_ask,
+            social_signin,
+            social_status,
             about::about_info
         ])
         .setup(|app| {
