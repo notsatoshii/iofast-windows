@@ -1087,12 +1087,10 @@ fn run_self_test() {
             let start = Instant::now();
             let result = std::process::Command::new(&engine)
                 .args([
-                    "scrape",
+                    "grab",
                     "https://en.wikipedia.org/wiki/Markdown",
                     "--out",
                     &out_dir.to_string_lossy(),
-                    "--max-pages",
-                    "1",
                 ])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output();
