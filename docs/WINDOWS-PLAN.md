@@ -19,11 +19,15 @@ version, and the three ways to use a run (open in agent, MCP index, API push).
    (with timestamps; manual captions preferred over auto, user's language first, then
    English). Repo: README, file tree, source files (text only, size caps, .gitignore and
    binaries skipped) as one readable corpus, plus repo metadata.
-4. **Instagram and X.** Read through a dedicated browser profile the user signs into once by
-   hand, using the browser already installed (Edge or Chrome via Playwright `channel`). Reads
-   what a signed-in person sees: a post, a thread, or a profile's latest N items. Hard rules:
-   no calls to private/undocumented APIs, no stealth or fingerprint patches, no CAPTCHA
-   solving, polite pacing; if a challenge or login wall appears, stop and tell the user.
+4. **Instagram and X.** Public-first capture (no login) for posts, Reels, and threads via
+   the same endpoints the platforms' own logged-out web pages and embed widgets use. Falls
+   back to a dedicated browser profile (signed in once by hand, Edge or Chrome via Playwright
+   `channel`) only for private/gated content, Stories, and profiles. Hard rules: public
+   content only on the public route, handful of requests per capture, polite back-off on
+   429/5xx, never retry-hammer; no proxy rotation, no fingerprint spoofing, no CAPTCHA
+   solving, no automated login. **Freeze note:** the frozen build must include `httpx`
+   (used by `sources/social_public.py` and `watch/checker.py`); add it to the PyInstaller
+   `hiddenimports` or `collect_all` list in `freeze.ps1`.
 5. **Installer.** NSIS `.exe` installer from `pnpm tauri build`, tray icon, autostart option.
 
 ## Shared engine contract (all workers code against this)

@@ -1,0 +1,28 @@
+{
+  "data": {
+    "xig_polaris_media": {
+      "if_not_gated_logged_out": {
+        "__typename": "GraphImage",
+        "id": "3100000000000000000_12345678",
+        "shortcode": "CwTestPhoto1",
+        "is_video": false,
+        "display_url": "https://scontent.cdninstagram.com/v/t51.2885-15/test-photo.jpg",
+        "accessibility_caption": "A sunset over mountains",
+        "taken_at": 1700000000,
+        "like_count": 1234,
+        "comment_count": 56,
+        "video_view_count": null,
+        "caption": {
+          "text": "Beautiful sunset #nature #mountains @friend"
+        },
+        "user": {
+          "username": "testuser",
+          "full_name": "Test User"
+        },
+        "location": {
+          "name": "Swiss Alps"
+        }
+      }
+    }
+  }
+}

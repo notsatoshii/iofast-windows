@@ -69,9 +69,21 @@ License file (in package): LICENSE
 License: MIT AND PSF-2.0
 License file (in package): LICENSE
 
+### h11 0.16.0
+License: MIT
+License file (in package): LICENSE.txt
+
 ### htmldate 1.10.0
 License: Apache-2.0
 License file (in package): LICENSE
+
+### httpcore 1.0.9
+License: BSD-3-Clause
+License file (in package): LICENSE.md
+
+### httpx 0.28.1
+License: BSD-3-Clause
+License file (in package): LICENSE.md
 
 ### idna 3.20
 License: BSD-3-Clause
@@ -105,7 +117,7 @@ License file (in package): LICENSE
 License: Apache-2.0
 License file (in package): LICENSE
 
-### pycparser 3.11
+### pycparser 3.12
 License: BSD-3-Clause
 License file (in package): LICENSE
 
@@ -153,7 +165,7 @@ License file (in package): LICENSE
 License: Apache-2.0
 License file (in package): LICENSE
 
-### tzlocal 5.4.4
+### tzlocal 5.4.5
 License: MIT
 License file (in package): LICENSE.txt
 

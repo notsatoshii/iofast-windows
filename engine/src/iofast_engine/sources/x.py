@@ -1,22 +1,32 @@
-"""X (Twitter) source: post/thread/profile capture via signed-in browser DOM.
+"""X (Twitter) source: public-first capture with signed-in browser fallback.
 
-Hard rules (Eric's decision): no private APIs, no stealth patches, no CAPTCHA
-solving, no automated sign-in. We read only what the rendered page shows a
-signed-in user. Polite pacing: human-speed waits, hard default limit of 20
-profile items (max 100), stop at first wall/challenge/rate-limit and report it.
+Order per capture:
+1. Syndication API (cdn.syndication.twimg.com/tweet-result) — what the embed widget calls.
+2. oEmbed (publish.twitter.com/oembed) as fallback.
+3. Signed-in browser route if a profile exists; otherwise clear error.
+
+Hard rules: public content only on the public route, handful of requests per
+capture, polite back-off on 429/5xx, never retry-hammer. No proxy rotation,
+no fingerprint spoofing, no CAPTCHA solving, no automated login.
 
 Both x.com and twitter.com are accepted; normalized to x.com in output.
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
 from pathlib import Path
 from typing import Callable
 
 from .base import GrabOptions, GrabResult
 from .social_browser import SocialWallError, close_context, open_page
+from .social_public import (
+    PublicResult,
+    download_media,
+    maybe_transcribe,
+    x_fetch_oembed,
+    x_fetch_syndication,
+)
 
 DEFAULT_PROFILE_LIMIT = 20
 MAX_PROFILE_LIMIT = 100
@@ -58,6 +68,7 @@ class XSource:
             if handle.lower() in reserved:
                 raise ValueError(f"not an x profile: {url}")
             limit = min(opts.limit or DEFAULT_PROFILE_LIMIT, MAX_PROFILE_LIMIT)
+            # Profiles always need the signed-in route (no public profile API).
             return await self._grab_profile(url, handle, limit, out_dir, emit)
 
         raise ValueError(f"unsupported x url: {url}")
@@ -65,20 +76,114 @@ class XSource:
     # ---- single post / thread ----
 
     async def _grab_post(self, url: str, status_id: str, out_dir: Path, emit) -> GrabResult:
-        page = await open_page(url, emit=emit)
-        try:
-            await page.wait_for_timeout(2500)
-            data = await self._extract_thread(page, url, status_id)
-        finally:
-            await close_context(page)
+        """Try public endpoints first, fall back to signed-in browser."""
+        route = "public"
+        data: dict | None = None
 
-        md = self._render_thread_md(data)
+        # Route 1: syndication API.
+        result = await x_fetch_syndication(status_id)
+        if result.ok:
+            data = result.data
+            emit({"type": "info", "url": url, "message": "captured via public syndication"})
+        else:
+            emit({"type": "info", "url": url, "message": f"syndication failed ({result.error}); trying oembed"})
+
+        # Route 2: oEmbed fallback.
+        if data is None:
+            result = await x_fetch_oembed(url)
+            if result.ok:
+                data = result.data
+                emit({"type": "info", "url": url, "message": "captured via public oembed"})
+            else:
+                emit({"type": "info", "url": url, "message": f"oembed failed ({result.error}); trying signed-in browser"})
+
+        # Route 3: signed-in browser fallback.
+        if data is None:
+            route = "signed-in"
+            try:
+                data = await self._grab_post_signed_in(url, status_id, emit)
+            except SocialWallError as exc:
+                emit({"type": "error", "url": url, "message": f"signed-in route hit wall: {exc}"})
+                from ..writer import envelope
+                err_md = (
+                    f"# X capture failed\n\n**URL:** {url}\n**Status ID:** {status_id}\n\n"
+                    f"Sign-in is required for this item but the browser profile is not "
+                    f"authenticated or hit a wall.\n\nError: {exc}\n"
+                )
+                fname = f"thread-{status_id}.md"
+                (out_dir / fname).write_text(envelope(url, err_md), encoding="utf-8")
+                return GrabResult(source="x", run_dir=out_dir, ok=0, thin=0, failed=1)
+
+        # Download video media for transcription.
+        transcript_note = ""
+        for m in data.get("media", []):
+            if m.get("type") == "video" and m.get("url"):
+                vid_name = f"{status_id}-video.mp4"
+                vid_path = out_dir / vid_name
+                ok, info = await download_media(m["url"], vid_path)
+                if ok:
+                    emit({"type": "media", "url": m["url"], "file": vid_name, "size": info})
+                    tx = maybe_transcribe(vid_path)
+                    if tx:
+                        data.setdefault("transcript", tx)
+                    else:
+                        transcript_note = "transcript pending"
+                else:
+                    emit({"type": "warning", "url": m["url"], "message": f"download failed: {info}"})
+
+        md = self._render_post_md(data, route=route, transcript_note=transcript_note)
         fname = f"thread-{status_id}.md"
         from ..writer import envelope
 
         (out_dir / fname).write_text(envelope(url, md), encoding="utf-8")
-        emit({"type": "page", "url": url, "file": fname, "chars": len(md)})
+        emit({"type": "page", "url": url, "file": fname, "chars": len(md), "route": route})
         return GrabResult(source="x", run_dir=out_dir, ok=1, thin=0, failed=0)
+
+    async def _grab_post_signed_in(self, url: str, status_id: str, emit) -> dict:
+        """Signed-in browser DOM extraction (original route)."""
+        page = await open_page(url, emit=emit)
+        try:
+            await page.wait_for_timeout(2500)
+            thread_data = await self._extract_thread(page, url, status_id)
+        finally:
+            await close_context(page)
+
+        # Flatten thread_data into our normalized shape. The public route returns
+        # a single-post dict; the signed-in route may return multiple posts.
+        # Use the focused post as the primary, attach others as context.
+        focused = None
+        for p in thread_data.get("posts", []):
+            if p.get("is_focus"):
+                focused = p
+                break
+        if not focused and thread_data.get("posts"):
+            focused = thread_data["posts"][0]
+        if not focused:
+            focused = {"author": "", "text": "", "date": "", "media": [], "quoted": None}
+
+        result = {
+            "id": status_id,
+            "author": focused.get("author", ""),
+            "handle": focused.get("author", ""),
+            "text": focused.get("text", ""),
+            "date": focused.get("date", ""),
+            "media": focused.get("media", []),
+            "quoted": focused.get("quoted"),
+            "reply_to": "",
+            "reply_to_id": "",
+            "likes": None,
+            "retweets": None,
+            "replies": None,
+            "quotes": None,
+            "canonical_url": url,
+        }
+
+        # Attach thread context if there are additional posts.
+        other_posts = [p for p in thread_data.get("posts", []) if not p.get("is_focus")]
+        if other_posts:
+            result["thread_context"] = other_posts
+
+        return result
 
     async def _extract_thread(self, page, url: str, focus_id: str) -> dict:
         """Extract the focused post plus any same-author conversation around it."""
@@ -88,15 +193,12 @@ class XSource:
             "posts": [],
         }
 
-        # Each tweet lives in an article[data-testid="tweet"].
         articles = await page.query_selector_all('article[data-testid="tweet"]')
         for art in articles:
             post = await self._extract_single_post(art)
             if post:
                 result["posts"].append(post)
 
-        # If extraction yielded nothing, fall back to the page text so we
-        # never silently produce an empty file.
         if not result["posts"]:
             try:
                 body = (await page.inner_text("main"))[:6000]
@@ -112,7 +214,6 @@ class XSource:
                 "is_focus": True,
             })
 
-        # Mark the focus post (the one whose id matches the URL).
         for p in result["posts"]:
             p["is_focus"] = p.get("id") == focus_id
         return result
@@ -129,7 +230,6 @@ class XSource:
             "is_focus": False,
         }
 
-        # Author handle: the first link with role="link" pointing to a profile.
         try:
             links = await article.query_selector_all('a[role="link"]')
             for lnk in links:
@@ -140,7 +240,6 @@ class XSource:
         except Exception:  # noqa: BLE001
             pass
 
-        # Tweet text.
         try:
             text_el = await article.query_selector('[data-testid="tweetText"]')
             if text_el:
@@ -148,7 +247,6 @@ class XSource:
         except Exception:  # noqa: BLE001
             pass
 
-        # Date.
         try:
             time_el = await article.query_selector("time[datetime]")
             if time_el:
@@ -156,7 +254,6 @@ class XSource:
         except Exception:  # noqa: BLE001
             pass
 
-        # Post ID from the permalink.
         try:
             perma = await article.query_selector('a[href*="/status/"]')
             if perma:
@@ -167,7 +264,6 @@ class XSource:
         except Exception:  # noqa: BLE001
             pass
 
-        # Media: images and videos.
         try:
             imgs = await article.query_selector_all('img[src*="media"]')
             for img in imgs[:4]:
@@ -186,9 +282,6 @@ class XSource:
         except Exception:  # noqa: BLE001
             pass
 
-        # Quoted tweet (nested card). Extract BEFORE we potentially filter
-        # the post out, but scope all queries inside the card element so
-        # nested tweetText/links don't bleed into the parent article.
         try:
             card = await article.query_selector('[data-testid="card.wrapper"]')
             if card:
@@ -205,9 +298,6 @@ class XSource:
         except Exception:  # noqa: BLE001
             pass
 
-        # Re-extract the direct tweet text scoped to the article but NOT
-        # inside a nested card, so quoted tweets don't overwrite the parent.
-        # Only overwrite if we didn't already get text from the first pass.
         if not post["text"]:
             try:
                 direct_texts = await article.query_selector_all('[data-testid="tweetText"]')
@@ -225,6 +315,84 @@ class XSource:
             return None
         return post
 
+    @staticmethod
+    def _render_post_md(data: dict, *, route: str = "public", transcript_note: str = "") -> str:
+        author = data.get("author") or data.get("handle") or "unknown"
+        handle = data.get("handle") or author
+        lines = [f"# Post by @{handle}", ""]
+        lines.append(f"**Route:** {route}")
+        if data.get("date"):
+            lines.append(f"**Date:** {data['date']}")
+        if data.get("likes") is not None:
+            lines.append(f"**Likes:** {data['likes']:,}")
+        if data.get("retweets") is not None:
+            lines.append(f"**Retweets:** {data['retweets']:,}")
+        if data.get("replies") is not None:
+            lines.append(f"**Replies:** {data['replies']:,}")
+        if data.get("reply_to"):
+            lines.append(f"**In reply to:** @{data['reply_to']}")
+        lines.append("")
+
+        if data.get("text"):
+            lines.extend(["## Text", "", data["text"], ""])
+
+        if data.get("media"):
+            lines.append("## Media")
+            lines.append("")
+            for m in data["media"]:
+                if m["type"] == "image":
+                    alt = m.get("alt", "")
+                    lines.append(f"![{alt}]({m['url']})")
+                else:
+                    lines.append(f"[Video]({m['url']})")
+            lines.append("")
+
+        if data.get("quoted"):
+            q = data["quoted"]
+            qa = f"@{q['author']}" if q.get("author") else "(unknown)"
+            lines.append(f"> **Quoted {qa}:**")
+            for ql in q.get("text", "").splitlines():
+                lines.append(f"> {ql}")
+            lines.append("")
+
+        if data.get("transcript"):
+            lines.extend(["## Transcript", "", data["transcript"], ""])
+        elif transcript_note:
+            lines.append(f"*({transcript_note})*")
+            lines.append("")
+
+        # Thread context from signed-in route.
+        ctx = data.get("thread_context") or []
+        if ctx:
+            lines.append("## Thread context")
+            lines.append("")
+            for i, p in enumerate(ctx):
+                pa = f"@{p['author']}" if p.get("author") else "(unknown)"
+                lines.append(f"### {pa}")
+                if p.get("date"):
+                    lines.append(f"**Date:** {p['date']}")
+                lines.append("")
+                if p.get("text"):
+                    lines.append(p["text"])
+                    lines.append("")
+                if p.get("media"):
+                    for m in p["media"]:
+                        if m["type"] == "image":
+                            lines.append(f"![{m.get('alt', '')}]({m['url']})")
+                        else:
+                            lines.append(f"[Video]({m['url']})")
+                    lines.append("")
+                if p.get("quoted"):
+                    q = p["quoted"]
+                    qa = f"@{q['author']}" if q.get("author") else "(unknown)"
+                    lines.append(f"> **Quoted {qa}:**")
+                    for ql in q.get("text", "").splitlines():
+                        lines.append(f"> {ql}")
+                    lines.append("")
+
+        return "\n".join(lines)
+
+    # Legacy renderer kept for profile posts that still use the old shape.
     @staticmethod
     def _render_thread_md(data: dict) -> str:
         lines = [f"# X thread (focus: {data['focus_id']})", ""]
@@ -254,7 +422,7 @@ class XSource:
                 lines.append("")
         return "\n".join(lines)
 
-    # ---- profile ----
+    # ---- profile (always signed-in) ----
 
     async def _grab_profile(
         self, url: str, handle: str, limit: int, out_dir: Path, emit
@@ -298,7 +466,6 @@ class XSource:
                 data["bio"] = (await bio_el.inner_text()).strip()
         except Exception:  # noqa: BLE001
             pass
-        # Follower/following counts are in nav links.
         try:
             links = await page.query_selector_all('a[role="link"]')
             for lnk in links:
@@ -313,7 +480,6 @@ class XSource:
         return data
 
     async def _scroll_posts(self, page, limit: int, emit) -> list[dict]:
-        """Scroll the profile timeline and collect up to `limit` post stubs."""
         seen: set[str] = set()
         posts: list[dict] = []
         stale_scrolls = 0
@@ -329,7 +495,6 @@ class XSource:
                 if key in seen:
                     continue
                 seen.add(key)
-                # Build a permalink when we have the id.
                 if post.get("id") and post.get("author"):
                     post["url"] = f"https://x.com/{post['author']}/status/{post['id']}"
                 posts.append(post)

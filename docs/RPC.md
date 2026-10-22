@@ -255,9 +255,12 @@ Result: `{"source": str, "label": str, "modes": ["page"] | ["page","site"],
 Synchronous URL → source routing. No network, no thread — answered on the
 main dispatch loop. `source` is one of `"web"`, `"youtube"`, `"github"`,
 `"instagram"`, `"x"`. `modes` lists which grab modes the source supports
-(only `"web"` offers `"site"`). `needs_signin` is true for instagram/x
-(those sources require a prior `social.signin`). The panel calls this
-before showing mode options to the user.
+(only `"web"` offers `"site"`). `needs_signin` is false for instagram/x:
+both sources now try public (no-login) endpoints first and only fall back
+to the signed-in browser route when the content is private, gated, or the
+public API is blocked. `social.signin` is still available for profiles,
+Stories, and other login-required content. The panel calls this before
+showing mode options to the user.
 
 ### `grab`
 Params: `{"url": str, "out": str, "mode": "page"|"site"|null,

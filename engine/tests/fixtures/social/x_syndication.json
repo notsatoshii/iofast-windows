@@ -1,0 +1,26 @@
+{
+ "id": "1700000000000000000",
+ "text": "This is a test tweet with a link https://t.co/abc123 and some text.",
+ "created_at": "Wed Oct 22 12:00:00 +0000 2026",
+ "user": {
+ "screen_name": "testuser",
+ "name": "Test User"
+ },
+ "urls": [
+ {
+ "url": "https://t.co/abc123",
+ "expanded_url": "https://example.com/article"
+ }
+ ],
+ "mediaDetails": [
+ {
+ "type": "photo",
+ "media_url_https": "https://pbs.twimg.com/media/test.jpg",
+ "ext_alt_text": "A test image"
+ }
+ ],
+ "favorite_count": 42,
+ "retweet_count": 5,
+ "reply_count": 3,
+ "quote_count": 1
+}
