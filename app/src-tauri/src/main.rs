@@ -2365,6 +2365,190 @@ fn run_self_test() {
         }
     }
 
+    // --- Screenshot capture: GDI BitBlt + WinRT OCR ---
+    {
+        use windows_sys::Win32::Graphics::Gdi::{
+            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+            GetDC, ReleaseDC, SelectObject, SRCCOPY,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetDesktopWindow, GetSystemMetrics};
+
+        const SM_CXVIRTUALSCREEN: i32 = 78;
+        const SM_CYVIRTUALSCREEN: i32 = 79;
+
+        let gdi_ok = unsafe {
+            let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if w <= 0 || h <= 0 {
+                false
+            } else {
+                let hdc_screen = GetDC(GetDesktopWindow());
+                if hdc_screen.is_null() {
+                    false
+                } else {
+                    let hdc_mem = CreateCompatibleDC(hdc_screen);
+                    if hdc_mem.is_null() {
+                        let _ = ReleaseDC(GetDesktopWindow(), hdc_screen);
+                        false
+                    } else {
+                        let hbitmap = CreateCompatibleBitmap(hdc_screen, w, h);
+                        if hbitmap.is_null() {
+                            let _ = DeleteDC(hdc_mem);
+                            let _ = ReleaseDC(GetDesktopWindow(), hdc_screen);
+                            false
+                        } else {
+                            let old = SelectObject(hdc_mem, hbitmap);
+                            let blt = BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, SRCCOPY);
+                            let _ = SelectObject(hdc_mem, old);
+                            let _ = DeleteObject(hbitmap);
+                            let _ = DeleteDC(hdc_mem);
+                            let _ = ReleaseDC(GetDesktopWindow(), hdc_screen);
+                            blt != 0
+                        }
+                    }
+                }
+            }
+        };
+
+        if gdi_ok {
+            println!("PASS  screenshot-gdi: BitBlt full-screen capture succeeded");
+            passed += 1;
+        } else {
+            println!("FAIL  screenshot-gdi: BitBlt full-screen capture failed");
+            failed += 1;
+        }
+
+        // Test WinRT OCR engine availability.
+        let ocr_ok = (|| -> bool {
+            use windows::Media::Ocr::OcrEngine;
+            use windows::Globalization::Language;
+            Language::CreateLanguage(&"en-US".into())
+                .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
+                .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())
+                .is_ok()
+        })();
+
+        if ocr_ok {
+            println!("PASS  screenshot-ocr: WinRT OcrEngine available");
+            passed += 1;
+        } else {
+            println!("FAIL  screenshot-ocr: WinRT OcrEngine unavailable");
+            failed += 1;
+        }
+    }
+
+    // --- Selection capture: clipboard round-trip ---
+    {
+        use windows_sys::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable,
+            OpenClipboard, SetClipboardData,
+        };
+        use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+        const CF_UNICODETEXT: u32 = 13;
+        let test_str = "iofast-self-test-selection";
+        let clip_ok = unsafe {
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                false
+            } else {
+                let _ = EmptyClipboard();
+                let wide: Vec<u16> = test_str.encode_utf16().chain(std::iter::once(0)).collect();
+                let bytes = wide.len() * 2;
+                let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+                if mem.is_null() {
+                    let _ = CloseClipboard();
+                    false
+                } else {
+                    let dst = GlobalLock(mem) as *mut u16;
+                    if dst.is_null() {
+                        let _ = CloseClipboard();
+                        false
+                    } else {
+                        std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
+                        let _ = GlobalUnlock(mem);
+                        let set = SetClipboardData(CF_UNICODETEXT, mem);
+                        let _ = CloseClipboard();
+                        if set.is_null() {
+                            false
+                        } else {
+                            // Read it back.
+                            if OpenClipboard(std::ptr::null_mut()) != 0
+                                && IsClipboardFormatAvailable(CF_UNICODETEXT) != 0
+                            {
+                                let handle = GetClipboardData(CF_UNICODETEXT);
+                                if !handle.is_null() {
+                                    let ptr = GlobalLock(handle) as *const u16;
+                                    if !ptr.is_null() {
+                                        let mut len = 0;
+                                        while *ptr.add(len) != 0 {
+                                            len += 1;
+                                        }
+                                        let read_back = String::from_utf16_lossy(
+                                            std::slice::from_raw_parts(ptr, len),
+                                        );
+                                        let _ = GlobalUnlock(handle);
+                                        let _ = CloseClipboard();
+                                        read_back == test_str
+                                    } else {
+                                        let _ = CloseClipboard();
+                                        false
+                                    }
+                                } else {
+                                    let _ = CloseClipboard();
+                                    false
+                                }
+                            } else {
+                                let _ = CloseClipboard();
+                                false
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        if clip_ok {
+            println!("PASS  selection-clipboard: write+read round-trip OK");
+            passed += 1;
+        } else {
+            println!("FAIL  selection-clipboard: write+read round-trip failed");
+            failed += 1;
+        }
+    }
+
+    // --- Scheduler catch-up dry run ---
+    {
+        // Verify the schedule store is readable and global keys are well-formed.
+        // A true catch-up requires a running Tauri app; here we just verify the
+        // schedule infrastructure is intact.
+        let sched_ok = (|| -> bool {
+            let app_data = std::env::var("APPDATA").unwrap_or_default();
+            if app_data.is_empty() {
+                return false;
+            }
+            let sched_path = std::path::PathBuf::from(&app_data)
+                .join("iofast")
+                .join("schedules.json");
+            // If the file doesn't exist yet, that's fine — first run creates it.
+            if !sched_path.exists() {
+                return true;
+            }
+            let content = match std::fs::read_to_string(&sched_path) {
+                Ok(c) => c,
+                Err(_) => return false,
+            };
+            serde_json::from_str::<serde_json::Value>(&content).is_ok()
+        })();
+
+        if sched_ok {
+            println!("PASS  scheduler-catchup: schedule store valid or not yet created");
+            passed += 1;
+        } else {
+            println!("FAIL  scheduler-catchup: schedule store corrupt or unreadable");
+            failed += 1;
+        }
+    }
+
     println!("\nSelf-test: {} passed, {} failed", passed, failed);
     std::process::exit(if failed == 0 { 0 } else { 1 });
 }
