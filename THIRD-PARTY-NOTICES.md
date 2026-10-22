@@ -21,6 +21,10 @@ License file (in package): LICENSE
 License: Apache-2.0
 License file (in package): LICENSE.md
 
+### av 19.0.2
+License: BSD-3-Clause
+License file (in package): LICENSE.txt
+
 ### babel 2.18.0
 License: BSD-3-Clause
 License file (in package): LICENSE
@@ -49,6 +53,10 @@ License file (in package): LICENSE
 License: BSD-3-Clause
 License file (in package): LICENSE.txt
 
+### colorama 0.4.6
+License: BSD
+License file (in package): LICENSE.txt
+
 ### courlan 1.4.0
 License: Apache-2.0
 License file (in package): LICENSE
@@ -57,11 +65,29 @@ License file (in package): LICENSE
 License: BSD-3-Clause
 License file (in package): LICENSE
 
+### ctranslate2 4.8.3
+License: MIT
+
 ### curl_cffi 0.16.3
 License: MIT
 License file (in package): LICENSE
 
 ### dateparser 1.4.3
+License: BSD-3-Clause
+License file (in package): LICENSE
+
+### faster-whisper 1.2.1
+License: MIT
+License file (in package): LICENSE
+
+### filelock 4.2.4
+License: MIT
+License file (in package): LICENSE
+
+### flatbuffers 25.12.19
+License: Apache 2.0
+
+### fsspec 2026.9.0
 License: BSD-3-Clause
 License file (in package): LICENSE
 
@@ -73,17 +99,25 @@ License file (in package): LICENSE
 License: MIT
 License file (in package): LICENSE.txt
 
+### hf-xet 1.7.0
+License: Apache-2.0
+License file (in package): LICENSE
+
 ### htmldate 1.10.0
 License: Apache-2.0
 License file (in package): LICENSE
 
-### httpcore 1.0.9
+### httpcore2 2.16.0
 License: BSD-3-Clause
 License file (in package): LICENSE.md
 
-### httpx 0.28.1
+### httpx2 2.16.0
 License: BSD-3-Clause
 License file (in package): LICENSE.md
+
+### huggingface_hub 2.2.0
+License: Apache-2.0
+License file (in package): LICENSE
 
 ### idna 3.20
 License: BSD-3-Clause
@@ -105,9 +139,21 @@ License file (in package): LICENSE
 License: BSD-3-Clause
 License file (in package): LICENSE
 
+### numpy 2.5.4
+License: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
+License file (in package): LICENSE.txt
+
+### onnxruntime 1.31.0
+License: MIT License
+License file (in package): LICENSE
+
 ### orjson 3.13.0
 License: MPL-2.0 AND (Apache-2.0 OR MIT)
 License file (in package): LICENSE-APACHE
+
+### packaging 26.3
+License: Apache-2.0 OR BSD-2-Clause
+License file (in package): LICENSE
 
 ### patchright 1.58.2
 License: Apache-2.0
@@ -115,6 +161,10 @@ License file (in package): LICENSE
 
 ### playwright 1.58.0
 License: Apache-2.0
+License file (in package): LICENSE
+
+### protobuf 7.36.2
+License: 3-Clause BSD License
 License file (in package): LICENSE
 
 ### pycparser 3.12
@@ -132,6 +182,10 @@ License file (in package): LICENSE
 ### pytz 2026.5
 License: MIT
 License file (in package): LICENSE.txt
+
+### PyYAML 6.0.3
+License: MIT
+License file (in package): LICENSE
 
 ### regex 2026.9.29
 License: Apache-2.0 AND CNRI-Python
@@ -153,8 +207,18 @@ License file (in package): LICENSE.md
 License: MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later
 License file (in package): LICENSE.rst
 
+### tokenizers 0.23.3
+License: Apache-2.0
+
+### tqdm 4.70.1
+License: MPL-2.0 AND MIT
+
 ### trafilatura 2.2.0
 License: Apache-2.0
+License file (in package): LICENSE
+
+### truststore 0.10.5
+License: MIT
 License file (in package): LICENSE
 
 ### typing_extensions 4.16.0
