@@ -873,8 +873,11 @@ class TestFullScrapeArchival:
         assert len(archived_pages) == 5
         assert (archive_dir / "index.md").exists()
         index_text = (archive_dir / "index.md").read_text(encoding="utf-8")
+        # Links are vault-relative with aliases: [[path|alias]]
         for i in range(5):
-            assert f"[[page{i}]]" in index_text
+            assert f"|page{i}]]" in index_text
+        # Back-link to raw note present
+        assert "Raw note:" in index_text
 
     def test_over_cap_run_links_in_vault_index(self, tmp_path):
         from iofast_engine.vault.raw import write_raw_copy, MAX_RAW_CHARS
@@ -891,9 +894,10 @@ class TestFullScrapeArchival:
         )
         assert info["truncated"] is True
         text = path.read_text(encoding="utf-8")
+        # Full capture link always present with vault-relative path and alias
         assert "Full capture:" in text
-        # Path uses forward slashes for Obsidian; accept either separator
-        assert "[[Research (RAW)" in text and "/index]]" in text
+        assert "[[Research (RAW)/iofast/" in text
+        assert "|Big Capture archive]]" in text
 
     def test_tweet_sized_run_kept_whole(self, tmp_path):
         from iofast_engine.vault.filer import file_capture
