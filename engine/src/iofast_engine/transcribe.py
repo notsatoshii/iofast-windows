@@ -74,6 +74,30 @@ def _models_root() -> Path:
     return Path(base) / "iofast" / "models"
 
 
+def ytdlp_js_runtimes() -> dict:
+    """Return a js_runtimes dict for yt-dlp that uses patchright's bundled node.exe.
+
+    yt-dlp >= 2024 requires a JS runtime for YouTube signature/n-challenge solving.
+    Deno is the default but is not installed on user machines. Patchright ships a
+    node.exe in its driver folder that works as a drop-in runtime. We also enable
+    the ejs:github remote component so challenge solver scripts can be fetched.
+
+    Returns {} when patchright's node.exe cannot be located (dev/test without
+    patchright installed); callers should merge this into their ydl_opts.
+    """
+    try:
+        import patchright
+        node_exe = Path(patchright.__file__).parent / "driver" / "node.exe"
+        if node_exe.is_file():
+            return {
+                "js_runtimes": {"node": {"path": str(node_exe)}},
+                "remote_components": ["ejs:github"],
+            }
+    except Exception:
+        pass
+    return {}
+
+
 def pick_device_and_model() -> tuple[str, str, str]:
     """Choose (device, compute_type, model_name) based on hardware + env.
 
@@ -131,6 +155,8 @@ def download_audio(
         # Keep original container; faster-whisper reads most formats directly.
         "postprocessors": [],
     }
+    # yt-dlp >= 2024 requires a JS runtime for YouTube signature solving.
+    ydl_opts.update(ytdlp_js_runtimes())
 
     def _progress(d):
         if d.get("status") == "downloading":

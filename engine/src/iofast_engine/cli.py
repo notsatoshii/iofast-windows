@@ -196,6 +196,29 @@ def main(argv=None):
                 deps_ok = False
                 dep_errors.append(f"{mod_name}: {e}")
 
+        # Local speech-to-text: faster-whisper + ctranslate2 (CPU).
+        transcribe_ok = False
+        transcribe_info = ""
+        transcribe_error = ""
+        try:
+            import faster_whisper  # noqa: F401
+            import ctranslate2  # noqa: F401
+            transcribe_ok = True
+            # Check if any whisper model is already downloaded (no download here).
+            from .transcribe import _models_root
+            models_dir = _models_root()
+            if models_dir.is_dir():
+                model_dirs = [d for d in models_dir.iterdir() if d.is_dir()]
+                if model_dirs:
+                    names = ", ".join(sorted(d.name for d in model_dirs))
+                    transcribe_info = f"models: {names}"
+                else:
+                    transcribe_info = "no models downloaded yet"
+            else:
+                transcribe_info = "models dir not created yet"
+        except ImportError as e:
+            transcribe_error = str(e)
+
         # Browser launch test: actually start driver and open/close headless browser.
         browser_ok = False
         browser_info = ""
@@ -236,11 +259,16 @@ def main(argv=None):
             "deps_ok": deps_ok,
             "dep_errors": dep_errors,
             "browser_ok": browser_ok,
+            "transcribe_ok": transcribe_ok,
         }
         if browser_ok:
             result["browser_info"] = browser_info
         else:
             result["browser_error"] = browser_error
+        if transcribe_ok:
+            result["transcribe_info"] = transcribe_info
+        else:
+            result["transcribe_error"] = transcribe_error
         all_available = all(sources.values()) and deps_ok and browser_ok
         if args.json:
             print(json.dumps(result), flush=True)
@@ -255,6 +283,10 @@ def main(argv=None):
                 print(f"  browser: ok ({browser_info})", file=sys.stderr)
             else:
                 print(f"  browser: FAIL ({browser_error})", file=sys.stderr)
+            if transcribe_ok:
+                print(f"  transcription: ok ({transcribe_info})", file=sys.stderr)
+            else:
+                print(f"  transcription: FAIL ({transcribe_error})", file=sys.stderr)
             print(
                 f"check-deps: {'all sources available' if all_available else 'INCOMPLETE'}",
                 file=sys.stderr,

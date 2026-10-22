@@ -12,7 +12,11 @@ stdio JSON-RPC including a real scrape against a local fixture server.
 import os
 import subprocess
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_data_files,
+    collect_dynamic_libs,
+)
 
 # Build provenance: stamp a git SHA into the bundle so verify_frozen.py (and
 # the app<->sidecar handshake) can prove which source this freeze came from.
@@ -89,6 +93,16 @@ hiddenimports = [
     "iofast_engine.sources.instagram",
     "iofast_engine.sources.x",
     "iofast_engine.sources.web",
+    # Local speech-to-text: faster-whisper + ctranslate2 (CPU). CUDA wheels are
+    # an optional [gpu] extra and are NOT bundled. onnxruntime is needed for the
+    # Silero VAD model that ships inside faster_whisper/assets/. tokenizers and
+    # huggingface_hub are used at model-load time. av (PyAV) decodes audio.
+    "faster_whisper",
+    "ctranslate2",
+    "av",
+    "tokenizers",
+    "onnxruntime",
+    "huggingface_hub",
 ]
 
 # yt_dlp uses lazy string-keyed imports for extractors, downloaders, and
@@ -102,6 +116,17 @@ _yt_dlp_datas, _yt_dlp_binaries, _yt_dlp_hiddenimports = collect_all("yt_dlp")
 # frozen builds. Without this, every browser launch fails with FileNotFoundError.
 _patchright_datas, _patchright_binaries, _patchright_hiddenimports = collect_all("patchright")
 
+# Local speech-to-text bundles: faster-whisper ships a Silero VAD .onnx in its
+# assets/ folder that must be present at runtime; ctranslate2 ships CPU DLLs;
+# onnxruntime ships its own DLLs + provider libs; tokenizers has native libs.
+# collect_all captures data + binaries + hidden imports for each.
+_fw_datas, _fw_binaries, _fw_hiddenimports = collect_all("faster_whisper")
+_ct2_datas, _ct2_binaries, _ct2_hiddenimports = collect_all("ctranslate2")
+_ort_datas, _ort_binaries, _ort_hiddenimports = collect_all("onnxruntime")
+_tok_datas, _tok_binaries, _tok_hiddenimports = collect_all("tokenizers")
+_av_datas, _av_binaries, _av_hiddenimports = collect_all("av")
+_hf_datas, _hf_binaries, _hf_hiddenimports = collect_all("huggingface_hub")
+
 datas = (
     collect_data_files("trafilatura")  # settings.cfg + language data
     # Fingerprint datapoints: scrapling's static header generation reads these
@@ -110,12 +135,27 @@ datas = (
     + collect_data_files("browserforge")
     + _yt_dlp_datas
     + _patchright_datas
+    + _fw_datas
+    + _ct2_datas
+    + _ort_datas
+    + _tok_datas
+    + _av_datas
+    + _hf_datas
 )
 
 a = Analysis(
     [os.path.join(SPECPATH, "entry.py")],
     pathex=[os.path.join(SPECPATH, "..", "src")],
-    hiddenimports=hiddenimports + _yt_dlp_hiddenimports,
+    hiddenimports=(
+        hiddenimports
+        + _yt_dlp_hiddenimports
+        + _fw_hiddenimports
+        + _ct2_hiddenimports
+        + _ort_hiddenimports
+        + _tok_hiddenimports
+        + _av_hiddenimports
+        + _hf_hiddenimports
+    ),
     datas=datas,
     # No module excludes: the playwright/patchright PYTHON packages cannot be
     # excluded (scrapling.fetchers.requests -> toolbelt.convertor -> playwright;
@@ -132,10 +172,26 @@ _PLAYWRIGHT_PREFIXES = ("playwright/driver",)
 a.datas = [e for e in a.datas if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
 a.binaries = [e for e in a.binaries if not e[0].startswith(_PLAYWRIGHT_PREFIXES)]
 
-# Merge yt_dlp and patchright binaries from collect_all into the analysis.
+# Merge yt_dlp, patchright, and speech-to-text binaries from collect_all.
 # patchright's node.exe driver is a binary that must be present for any
 # browser launch (social_browser, dynamic tier, spider sessions).
-a.binaries += _yt_dlp_binaries + _patchright_binaries
+# ctranslate2/onnxruntime/tokenizers/av ship native DLLs needed at runtime.
+# Some packages (ctranslate2, onnxruntime) return malformed 2-tuples from
+# collect_all instead of the expected 3-tuples; filter those out so COLLECT
+# doesn't choke with "not enough values to unpack".
+def _valid_binaries(entries):
+    return [e for e in entries if len(e) == 3]
+
+a.binaries += (
+    _yt_dlp_binaries
+    + _patchright_binaries
+    + _valid_binaries(_fw_binaries)
+    + _valid_binaries(_ct2_binaries)
+    + _valid_binaries(_ort_binaries)
+    + _valid_binaries(_tok_binaries)
+    + _valid_binaries(_av_binaries)
+    + _valid_binaries(_hf_binaries)
+)
 
 pyz = PYZ(a.pure)
 exe = EXE(

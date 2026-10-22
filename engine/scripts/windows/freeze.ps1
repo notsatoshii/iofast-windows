@@ -19,7 +19,9 @@ $verifyFile = Join-Path $env:TEMP "iofast-verify-deps.py"
 @'
 import sys
 deps = ["scrapling", "trafilatura", "markdownify", "patchright",
-        "cssselect", "lxml", "yt_dlp", "httpx"]
+        "cssselect", "lxml", "yt_dlp", "httpx",
+        "faster_whisper", "ctranslate2", "av", "tokenizers",
+        "onnxruntime", "huggingface_hub"]
 missing = []
 for d in deps:
     try:
