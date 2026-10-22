@@ -107,7 +107,9 @@ def run_vault(args):
         if args.json:
             print(json.dumps(result, indent=2), flush=True)
         else:
-            if result.get("dry_run"):
+            if result.get("duplicate"):
+                print(f"duplicate ({result['match_type']}): {result['existing']}", file=sys.stderr)
+            elif result.get("dry_run"):
                 print(f"dry run: {result['title']} ({result['source_type']}, {result['combined_chars']} chars)", file=sys.stderr)
             else:
                 print(f"filed: {result['title']} -> {result['topic_folder']}", file=sys.stderr)

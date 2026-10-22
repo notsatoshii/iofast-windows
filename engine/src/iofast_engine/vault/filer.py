@@ -90,9 +90,15 @@ _HEADING_RE = __import__("re").compile(r"^#\s+(.+)$")
 
 
 def _first_heading_title(run_dir: Path) -> str | None:
-    """Return the first H1 heading found in any .md file under run_dir."""
+    """Return the first H1 heading found in any .md file under run_dir.
+
+    Skips combined files (named after the run dir), reports, and UNTRUSTED
+    banners — those have synthetic titles like '<host> documentation'.
+    Prefers page-level content files inside subdirectories.
+    """
+    combined_name = f"{run_dir.name}.md"
     for md_file in sorted(run_dir.rglob("*.md")):
-        if md_file.name in ("report.md", "README-UNTRUSTED.md"):
+        if md_file.name in ("report.md", "README-UNTRUSTED.md", combined_name):
             continue
         try:
             with md_file.open(encoding="utf-8") as f:
@@ -100,6 +106,9 @@ def _first_heading_title(run_dir: Path) -> str | None:
                     m = _HEADING_RE.match(line.strip())
                     if m:
                         title = m.group(1).strip()
+                        # Strip markdown anchor links: [#](#slug) or [text](url)
+                        import re as _re
+                        title = _re.sub(r"\s*\[.*?\]\(.*?\)", "", title).strip()
                         # Skip UNTRUSTED banner lines and SOURCE lines
                         if title.startswith("---") or "UNTRUSTED" in title:
                             continue
@@ -204,7 +213,12 @@ def file_capture(
     title = _extract_title(run_dir)
     combined_text = _get_combined_text(run_dir)
     source_url = ""
+    # Manifest may be at run root or inside a subdirectory (e.g. web/manifest.json)
     manifest_path = run_dir / "manifest.json"
+    if not manifest_path.is_file():
+        found = list(run_dir.rglob("manifest.json"))
+        if found:
+            manifest_path = found[0]
     if manifest_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -226,6 +240,19 @@ def file_capture(
             "source_type": source_type,
             "title": title,
             "combined_chars": len(combined_text),
+        }
+
+    # Dedupe check: skip if URL or content already filed
+    from .dedupe import check_duplicate
+    dup = check_duplicate(source_url, vault_path=vault, content_text=combined_text)
+    if dup is not None:
+        _emit(f"duplicate ({dup['match_type']}): {dup.get('vault_note') or dup.get('run_dir')}")
+        return {
+            "duplicate": True,
+            "match_type": dup["match_type"],
+            "existing": dup.get("vault_note") or dup.get("run_dir"),
+            "title": title,
+            "source_url": source_url,
         }
 
     # Write raw copy first (no LLM needed)
