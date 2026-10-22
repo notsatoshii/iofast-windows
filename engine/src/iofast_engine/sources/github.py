@@ -5,17 +5,16 @@ repo metadata via the REST API. Public repos work without auth; private repos
 need GITHUB_TOKEN in the environment (passed in by the shell, never logged).
 """
 
-import asyncio
 import fnmatch
 import io
 import json
 import os
 import re
 import tarfile
+import urllib.request
+import urllib.error
 from pathlib import Path
 from urllib.parse import urlparse
-
-import aiohttp
 
 from ..ledger import Ledger
 from ..writer import envelope, write_run
@@ -120,7 +119,7 @@ class GitHubSource:
         ledger = Ledger()
         emit({"type": "info", "message": f"📦 grabbing {owner}/{repo} from GitHub"})
 
-        # Fetch repo metadata and archive concurrently.
+        # Fetch repo metadata and archive via stdlib (no aiohttp dep).
         token = os.environ.get("GITHUB_TOKEN", "")
         headers = {"Accept": "application/vnd.github+json"}
         if token:
@@ -129,28 +128,39 @@ class GitHubSource:
         api_url = f"https://api.github.com/repos/{owner}/{repo}"
         archive_url = f"https://codeload.github.com/{owner}/{repo}/tar.gz/HEAD"
 
-        async with aiohttp.ClientSession(headers=headers) as session:
-            meta_task = session.get(api_url)
-            archive_task = session.get(archive_url)
-            meta_resp, archive_resp = await asyncio.gather(meta_task, archive_task)
+        try:
+            req_meta = urllib.request.Request(api_url, headers=headers)
+            with urllib.request.urlopen(req_meta, timeout=30) as resp:
+                meta = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            reason = f"API returned {e.code}"
+            ledger.record(url, "failed_fetch", reason)
+            emit({"type": "error", "message": f"❌ {reason}"})
+            write_run(str(run_dir), ledger, {"source": "github", "url": url})
+            return GrabResult(source=self.name, run_dir=run_dir, ok=0, thin=0, failed=1)
+        except Exception as e:
+            reason = f"API request failed: {e}"
+            ledger.record(url, "failed_fetch", reason)
+            emit({"type": "error", "message": f"❌ {reason}"})
+            write_run(str(run_dir), ledger, {"source": "github", "url": url})
+            return GrabResult(source=self.name, run_dir=run_dir, ok=0, thin=0, failed=1)
 
-            if meta_resp.status != 200:
-                reason = f"API returned {meta_resp.status}"
-                ledger.record(url, "failed_fetch", reason)
-                emit({"type": "error", "message": f"❌ {reason}"})
-                write_run(str(run_dir), ledger, {"source": "github", "url": url})
-                return GrabResult(source=self.name, run_dir=run_dir, ok=0, thin=0, failed=1)
-
-            meta = await meta_resp.json()
-
-            if archive_resp.status != 200:
-                reason = f"archive download returned {archive_resp.status}"
-                ledger.record(url, "failed_fetch", reason)
-                emit({"type": "error", "message": f"❌ {reason}"})
-                write_run(str(run_dir), ledger, {"source": "github", "url": url})
-                return GrabResult(source=self.name, run_dir=run_dir, ok=0, thin=0, failed=1)
-
-            archive_data = await archive_resp.read()
+        try:
+            req_archive = urllib.request.Request(archive_url, headers=headers)
+            with urllib.request.urlopen(req_archive, timeout=120) as resp:
+                archive_data = resp.read()
+        except urllib.error.HTTPError as e:
+            reason = f"archive download returned {e.code}"
+            ledger.record(url, "failed_fetch", reason)
+            emit({"type": "error", "message": f"❌ {reason}"})
+            write_run(str(run_dir), ledger, {"source": "github", "url": url})
+            return GrabResult(source=self.name, run_dir=run_dir, ok=0, thin=0, failed=1)
+        except Exception as e:
+            reason = f"archive download failed: {e}"
+            ledger.record(url, "failed_fetch", reason)
+            emit({"type": "error", "message": f"❌ {reason}"})
+            write_run(str(run_dir), ledger, {"source": "github", "url": url})
+            return GrabResult(source=self.name, run_dir=run_dir, ok=0, thin=0, failed=1)
 
         # Extract tarball into memory so we never touch disk with untrusted
         # archive paths (zip-slip protection).
