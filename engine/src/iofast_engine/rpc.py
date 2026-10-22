@@ -483,6 +483,97 @@ class RpcServer:
         except Exception as error:
             self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
 
+    # ---- watch methods ----
+
+    def handle_watch_add(self, rid, params):
+        """Add a URL to the watch list. Synchronous."""
+        try:
+            from .watch.watch_rpc import watch_add
+            result = watch_add(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_watch_list(self, rid, params):
+        """List all watch entries. Synchronous."""
+        try:
+            from .watch.watch_rpc import watch_list
+            result = watch_list(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_watch_remove(self, rid, params):
+        """Remove a watch entry by id. Synchronous."""
+        try:
+            from .watch.watch_rpc import watch_remove
+            result = watch_remove(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_watch_run(self, rid, params):
+        """Run due watch checks. Runs in a worker thread."""
+        with self.state:
+            thread = self.threads.get("watch_run")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "watch.run already running")
+            thread = threading.Thread(
+                target=self._watch_run_thread, args=(rid, params), daemon=True
+            )
+            self.threads["watch_run"] = thread
+            thread.start()
+
+    def _watch_run_thread(self, rid, params):
+        try:
+            from .watch.watch_rpc import watch_run
+            result = watch_run(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    # ---- import methods ----
+
+    def handle_import_chatgpt(self, rid, params):
+        """Import ChatGPT export archive. Runs in a worker thread."""
+        with self.state:
+            thread = self.threads.get("import_chatgpt")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "import.chatgpt already running")
+            thread = threading.Thread(
+                target=self._import_chatgpt_thread, args=(rid, params), daemon=True
+            )
+            self.threads["import_chatgpt"] = thread
+            thread.start()
+
+    def _import_chatgpt_thread(self, rid, params):
+        try:
+            from .import_chat.import_rpc import import_chatgpt
+            result = import_chatgpt(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    def handle_import_claude(self, rid, params):
+        """Import Claude export archive. Runs in a worker thread."""
+        with self.state:
+            thread = self.threads.get("import_claude")
+            if thread is not None and thread.is_alive():
+                return self.fail(rid, BUSY, "import.claude already running")
+            thread = threading.Thread(
+                target=self._import_claude_thread, args=(rid, params), daemon=True
+            )
+            self.threads["import_claude"] = thread
+            thread.start()
+
+    def _import_claude_thread(self, rid, params):
+        try:
+            from .import_chat.import_rpc import import_claude
+            result = import_claude(params, emit=lambda event: self.notify(rid, event))
+            self.respond(rid, result)
+        except Exception as error:
+            self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
     # ---- vault methods ----
 
     def handle_vault_status(self, rid, params):
