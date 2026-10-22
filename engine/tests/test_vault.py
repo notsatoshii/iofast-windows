@@ -116,15 +116,20 @@ class TestScanVault:
 
 
 class TestRawCopy:
-    def test_writes_raw_copy(self, fixture_vault):
+    def test_writes_raw_copy(self, fixture_vault, tmp_path):
         from iofast_engine.vault.raw import write_raw_copy
 
-        path = write_raw_copy(
+        # Create a minimal run dir so archive copy works
+        run_dir = tmp_path / "test-run"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text('{"info":{}}', encoding="utf-8")
+
+        path, archive_info = write_raw_copy(
             fixture_vault,
             combined_text="# Test Content\n\nSome text here.",
             source_url="https://example.com",
             source_type="web",
-            run_dir="/tmp/test-run",
+            run_dir=str(run_dir),
             title="Test Page",
             captured_date="2026-10-22",
         )
@@ -133,17 +138,25 @@ class TestRawCopy:
         assert "UNTRUSTED CONTENT" in text
         assert "source:" in text
         assert "type: web" in text
+        assert archive_info["page_count"] >= 0
 
-    def test_no_overwrite_on_collision(self, fixture_vault):
+    def test_no_overwrite_on_collision(self, fixture_vault, tmp_path):
         from iofast_engine.vault.raw import write_raw_copy
 
-        p1 = write_raw_copy(
+        run_dir = tmp_path / "r1"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text('{"info":{}}', encoding="utf-8")
+        run_dir2 = tmp_path / "r2"
+        run_dir2.mkdir()
+        (run_dir2 / "manifest.json").write_text('{"info":{}}', encoding="utf-8")
+
+        p1, _ = write_raw_copy(
             fixture_vault, "content 1", "https://a.com", "web",
-            "/tmp/r1", "Same Title", captured_date="2026-10-22",
+            str(run_dir), "Same Title", captured_date="2026-10-22",
         )
-        p2 = write_raw_copy(
+        p2, _ = write_raw_copy(
             fixture_vault, "content 2", "https://b.com", "web",
-            "/tmp/r2", "Same Title", captured_date="2026-10-22",
+            str(run_dir2), "Same Title", captured_date="2026-10-22",
         )
         assert p1 != p2
         assert p1.exists()
@@ -812,5 +825,129 @@ class TestHeadingDeduplication:
         assert text.count("# Test Entity") == 1
         # Content body should still be present
         assert "Some description here." in text
+
+
+class TestFullScrapeArchival:
+    """Full run is copied into the vault; raw note links to in-vault index."""
+
+    def _make_run(self, tmp_path, name, pages: dict[str, str], manifest_pages=None):
+        """Create a minimal run dir with page files and manifest."""
+        run_dir = tmp_path / name
+        section = run_dir / "web"
+        section.mkdir(parents=True)
+        for fname, content in pages.items():
+            (section / fname).write_text(content, encoding="utf-8")
+        if manifest_pages is None:
+            manifest_pages = [{"file": f} for f in pages]
+        manifest = {"info": {"url": f"https://example.com/{name}", "title": name}, "pages": manifest_pages}
+        (section / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return run_dir
+
+    def test_multi_page_run_keeps_every_page_in_folder(self, tmp_path):
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "AI").mkdir(parents=True)
+        pages = {f"page{i}.md": f"# Page {i}\nContent for page {i}." for i in range(5)}
+        run_dir = self._make_run(tmp_path, "multipage", pages)
+        mock_classify = {
+            "topic_folder": "AI",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {"summary": "Test.", "key_points": [], "notable_quotes": [], "entities": []},
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "- [[multipage]]",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            result = file_capture(run_dir, vault_path=vault)
+        # Archive folder exists with all pages + index
+        archive = vault / "Research (RAW)" / "iofast"
+        folders = [d for d in archive.iterdir() if d.is_dir()]
+        assert len(folders) == 1
+        archive_dir = folders[0]
+        web_dir = archive_dir / "web"
+        archived_pages = list(web_dir.glob("page*.md"))
+        assert len(archived_pages) == 5
+        assert (archive_dir / "index.md").exists()
+        index_text = (archive_dir / "index.md").read_text(encoding="utf-8")
+        for i in range(5):
+            assert f"[[page{i}]]" in index_text
+
+    def test_over_cap_run_links_in_vault_index(self, tmp_path):
+        from iofast_engine.vault.raw import write_raw_copy, MAX_RAW_CHARS
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        run_dir = tmp_path / "bigrun"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text('{"info":{}}', encoding="utf-8")
+        big_text = "x" * (MAX_RAW_CHARS + 1000)
+        path, info = write_raw_copy(
+            vault, big_text, "https://example.com/big", "web",
+            str(run_dir), "Big Capture", captured_date="2026-10-22",
+        )
+        assert info["truncated"] is True
+        text = path.read_text(encoding="utf-8")
+        assert "Full capture:" in text
+        # Path uses forward slashes for Obsidian; accept either separator
+        assert "[[Research (RAW)" in text and "/index]]" in text
+
+    def test_tweet_sized_run_kept_whole(self, tmp_path):
+        from iofast_engine.vault.filer import file_capture
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        (vault / "Culture").mkdir(parents=True)
+        run_dir = tmp_path / "tweet"
+        section = run_dir / "x"
+        section.mkdir(parents=True)
+        tweet = "# Tweet\nThis is a short tweet under 500 chars."
+        (section / "post.md").write_text(tweet, encoding="utf-8")
+        manifest = {"info": {"url": "https://x.com/test/status/1", "title": "Tweet"}, "pages": [{"file": "post.md"}]}
+        (section / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        mock_classify = {
+            "topic_folder": "Culture",
+            "tags": ["test"],
+            "aliases": [],
+            "source_note": {"summary": "A tweet.", "key_points": [], "notable_quotes": [], "entities": []},
+            "new_notes": [],
+            "append_sections": [],
+            "moc_line": "- [[Tweet]]",
+        }
+        from unittest.mock import patch
+        with patch("iofast_engine.vault.filer.classify_capture", return_value=mock_classify):
+            result = file_capture(run_dir, vault_path=vault)
+        # Raw note contains full tweet text
+        raw_dir = vault / "Research (RAW)" / "iofast"
+        raw_files = list(raw_dir.glob("*.md"))
+        raw_note = [f for f in raw_files if f.name != "log.md"][0]
+        text = raw_note.read_text(encoding="utf-8")
+        assert "short tweet under 500 chars" in text
+        # Archive has the post
+        archive_dirs = [d for d in raw_dir.iterdir() if d.is_dir()]
+        assert len(archive_dirs) == 1
+        assert (archive_dirs[0] / "x" / "post.md").exists()
+
+    def test_nothing_written_outside_vault(self, tmp_path):
+        from iofast_engine.vault.raw import write_raw_copy
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        run_dir = tmp_path / "outside-test"
+        run_dir.mkdir()
+        (run_dir / "manifest.json").write_text('{"info":{}}', encoding="utf-8")
+        (run_dir / "page.md").write_text("# Page\nContent.", encoding="utf-8")
+        path, info = write_raw_copy(
+            vault, "# Page\nContent.", "https://example.com", "web",
+            str(run_dir), "Outside Test", captured_date="2026-10-22",
+        )
+        # All written files must be inside vault
+        assert str(path.resolve()).startswith(str(vault.resolve()))
+        archive = vault / "Research (RAW)" / "iofast"
+        for f in archive.rglob("*"):
+            assert str(f.resolve()).startswith(str(vault.resolve()))
 
         

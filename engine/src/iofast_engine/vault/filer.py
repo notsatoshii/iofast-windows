@@ -181,30 +181,61 @@ def _first_heading_title(run_dir: Path) -> str | None:
 
 
 def _get_combined_text(run_dir: Path) -> str:
-    """Get combined text: use existing .md or run combine."""
-    # Look for an existing combined file (<site>.md)
-    for md_file in run_dir.glob("*.md"):
-        if md_file.name not in ("report.md", "README-UNTRUSTED.md"):
-            # This might be the combined file
-            text = md_file.read_text(encoding="utf-8")
-            if len(text) > 500:  # likely the combined file
-                return text
+    """Get combined text of ALL pages in page order.
 
-    # Try to combine
+    Priority: run combine (produces proper page-ordered output with
+    boilerplate removal) > manifest-ordered pages > sorted .md files.
+    Never picks a single page of a multi-page run. Short single-page
+    captures (tweet, YouTube watch.md) go in whole.
+    """
+    # Try to combine — this produces the canonical combined file with
+    # pages in site order and boilerplate removed.
     result = combine_site(run_dir)
     if result and result.is_file():
         return result.read_text(encoding="utf-8")
 
-    # Fallback: concatenate page files
-    pages = []
+    # No combine output: gather all page .md files in manifest order
+    pages: list[str] = []
+    seen: set[str] = set()
+
+    # Check each section directory for manifest-ordered pages
     for section in sorted(run_dir.iterdir()):
-        if section.is_dir() and (section / "manifest.json").is_file():
+        if not section.is_dir():
+            continue
+        manifest_file = section / "manifest.json"
+        if manifest_file.is_file():
+            try:
+                manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+                for row in manifest.get("pages", []):
+                    fname = row.get("file")
+                    if fname and row.get("outcome") != "duplicate" and fname not in seen:
+                        page_path = section / fname
+                        if page_path.is_file():
+                            try:
+                                pages.append(page_path.read_text(encoding="utf-8"))
+                                seen.add(fname)
+                            except OSError:
+                                continue
+            except (json.JSONDecodeError, OSError):
+                pass
+            # Also grab any .md not listed in manifest
             for md_file in sorted(section.glob("*.md")):
-                if md_file.name not in ("report.md", "README-UNTRUSTED.md"):
+                if md_file.name not in seen and md_file.name not in ("report.md", "README-UNTRUSTED.md"):
                     try:
                         pages.append(md_file.read_text(encoding="utf-8"))
+                        seen.add(md_file.name)
                     except OSError:
                         continue
+
+    # Root-level .md files (single-page captures like tweets, YouTube)
+    for md_file in sorted(run_dir.glob("*.md")):
+        if md_file.name not in seen and md_file.name not in ("report.md", "README-UNTRUSTED.md"):
+            try:
+                pages.append(md_file.read_text(encoding="utf-8"))
+                seen.add(md_file.name)
+            except OSError:
+                continue
+
     return "\n\n---\n\n".join(pages) if pages else ""
 
 
@@ -317,13 +348,13 @@ def file_capture(
             "source_url": source_url,
         }
 
-    # Write raw copy first (no LLM needed)
-    _emit("writing raw copy")
-    raw_path = write_raw_copy(
+    # Write raw copy first (no LLM needed) — also archives full run into vault
+    _emit("writing raw copy + archiving full scrape")
+    raw_path, archive_info = write_raw_copy(
         vault, combined_text, source_url, source_type,
         str(run_dir), title, captured_date=today,
     )
-    _emit(f"raw copy: {raw_path.relative_to(vault)}")
+    _emit(f"raw copy: {raw_path.relative_to(vault)} ({archive_info['page_count']} pages, {archive_info['char_count']} chars)")
 
     # Find candidate notes for the LLM
     candidates = _find_candidate_notes(vault_scan, title, [])
@@ -479,7 +510,7 @@ def file_capture(
         _emit(f"MOC updated: {moc_path.relative_to(vault)}")
 
     # Append log
-    log_path = append_log(vault, title, source_url, source_type, raw_path, topic_folder, captured_date=today)
+    log_path = append_log(vault, title, source_url, source_type, raw_path, topic_folder, captured_date=today, archive_info=archive_info)
     _emit(f"log updated: {log_path.relative_to(vault)}")
 
     return {
