@@ -449,19 +449,28 @@ class DocSpider(Spider):
         )
 
     def request_cancel(self):
-        """Idempotent graceful pause, safe from any thread and lifecycle stage.
+        """Idempotent cancel, safe from any thread and lifecycle stage.
 
         pause() raises before the engine exists (RuntimeError) or before
         Spider.__init__ ran (AttributeError); both are swallowed because the
         parse-time backstop retries once the engine is live. _pause_sent is
-        only set on success so exactly ONE engine pause is ever sent — a
-        second request_pause() escalates to a force-stop mid-write.
+        only set on success so exactly ONE cancel sequence is ever sent.
+
+        Unlike CLI Ctrl+C (which goes through scrapling's SIGINT handler and
+        lets the user press Ctrl+C again to escalate), RPC cancel is an
+        explicit user action that must terminate promptly. We call pause()
+        twice in succession: the first sets _pause_requested (graceful), the
+        second sets _force_stop (immediate). Without force-stop, scrapling's
+        engine loop waits indefinitely for in-flight requests to drain — on
+        Windows this can hang forever when the ProactorEventLoop doesn't
+        cancel pending I/O cleanly.
         """
         with self._cancel_lock:
             if self._pause_sent:
                 return
             try:
-                self.pause()
+                self.pause()  # first: _pause_requested = True
+                self.pause()  # second: _force_stop = True (escalate immediately)
                 self._pause_sent = True
             except (RuntimeError, AttributeError):
                 pass

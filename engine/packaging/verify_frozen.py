@@ -230,6 +230,7 @@ def main(binary, *, dev=False):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
         env={
             **os.environ,
             "IOFAST_OPENROUTER_URL": f"{base}/api/chat",
@@ -569,16 +570,33 @@ def main(binary, *, dev=False):
         components.get("path") == support,
         "browser_status: components rooted in IOFAST_SUPPORT_DIR",
     )
-    expect(
-        any(
-            m.get("method") == "event"
-            and m["params"].get("rid") == 4
-            and m["params"].get("type") == "warning"
-            and "static tier only" in (m["params"].get("message") or "")
-            for m in messages
-        ),
-        "frozen scrape warned 'static tier only' (fast-path stayed False)",
-    )
+    if sys.platform == "win32":
+        # Windows frozen builds use patchright with system Chrome/Edge
+        # (browser_helper.py), so browsers_available() returns True and no
+        # static-only warning fires. Verify the opposite: browser_status
+        # reports nothing installed (fresh support dir) yet the scrape did
+        # NOT warn about missing browsers (system channel was used).
+        expect(
+            not any(
+                m.get("method") == "event"
+                and m["params"].get("rid") == 4
+                and m["params"].get("type") == "warning"
+                and "static tier only" in (m["params"].get("message") or "")
+                for m in messages
+            ),
+            "frozen scrape did NOT warn 'static tier only' on Windows (system browser available)",
+        )
+    else:
+        expect(
+            any(
+                m.get("method") == "event"
+                and m["params"].get("rid") == 4
+                and m["params"].get("type") == "warning"
+                and "static tier only" in (m["params"].get("message") or "")
+                for m in messages
+            ),
+            "frozen scrape warned 'static tier only' (fast-path stayed False)",
+        )
 
     # --- 11: the CLI entry point sets storage env before scraping. ---
     cli_out = tempfile.mkdtemp(prefix="iofast-frozen-cli-")
@@ -597,18 +615,36 @@ def main(binary, *, dev=False):
             cli_events.append(json.loads(line))
         except ValueError:
             failures.append(f"non-JSON line on CLI --json stdout: {line!r}")
-    warning = next(
-        (
-            e.get("message", "")
-            for e in cli_events
-            if e.get("type") == "warning" and "static tier only" in e.get("message", "")
-        ),
-        "",
-    )
-    expect(
-        os.path.join(cli_support, "browsers") in warning,
-        f"CLI scrape looked for chromium under app support (warning: {warning!r})",
-    )
+    if sys.platform == "win32":
+        # Windows frozen builds use patchright with system Chrome/Edge
+        # (browser_helper.py), so browsers_available() returns True and no
+        # static-only warning fires. Verify the opposite: the CLI did NOT
+        # warn about missing browsers (system channel was used).
+        cli_static_warning = next(
+            (
+                e.get("message", "")
+                for e in cli_events
+                if e.get("type") == "warning" and "static tier only" in e.get("message", "")
+            ),
+            "",
+        )
+        expect(
+            not cli_static_warning,
+            f"CLI scrape did NOT warn 'static tier only' on Windows (system browser available; got warning: {cli_static_warning!r})",
+        )
+    else:
+        warning = next(
+            (
+                e.get("message", "")
+                for e in cli_events
+                if e.get("type") == "warning" and "static tier only" in e.get("message", "")
+            ),
+            "",
+        )
+        expect(
+            os.path.join(cli_support, "browsers") in warning,
+            f"CLI scrape looked for chromium under app support (warning: {warning!r})",
+        )
 
     proc.stdin.close()  # EOF -> clean shutdown
     proc.wait(timeout=30)

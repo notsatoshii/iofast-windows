@@ -379,6 +379,55 @@ def test_cancel_twice_is_idempotent_one_engine_pause(monkeypatch):
     assert got[2]["result"] == got[3]["result"] == {"cancelling": True, "rid": 1}
 
 
+def test_request_cancel_escalates_to_force_stop():
+    """request_cancel() must call pause() twice: first sets _pause_requested
+    (graceful), second sets _force_stop (immediate). Without force-stop,
+    scrapling's engine loop waits indefinitely for in-flight requests to
+    drain — on Windows this can hang forever (ProactorEventLoop doesn't
+    cancel pending I/O cleanly). RPC cancel is an explicit user action
+    that must terminate promptly, unlike CLI Ctrl+C where the user can
+    press again to escalate."""
+    from iofast_engine.spider import DocSpider
+
+    pause_calls = []
+
+    class FakeEngine:
+        _pause_requested = False
+        _force_stop = False
+
+        def request_pause(self):
+            if self._force_stop:
+                return
+            if self._pause_requested:
+                self._force_stop = True
+                pause_calls.append("force")
+            else:
+                self._pause_requested = True
+                pause_calls.append("graceful")
+
+    spider = DocSpider.__new__(DocSpider)
+    spider._cancel_lock = threading.Lock()
+    spider._pause_sent = False
+    spider._engine = FakeEngine()
+
+    # Stub pause() to delegate to the fake engine (real pause() checks
+    # _engine existence and calls _engine.request_pause()).
+    def fake_pause():
+        spider._engine.request_pause()
+
+    spider.pause = fake_pause
+
+    spider.request_cancel()
+    assert pause_calls == ["graceful", "force"], (
+        f"request_cancel must escalate: got {pause_calls}"
+    )
+    assert spider._pause_sent is True
+
+    # Second call is a no-op (_pause_sent guard).
+    spider.request_cancel()
+    assert pause_calls == ["graceful", "force"], "second request_cancel must be no-op"
+
+
 def test_clamps_reach_runner(monkeypatch):
     seen = {}
 
