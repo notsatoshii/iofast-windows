@@ -85,3 +85,47 @@ CLI hook: `engine/src/iofast_engine/cli_vault.py` (standalone, merged into cli.p
 - `win/shell`  step 1 + 5 (app, packaging, Windows fixes)
 - `src/web-yt-gh` steps 2 + 3 (sources package, registry, CLI, RPC)
 - `src/social` step 4 (instagram.py, x.py, social_browser.py, signin RPC)
+- `feat/intake` step 7 (watch list + chat history import)
+
+## Step 7: Extras
+
+### Watch list
+
+Monitor URLs for new content on a daily or weekly schedule. Stored in
+`%APPDATA%\iofast\watch.json` (Windows) or `~/Library/Application Support/iofast/watch.json`
+(macOS). Each entry auto-detects kind from URL: YouTube channel/playlist (yt-dlp flat
+listing), GitHub repo (releases + README SHA), website (RSS/Atom if linked, else sitemap
+lastmod, else page text hash), X/Instagram profile (requires sign-in via existing social
+browser; skips with clear message if not signed in).
+
+First run records a baseline and captures nothing unless `--backfill N`. Subsequent runs
+surface only genuinely new items. One failing entry never stops others. New items go through
+normal `grab` and optionally vault filing when the entry has `--file`. Results logged to
+`Research (RAW)/iofast/log.md` when filing. Max 10 new items per run, human pacing.
+
+CLI: `iofast watch add <url> [--every daily|weekly] [--file] [--limit N]`,
+`iofast watch list`, `iofast watch remove <id>`, `iofast watch run [--if-due] [--backfill N]`.
+RPC: `watch.add`, `watch.list`, `watch.remove`, `watch.run`.
+
+Module: `engine/src/iofast_engine/watch/` (store.py, checker.py, runner.py, watch_rpc.py).
+CLI hook: `engine/src/iofast_engine/cli_watch.py`.
+
+### Chat history import
+
+Import personal chat exports into markdown. No UNTRUSTED banner — these are Eric's own
+chats and never leave the chosen LLM backend. Raw copies go to
+`Research (RAW)/AI chats/<ChatGPT|Claude>/`.
+
+- **ChatGPT**: parses `conversations.json` mapping tree, follows final branch only, skips
+  system messages. Each conversation → one markdown file with title, date, speaker labels.
+- **Claude**: parses `conversations.json` chat_messages list. Same output format.
+
+Dry run prints counts (conversations, messages, date range, trivial skips for <4 messages
+or <300 chars) and LLM-call estimate. Flags: `--since YYYY-MM-DD`, `--limit N`,
+`--min-messages N`. Resumable via progress file (re-running skips done conversation IDs).
+
+CLI: `iofast import chatgpt <export.zip>`, `iofast import claude <export.zip>`.
+RPC: `import.chatgpt`, `import.claude`.
+
+Module: `engine/src/iofast_engine/import_chat/` (chatgpt.py, claude.py, writer.py, import_rpc.py).
+CLI hook: `engine/src/iofast_engine/cli_import.py`.

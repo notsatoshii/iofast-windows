@@ -301,6 +301,39 @@ Lints the vault for broken links, orphans, missing frontmatter, singleton tags, 
 `fix: true` repairs MOC index drift only. Synchronous.
 Result: `{vault_path, total_notes, broken_links, orphans, missing_frontmatter, singleton_tags, moc_drift, fixed_mocs}`.
 
+### `watch.add`
+Params: `{"url": str, "every": "daily"|"weekly", "file": bool=false, "limit": int=10}`.
+Adds a URL to the watch list. Detects kind from URL (youtube, github, web, instagram, x).
+Synchronous. Result: `{added: true, entry: {...}}`.
+
+### `watch.list`
+Params: `{}`.
+Lists all watch entries. Synchronous. Result: `{entries: [...], count: int}`.
+
+### `watch.remove`
+Params: `{"id": str}`.
+Removes a watch entry by id prefix. Synchronous. Result: `{removed: bool, id: str}`.
+
+### `watch.run`
+Params: `{"if_due": bool=false, "backfill": int=0}`.
+Runs due watch checks. Each entry is checked for new content via RSS, GitHub API,
+yt-dlp flat listing, or page hash. New items are grabbed and optionally vault-filed.
+One failing entry never stops others. Runs in a worker thread (`-32000` while running).
+Result: `{checked: int, new_items: int, errors: int, results: [...]}`.
+
+### `import.chatgpt`
+Params: `{"path": str, "dry_run": bool=false, "since": str|null, "limit": int|null, "min_messages": int=4}`.
+Imports a ChatGPT data-export zip. Parses conversations.json mapping tree (final branch only).
+Each conversation becomes one markdown file (no UNTRUSTED banner — personal chats).
+Resumable via progress file. Runs in a worker thread.
+Result: `{written, skipped, errors, total_messages, total_chars, paths, conversations_found}`.
+
+### `import.claude`
+Params: `{"path": str, "dry_run": bool=false, "since": str|null, "limit": int|null, "min_messages": int=4}`.
+Imports a Claude data-export zip. Parses conversations.json chat_messages list.
+Same output format as import.chatgpt. Runs in a worker thread.
+Result: `{written, skipped, errors, total_messages, total_chars, paths, conversations_found}`.
+
 ## Notifications (event stream)
 
 Every event the engine `emit()`s is forwarded verbatim as a notification:

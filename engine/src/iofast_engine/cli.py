@@ -88,6 +88,14 @@ def main(argv=None):
     from .cli_vault import add_vault_subcommands
     add_vault_subcommands(sub)
 
+    # Watch subcommands (step 7): add, list, remove, run
+    from .cli_watch import add_watch_subcommands
+    add_watch_subcommands(sub)
+
+    # Import subcommands (step 7): chatgpt, claude
+    from .cli_import import add_import_subcommands
+    add_import_subcommands(sub)
+
     sub.add_parser("rpc", help="JSON-RPC 2.0 sidecar server over stdio (see docs/RPC.md)")
 
     browsers_p = sub.add_parser(
@@ -128,6 +136,16 @@ def main(argv=None):
         from .cli_vault import run_vault
 
         return run_vault(args)
+
+    if args.command == "watch":
+        from .cli_watch import run_watch
+
+        return run_watch(args)
+
+    if args.command == "import":
+        from .cli_import import run_import
+
+        return run_import(args)
 
     if args.command == "rpc":
         from .rpc import serve_stdio
