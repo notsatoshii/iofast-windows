@@ -1457,6 +1457,41 @@ async fn social_status(app: AppHandle, sc: State<'_, SidecarManager>) -> Result<
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn vault_check(app: AppHandle, sc: State<'_, SidecarManager>) -> Result<Value, String> {
+    sc.request(&app, "vault.check", json!({}))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn digest_make(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    week: Option<String>,
+) -> Result<Value, String> {
+    let params = json!({ "week": week });
+    sc.request(&app, "digest.make", params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn watch_run(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    if_due: Option<bool>,
+    backfill: Option<u32>,
+) -> Result<Value, String> {
+    let params = json!({
+        "if_due": if_due.unwrap_or(false),
+        "backfill": backfill.unwrap_or(0),
+    });
+    sc.request(&app, "watch.run", params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Scripted self-test: runs four checks without the Tauri app or screen control.
 /// Usage: iofast.exe --self-test
 #[cfg(target_os = "windows")]
@@ -2241,6 +2276,9 @@ fn main() {
             vault_ask,
             social_signin,
             social_status,
+            vault_check,
+            digest_make,
+            watch_run,
             about::about_info
         ])
         .setup(|app| {
