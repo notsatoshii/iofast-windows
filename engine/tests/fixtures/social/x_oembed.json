@@ -1,0 +1,9 @@
+{
+  "author_name": "Test User",
+  "author_url": "https://twitter.com/testuser",
+  "html": "<blockquote><p>This is a test tweet with a link https://t.co/abc123 and some text.</p>&mdash; Test User (@testuser) <a href=\"https://twitter.com/testuser/status/1700000000000000000\">October 22, 2026</a></blockquote>",
+  "provider_name": "Twitter",
+  "provider_url": "https://twitter.com",
+  "type": "rich",
+  "version": "1.0"
+}

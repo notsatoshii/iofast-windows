@@ -197,9 +197,18 @@ async def test_instagram_profile_extraction(tmp_path):
 
 @pytest.mark.asyncio
 async def test_x_thread_extraction(tmp_path):
+    """Signed-in route is used when public routes fail; verifies DOM parsing."""
+    from iofast_engine.sources.social_public import PublicResult
+
     page = FakePage(FIXTURES / "x_thread.html")
     src = XSource()
     with patch(
+        "iofast_engine.sources.x.x_fetch_syndication",
+        new=AsyncMock(return_value=PublicResult(ok=False, error="HTTP 403")),
+    ), patch(
+        "iofast_engine.sources.x.x_fetch_oembed",
+        new=AsyncMock(return_value=PublicResult(ok=False, error="HTTP 403")),
+    ), patch(
         "iofast_engine.sources.x.open_page", new=AsyncMock(return_value=page)
     ), patch(
         "iofast_engine.sources.x.close_context", new=AsyncMock()
@@ -251,21 +260,35 @@ async def test_x_profile_extraction(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_instagram_wall_raises(tmp_path):
+async def test_instagram_wall_writes_error_when_all_routes_fail(tmp_path):
+    """When public routes fail AND signed-in browser hits a wall, we write an
+    error markdown file instead of raising — the caller sees failed=1."""
     from iofast_engine.sources.social_browser import SocialWallError
+    from iofast_engine.sources.social_public import PublicResult
 
     src = InstagramSource()
     with patch(
+        "iofast_engine.sources.instagram.ig_fetch_post_graphql",
+        new=AsyncMock(return_value=PublicResult(ok=False, error="gated")),
+    ), patch(
+        "iofast_engine.sources.instagram.ig_fetch_embed",
+        new=AsyncMock(return_value=PublicResult(ok=False, error="HTTP 403")),
+    ), patch(
         "iofast_engine.sources.instagram.open_page",
         new=AsyncMock(side_effect=SocialWallError("login wall")),
     ):
-        with pytest.raises(SocialWallError, match="login wall"):
-            await src.grab(
-                "https://www.instagram.com/p/WALLED/",
-                tmp_path,
-                GrabOptions(),
-                emit=lambda e: None,
-            )
+        result = await src.grab(
+            "https://www.instagram.com/p/WALLED/",
+            tmp_path,
+            GrabOptions(),
+            emit=lambda e: None,
+        )
+    assert result.ok == 0
+    assert result.failed == 1
+    md_file = tmp_path / "instagram" / "WALLED.md"
+    assert md_file.exists()
+    text = md_file.read_text(encoding="utf-8")
+    assert "Sign-in is required" in text
 
 
 # ---- RPC handlers ----

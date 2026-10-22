@@ -1,0 +1,11 @@
+{
+  "data": {
+    "xig_polaris_media": {
+      "if_not_gated_logged_out": null,
+      "gating_info": {
+        "title": "Restricted Video",
+        "description": "This content is only available for registered users who follow this account."
+      }
+    }
+  }
+}
