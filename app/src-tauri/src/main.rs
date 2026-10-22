@@ -344,6 +344,65 @@ fn place_panel(panel: &tauri::WebviewWindow) {
     let _ = panel.set_position(PhysicalPosition::new(x, y));
 }
 
+/// Read the active browser tab's URL via Windows UI Automation.
+/// Walks the foreground window's UIA tree looking for an Edit/Document control
+/// whose Value or Name looks like a URL. Supports Chrome, Edge, Brave, Firefox.
+/// Returns None when no browser is focused or UIA fails — the panel falls back
+/// to clipboard text in that case.
+#[cfg(target_os = "windows")]
+fn active_browser_url() -> Option<String> {
+    // PowerShell + UIAutomation is the pragmatic route: the windows-sys UIA
+    // bindings are incomplete in 0.59 and pulling a full COM UIA crate adds
+    // weight for a best-effort feature. The script runs in <100ms on modern
+    // hardware and only fires once per panel show.
+    let script = r#"
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+try {
+    $fg = [System.Windows.Automation.AutomationElement]::FocusedElement
+    if (-not $fg) { exit }
+    # Walk up to the top-level window so we can search its full tree.
+    $root = $fg
+    while ($root.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) {
+        $parent = [TreeWalker]::ParentWalker.GetParent($root)
+        if (-not $parent) { break }
+        $root = $parent
+    }
+    # Browser address bars are Edit or Document controls with a URL value.
+    $cond = New-Object System.Windows.Automation.OrCondition(
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Edit)),
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Document))
+    )
+    $elements = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+    foreach ($el in $elements) {
+        $val = $el.GetCurrentPropertyValue(
+            [System.Windows.Automation.ValuePattern]::ValueProperty, $true)
+        if ($val -and $val -match '^https?://') { Write-Output $val; exit }
+        $name = $el.Current.Name
+        if ($name -and $name -match '^https?://') { Write-Output $name; exit }
+    }
+} catch {}
+"#;
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let url = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    (!url.is_empty()).then_some(url)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn active_browser_url() -> Option<String> {
+    None
+}
+
 fn show_panel(app: &AppHandle) {
     let Some(panel) = app.get_webview_window("panel") else {
         return;
@@ -351,8 +410,15 @@ fn show_panel(app: &AppHandle) {
     place_panel(&panel);
     let _ = panel.show();
     let _ = panel.set_focus();
-    // Every show re-reads the clipboard: the whole pre-Enter pass hangs off this.
-    let _ = panel.emit("panel-shown", json!({ "clipboard": clipboard_text() }));
+    // Every show re-reads the clipboard and tries UIA for the active tab URL.
+    // The panel prefers the browser URL over clipboard when both arrive.
+    let _ = panel.emit(
+        "panel-shown",
+        json!({
+            "clipboard": clipboard_text(),
+            "active_url": active_browser_url(),
+        }),
+    );
 }
 
 fn hide_panel(app: &AppHandle) {
