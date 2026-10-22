@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 
-import { countdown, DEFAULT_THRESHOLD, overThreshold, type Boot } from "../lib";
+import { countdown, type Boot } from "../lib";
 import { parseTarget, scopePrefix } from "./scope";
 
 /** docs/RPC.md: `params` of an `event` notification IS the engine event dict. */
