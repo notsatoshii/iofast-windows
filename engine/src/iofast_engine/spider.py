@@ -460,10 +460,11 @@ class DocSpider(Spider):
         lets the user press Ctrl+C again to escalate), RPC cancel is an
         explicit user action that must terminate promptly. We call pause()
         twice in succession: the first sets _pause_requested (graceful), the
-        second sets _force_stop (immediate). Without force-stop, scrapling's
-        engine loop waits indefinitely for in-flight requests to drain — on
-        Windows this can hang forever when the ProactorEventLoop doesn't
-        cancel pending I/O cleanly.
+        second sets _force_stop (immediate). As a belt-and-suspenders measure
+        we also directly set the engine's _force_stop and _running flags —
+        on Windows frozen builds the anyio cancel_scope.cancel() triggered
+        by pause() may not interrupt in-flight I/O, so the engine loop must
+        see these flags on its next iteration to exit promptly.
         """
         with self._cancel_lock:
             if self._pause_sent:
@@ -474,6 +475,20 @@ class DocSpider(Spider):
                 self._pause_sent = True
             except (RuntimeError, AttributeError):
                 pass
+            # Direct flag injection: the async engine loop checks _force_stop
+            # and _running on every iteration. Setting them here guarantees the
+            # loop exits even if cancel_scope.cancel() doesn't interrupt the
+            # current await (observed on Windows frozen builds where anyio's
+            # ProactorEventLoop backend doesn't propagate cancellation to
+            # curl_cffi/httpx fetch calls).
+            engine = getattr(self, "_engine", None)
+            if engine is not None:
+                try:
+                    engine._force_stop = True
+                    engine._pause_requested = True
+                    engine._running = False
+                except Exception:
+                    pass
 
     async def _solve(self, url, depth, escalated):
         """Interactive CAPTCHA handoff: run the blocking headed solve off the

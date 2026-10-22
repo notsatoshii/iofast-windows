@@ -422,6 +422,11 @@ def test_request_cancel_escalates_to_force_stop():
         f"request_cancel must escalate: got {pause_calls}"
     )
     assert spider._pause_sent is True
+    # Direct engine flag injection: guarantees the async loop exits even
+    # if cancel_scope.cancel() doesn't interrupt in-flight I/O (Windows
+    # frozen builds).
+    assert spider._engine._force_stop is True
+    assert spider._engine._pause_requested is True
 
     # Second call is a no-op (_pause_sent guard).
     spider.request_cancel()
