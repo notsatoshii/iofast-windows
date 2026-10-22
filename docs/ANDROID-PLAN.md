@@ -26,21 +26,57 @@ and the target apps opt in.
 
 ## URL extraction, ranked by reliability
 
-Each extractor runs only when its package is the last foreground app. The
-accessibility service records `(package, url?, viewTreeText?)` on every window
-change; the trampoline reads the most recent entry.
+### Social apps (YouTube, X, Instagram): Share→Copy-link flow (rank 1)
 
-| Rank | Method | Apps | Notes |
-|---|---|---|---|
-| 1 | AssistContent.webUri | Chrome, Samsung Internet | Best signal when available; null for most non-browser apps |
-| 2 | Accessibility node tree: URL bar | Chrome (`com.android.chrome:id/url_bar`), Samsung Internet (`com.sec.android.app.sbrowser:id/url_bar`) | Reliable; read-only via a11y API |
-| 3 | Accessibility node tree: deep link / share text | YouTube (`youtube.com/watch`, `youtu.be`), X (`x.com`, `twitter.com`), Instagram (`instagram.com/p`, `/reel`) | Pattern-match against visible text nodes; works because these apps render the canonical URL or a recognizable slug in the view tree even when the address bar is hidden |
-| 4 | Automate Share → Copy link | Any app with a share action | Last resort before screenshot; fragile (timing, UI changes); logged but not auto-triggered in v1 — user falls back to manual share-sheet capture |
-| 5 | Screenshot + OCR | Anything | True last resort; out of scope for v1 (no ML Kit dependency); documented as v2 escape hatch |
+These apps do NOT render their canonical URL as visible text in the view tree.
+The accessibility service drives the app's own Share → Copy link action:
 
-Extractors are stateless functions: `(packageName, viewTreeSnapshot) -> String?`.
-Unit tests run against recorded JSON fixtures of real view trees from each
-target app (captured once via `adb shell uiautomator dump` and sanitized).
+1. Trampoline signals the accessibility service with the target package.
+2. Service finds the Share button by resource id or content description
+   (Korean: 공유, 링크 복사; English: Share, Copy link) and clicks it.
+3. Service finds and clicks "Copy link" in the share sheet.
+4. Trampoline polls the clipboard (bounded: 3 s total, 200 ms intervals).
+5. ClipboardCleaner validates the URL against the app's pattern, strips
+   tracking params (si=, igsh=, utm_*, s=/t= on X), normalizes to canonical
+   form, and restores the previous clipboard content.
+6. If the share sheet is still open after timeout, service sends
+   GLOBAL_ACTION_BACK to dismiss it. Never loops.
+
+View-tree text matching remains as a fallback for these apps but is expected
+to return null on real devices.
+
+### Browsers (Chrome, Samsung Internet): URL bar route (rank 1)
+
+Browsers render the full URL in the address bar node. The accessibility
+service reads it directly from the view tree via regex matching.
+
+### Fallback: manual share sheet
+
+If neither automated path succeeds, the toast says "Couldn't find the link;
+use Share → iofast" directing Eric to use the share-sheet target manually.
+
+### Last resort: screenshot + OCR (out of scope for v1)
+
+True escape hatch for apps we cannot automate. Not implemented in v1.
+
+## Accessibility service design
+
+- Tracks per-package snapshots in a map; only stores relevant packages
+  (Chrome, Samsung Internet, YouTube, X, Instagram).
+- Ignores our own package, com.android.systemui, launchers, and keyboards
+  so the trampoline always reads the app that was in front just before the
+  side-key press.
+- Snapshots stale after 10 seconds; trampoline rejects older ones.
+- Config: canRetrieveWindowContent, flagReportViewIds,
+  flagRetrieveInteractiveWindows, canPerformGestures.
+- Disabled service: trampoline opens accessibility settings with explanation.
+
+## Fold2 specifics
+
+- One UI 5.1 / Android 13; side key double press → Open app.
+- Trampoline is exported, translucent theme, finishes immediately — no UI
+  flash on either cover screen or main screen.
+- Accessibility service works on both displays (same window events).
 
 ## Where the link goes
 
@@ -73,6 +109,31 @@ a `StubTransport` that always succeeds and logs. Three candidates, none chosen:
 Eric picks after v1 ships and he has tried the queue + share sheet. The
 interface is ready to swap implementations without touching extractors or UI.
 
+## Capturing real view-tree fixtures (for Eric)
+
+Current test fixtures are synthetic. Replace them with real dumps from the
+Fold2 once it is connected over USB with developer options + USB debugging on:
+
+```bash
+# YouTube: open a video, then:
+adb shell uiautomator dump /sdcard/yt.xml && adb pull /sdcard/yt.xml android/app/src/test/resources/fixtures/youtube_viewtree_real.xml
+
+# X: open a post, then:
+adb shell uiautomator dump /sdcard/x.xml && adb pull /sdcard/x.xml android/app/src/test/resources/fixtures/x_viewtree_real.xml
+
+# Instagram: open a post or reel, then:
+adb shell uiautomator dump /sdcard/ig.xml && adb pull /sdcard/ig.xml android/app/src/test/resources/fixtures/instagram_viewtree_real.xml
+
+# Chrome: open any page, then:
+adb shell uiautomator dump /sdcard/chrome.xml && adb pull /sdcard/chrome.xml android/app/src/test/resources/fixtures/chrome_viewtree_real.xml
+
+# Samsung Internet: open any page, then:
+adb shell uiautomator dump /sdcard/sbrowser.xml && adb pull /sdcard/sbrowser.xml android/app/src/test/resources/fixtures/samsung_internet_viewtree_real.xml
+```
+
+After pulling, sanitize (remove personal data) and update ExtractorTest to
+load the `_real.xml` fixtures alongside the synthetic ones.
+
 ## Out of scope for v1
 
 - Screenshot + OCR capture path
@@ -87,6 +148,6 @@ interface is ready to swap implementations without touching extractors or UI.
 - Kotlin, Gradle (Kotlin DSL), minSdk 30, targetSdk 34
 - No Compose yet (XML layouts for v1 simplicity; migrate later)
 - Dependencies: Room, Material3, AndroidX Core KTX, Lifecycle
-- Tests: JUnit 5 + Robolectric for extractor unit tests against fixtures
+- Tests: JUnit 4 + Robolectric for extractor unit tests against fixtures
 - CI: `./gradlew assembleDebug testDebugUnitTest` must pass
 - No phone required to build or test

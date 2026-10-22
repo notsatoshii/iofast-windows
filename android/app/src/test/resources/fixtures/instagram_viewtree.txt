@@ -1,10 +1,19 @@
-Instagram
-Home
-Search
-Reels
-Profile
+SYNTHETIC fixture based on Instagram Android app v308.x view hierarchy.
+Real app does NOT render canonical URL as visible text in feed or reel view.
+Contains: username, caption fragment, resource ids, content descriptions.
+Source: public Instagram APK analysis + community a11y dumps.
+
+com.instagram.android:id/feed_header
+com.instagram.android:id/username
 natgeo
-National Geographic
-https://www.instagram.com/p/ABC123def45/
-Liked by user123 and 45,678 others
+com.instagram.android:id/caption_text
+National Geographic · The beauty of...
+com.instagram.android:id/like_count
+45,678 likes
+com.instagram.android:id/comment_count
 View all 1,234 comments
+com.instagram.android:id/share_button contentDescription="Share"
+com.instagram.android:id/more_button contentDescription="More options"
+com.instagram.android:id/save_button contentDescription="Save"
+com.instagram.android:id/media_container
+com.instagram.android:id/reel_progress_bar

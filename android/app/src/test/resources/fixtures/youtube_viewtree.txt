@@ -1,11 +1,25 @@
-YouTube
-Home
-Shorts
-Subscriptions
-Library
-How to Build a PC - Complete Guide
-https://www.youtube.com/watch?v=dQw4w9WgXcQ
-1.2M views • 3 days ago
-Subscribe
-Like
-Share
+SYNTHETIC fixture based on YouTube Android app v18.x view hierarchy.
+Real app does NOT render canonical URL as visible text.
+Contains: video title, channel name, resource ids, content descriptions.
+Source: public YouTube APK analysis + community a11y dumps.
+
+com.google.android.youtube:id/player_fragment_container
+com.google.android.youtube:id/video_title
+How to Build a PC - Complete Guide 2024
+com.google.android.youtube:id/channel_name
+TechBuilder
+com.google.android.youtube:id/subscriber_count
+1.2M subscribers
+com.google.android.youtube:id/watch_time
+12:34
+com.google.android.youtube:id/view_count
+892K views
+com.google.android.youtube:id/upload_date
+3 days ago
+com.google.android.youtube:id/like_button contentDescription="Like"
+com.google.android.youtube:id/share_button contentDescription="Share"
+com.google.android.youtube:id/more_button contentDescription="More options"
+com.google.android.youtube:id/comments_header
+Comments 2,341
+com.google.android.youtube:id/recommended_section
+Up next

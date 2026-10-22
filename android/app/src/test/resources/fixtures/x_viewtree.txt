@@ -1,9 +1,18 @@
-X
-For You
-Following
-Trending
-elonmusk
-@elonmusk · 2h
+SYNTHETIC fixture based on X (Twitter) Android app v10.x view hierarchy.
+Real app does NOT render canonical URL as visible text in the timeline.
+Contains: tweet text, handle, resource ids, content descriptions.
+Source: public X APK analysis + community a11y dumps.
+
+com.twitter.android:id/tweet_container
+com.twitter.android:id/user_handle
+@elonmusk
+com.twitter.android:id/tweet_text
 Big announcement coming tomorrow! 🚀
-https://x.com/elonmusk/status/1234567890123456789
-12K replies · 45K reposts · 230K likes
+com.twitter.android:id/timestamp
+2h
+com.twitter.android:id/reply_count contentDescription="12K replies"
+com.twitter.android:id/retweet_count contentDescription="45K reposts"
+com.twitter.android:id/like_count contentDescription="230K likes"
+com.twitter.android:id/share_button contentDescription="Share"
+com.twitter.android:id/more_button contentDescription="More"
+com.twitter.android:id/analytics_link contentDescription="View analytics"
