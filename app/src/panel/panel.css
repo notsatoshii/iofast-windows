@@ -345,6 +345,49 @@ body.panel-window {
   outline-offset: 1px;
 }
 
+/* --- source badge --------------------------------------------------------- */
+
+.badge {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- file-to-vault toggle ------------------------------------------------- */
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 16px;
+  border-top: 1px solid var(--hairline);
+  color: var(--dim);
+  font-size: 12px;
+  cursor: default;
+}
+
+.toggle input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.toggle input[type="checkbox"]:disabled {
+  opacity: 0.45;
+}
+
+/* --- warning banner (needs sign-in) -------------------------------------- */
+
+.banner.warn {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--fg);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .panel[data-running="1"] .field::after,
   .pulse {

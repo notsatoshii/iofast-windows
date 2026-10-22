@@ -244,6 +244,15 @@ async fn sidecar_estimate(
 /// skip a tick instead of firing a request it knows will be refused.
 static SCRAPE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
+/// Same as SCRAPE_IN_FLIGHT but for `grab` requests. The engine serialises
+/// grabs on the same worker thread, so this prevents the scheduler from
+/// racing a manual grab with an auto-scheduled one.
+static GRAB_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn grab_in_flight() -> bool {
+    GRAB_IN_FLIGHT.load(Ordering::SeqCst)
+}
+
 pub(crate) fn scrape_in_flight() -> bool {
     SCRAPE_IN_FLIGHT.load(Ordering::SeqCst)
 }
@@ -390,6 +399,139 @@ async fn sidecar_scrape_start(
         resume == Some(true),
         true, // manual runs always honour the Settings proxy
         interactive == Some(true),
+    )
+}
+
+/// Synchronous URL → source routing. Answered on the engine main thread, no
+/// network, no worker — safe to await inline. The panel calls this on show to
+/// pick the source badge and decide whether to warn about sign-in.
+#[tauri::command]
+async fn sidecar_detect(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    url: String,
+) -> Result<Value, String> {
+    sc.request(&app, "detect", json!({ "url": url })).await
+}
+
+/// Fire one `grab` and wire its lifecycle events, returning the request id
+/// immediately — the result arrives later on `grab-done`. Mirrors `fire_scrape`
+/// but routes through the multi-source `grab` method (docs/RPC.md).
+pub(crate) fn fire_grab(
+    app: &AppHandle,
+    sc: &SidecarManager,
+    url: &str,
+    out: &str,
+    mode: Option<&str>,
+    limit: Option<i64>,
+    lang: Option<&str>,
+    file: bool,
+    vault: Option<&str>,
+) -> Result<u64, String> {
+    let mut params = json!({ "url": url, "out": out, "file": file });
+    if let Some(m) = mode {
+        params["mode"] = json!(m);
+    }
+    if let Some(l) = limit {
+        params["limit"] = json!(l);
+    }
+    if let Some(lg) = lang {
+        params["lang"] = json!(lg);
+    }
+    if let Some(v) = vault {
+        params["vault"] = json!(v);
+    }
+    // API-key handoff mirrors scrape: per-run, in the body, never argv.
+    let env = store::scrape_env();
+    if !env.is_empty() {
+        params["env"] = Value::Object(env);
+    }
+    let (rid, rx) = sc.start_request(app, "grab", params)?;
+    GRAB_IN_FLIGHT.store(true, Ordering::SeqCst);
+    let _ = app.emit("grab-started", json!({ "rid": rid, "url": url, "out": out }));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let payload = match rx.await {
+            Ok(Ok(result)) => json!({ "rid": rid, "result": result }),
+            Ok(Err(message)) => json!({ "rid": rid, "error": message }),
+            Err(_) => json!({ "rid": rid, "error": "sidecar exited before replying" }),
+        };
+        GRAB_IN_FLIGHT.store(false, Ordering::SeqCst);
+        let _ = tauri::Emitter::emit(&app, "grab-done", payload.clone());
+        #[cfg(target_os = "windows")]
+        {
+            let (title, body) = if payload.get("error").is_some() {
+                ("iofast", "Grab failed — check the library for details.")
+            } else {
+                ("iofast", "Grab complete.")
+            };
+            let script = format!(
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
+                 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null; \
+                 $xml = '<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>'; \
+                 $doc = New-Object Windows.Data.Xml.Dom.XmlDocument; $doc.LoadXml($xml); \
+                 $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('iofast'); \
+                 $toast = New-Object Windows.UI.Notifications.ToastNotification $doc; \
+                 $notifier.Show($toast)",
+                title, body
+            );
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let _ = std::process::Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let (title, body) = if payload.get("error").is_some() {
+                ("iofast", "Grab failed — check the library for details.")
+            } else {
+                ("iofast", "Grab complete.")
+            };
+            let script = format!(
+                "display notification \"{}\" with title \"{}\"",
+                body.replace('"', "\\\""),
+                title.replace('"', "\\\"")
+            );
+            let _ = std::process::Command::new("/usr/bin/osascript")
+                .args(["-e", &script])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    });
+    Ok(rid)
+}
+
+/// Returns the request id immediately; the run's result arrives later as a
+/// `grab-done` event. Mirrors `sidecar_scrape_start` for the multi-source path.
+#[tauri::command]
+async fn sidecar_grab_start(
+    app: AppHandle,
+    sc: State<'_, SidecarManager>,
+    url: String,
+    out: String,
+    mode: Option<String>,
+    limit: Option<i64>,
+    lang: Option<String>,
+    file: Option<bool>,
+    vault: Option<String>,
+) -> Result<u64, String> {
+    fire_grab(
+        &app,
+        &sc,
+        &url,
+        &out,
+        mode.as_deref(),
+        limit,
+        lang.as_deref(),
+        file == Some(true),
+        vault.as_deref(),
     )
 }
 
@@ -1652,6 +1794,8 @@ fn main() {
             sidecar_map,
             sidecar_estimate,
             sidecar_scrape_start,
+            sidecar_detect,
+            sidecar_grab_start,
             sidecar_push,
             sidecar_cancel,
             sidecar_browser_status,
