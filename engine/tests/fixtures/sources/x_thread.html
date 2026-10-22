@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>X Thread Fixture</title></head>
+<body>
+<main>
+  <article data-testid="tweet">
+    <a role="link" href="/testuser">testuser</a>
+    <div data-testid="tweetText">First post in the thread.</div>
+    <time datetime="2026-10-20T10:00:00Z">Oct 20</time>
+    <a href="/testuser/status/1111111111111111111">permalink</a>
+    <img src="https://pbs.twimg.com/media/a.jpg" alt="Thread image">
+  </article>
+  <article data-testid="tweet">
+    <a role="link" href="/testuser">testuser</a>
+    <div data-testid="tweetText">Second post continuing the thought.</div>
+    <time datetime="2026-10-20T10:05:00Z">Oct 20</time>
+    <a href="/testuser/status/2222222222222222222">permalink</a>
+    <div data-testid="card.wrapper">
+      <a role="link" href="/quoted_user">quoted_user</a>
+      <div data-testid="tweetText">This is a quoted tweet.</div>
+    </div>
+  </article>
+</main>
+</body>
+</html>
