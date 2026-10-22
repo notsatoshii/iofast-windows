@@ -512,11 +512,12 @@ class DocSpider(Spider):
                 self._pause_sent = True
             except (RuntimeError, AttributeError):
                 pass
-            # Direct flag injection + event loop wake-up. On Windows frozen
-            # builds, setting flags from the RPC thread doesn't wake the
-            # engine loop stuck in an anyio await. We schedule a no-op
-            # callback via call_soon_threadsafe to force the loop to iterate
-            # and see the injected _pause_requested/_force_stop flags.
+            # Direct flag injection + engine.request_pause() via the event
+            # loop. On Windows frozen builds, setting flags from the RPC
+            # thread doesn't wake the engine loop stuck in an anyio await.
+            # We schedule request_pause() calls on the engine's event loop
+            # using call_soon_threadsafe so the flags are set from within
+            # the async context where the loop checks them immediately.
             engine = getattr(self, "_engine", None)
             if engine is not None:
                 try:
@@ -525,7 +526,10 @@ class DocSpider(Spider):
                     engine._running = False
                     loop = getattr(self, "_engine_loop", None)
                     if loop is not None and loop.is_running():
-                        loop.call_soon_threadsafe(lambda: None)
+                        # Call request_pause twice on the loop thread:
+                        # first sets _pause_requested, second sets _force_stop
+                        loop.call_soon_threadsafe(engine.request_pause)
+                        loop.call_soon_threadsafe(engine.request_pause)
                 except Exception:
                     pass
 
