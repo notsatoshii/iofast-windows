@@ -96,17 +96,21 @@ def strip_noise(html: str) -> str:
     return lxml_html.tostring(tree, encoding="unicode", method="html")
 
 
-def extract_markdown(html: str, url: str) -> str:
+def extract_markdown(html: str, url: str, *, _already_resolved: bool = False) -> str:
     """trafilatura markdown, favouring precision; empty string when it finds no article.
 
-    Links are resolved against the correct base (respecting <base href> and
-    preserving trailing slashes on directory URLs) before trafilatura sees them,
-    so relative ``../sibling/`` links never resolve against a truncated base.
+    When ``_already_resolved`` is True, links have already been made absolute
+    by the caller (page_content) and we skip re-resolution. This avoids
+    double-resolving and ensures <base href> is respected even when the
+    selector extraction strips the <head>.
     """
     import trafilatura
 
-    base = _resolve_base(html, url)
-    resolved_html = _make_links_absolute(html, base)
+    if _already_resolved:
+        resolved_html, base = html, url
+    else:
+        base = _resolve_base(html, url)
+        resolved_html = _make_links_absolute(html, base)
     try:
         text = trafilatura.extract(
             resolved_html,
@@ -138,6 +142,11 @@ def select_first(html: str, selectors) -> str:
     return ""
 
 
+def _normalize_bullets(text: str) -> str:
+    """Normalize markdownify's '*' bullets to '-' for consistency with trafilatura."""
+    return re.sub(r"(?m)^(\s*)\* ", r"\1- ", text)
+
+
 def _resolve_links_in_html(html: str, url: str) -> tuple[str, str]:
     """Resolve relative links in html against the correct base. Returns (resolved_html, base).
 
@@ -163,7 +172,9 @@ def page_content(html: str, url: str, selectors=CONTENT_SELECTORS):
 
     if selector_html:
         cleaned = strip_noise(selector_html)
-        text = extract_markdown(cleaned, base)
+        # Links already absolute from _resolve_links_in_html; tell extract_markdown
+        # not to re-resolve (which would break when select_first stripped <base>).
+        text = extract_markdown(cleaned, base, _already_resolved=True)
         if text:
             # Trafilatura precision can drop link-only lists that are real content.
             # Compare <li> counts: if the output has fewer list items than the HTML,
@@ -171,23 +182,28 @@ def page_content(html: str, url: str, selectors=CONTENT_SELECTORS):
             html_li_count = cleaned.lower().count("<li")
             out_li_count = text.count("\n- ") + text.count("\n* ") + (1 if text.startswith("- ") or text.startswith("* ") else 0)
             if html_li_count > 0 and out_li_count < html_li_count:
-                md_text = md(cleaned, heading_style="ATX").strip()
+                md_text = _normalize_bullets(md(cleaned, heading_style="ATX")).strip()
                 if md_text and len(md_text) > len(text):
                     return md_text, "selector+markdownify"
             return text, "selector+trafilatura"
-        text = md(cleaned, heading_style="ATX").strip()
+        text = _normalize_bullets(md(cleaned, heading_style="ATX")).strip()
         if text:
             return text, "selector+markdownify"
 
     cleaned_full = strip_noise(resolved_html)
-    text = extract_markdown(cleaned_full, base)
+    text = extract_markdown(cleaned_full, base, _already_resolved=True)
     if text:
         html_li_count = cleaned_full.lower().count("<li")
         out_li_count = text.count("\n- ") + text.count("\n* ") + (1 if text.startswith("- ") or text.startswith("* ") else 0)
         if html_li_count > 0 and out_li_count < html_li_count:
-            md_text = md(cleaned_full, heading_style="ATX").strip()
+            md_text = _normalize_bullets(md(cleaned_full, heading_style="ATX")).strip()
             if md_text and len(md_text) > len(text):
                 return md_text, "markdownify"
         return text, "trafilatura"
-    text = md(cleaned_full, heading_style="ATX").strip()
+    # Fallback to markdownify only when trafilatura found nothing BUT the HTML
+    # actually has content-bearing elements. An empty/boilerplate-only page must
+    # stay empty — inventing nav chrome as "content" is worse than skipping it.
+    has_content_elements = bool(re.search(r"<(p|h[1-6]|li|td|pre|blockquote)[\s>]", cleaned_full, re.I))
+    if has_content_elements:
+        text = _normalize_bullets(md(cleaned_full, heading_style="ATX")).strip()
     return (text, "markdownify") if text else ("", "none")

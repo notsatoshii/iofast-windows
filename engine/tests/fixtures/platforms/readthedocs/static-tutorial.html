@@ -28,7 +28,7 @@
     <link rel="canonical" href="https://docs.readthedocs.com/platform/stable/tutorial/index.html" />
       <script src="../_static/jquery.js?v=5d32c60e"></script>
       <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-      <script src="../_static/documentation_options.js?v=c6a011d1"></script>
+      <script src="../_static/documentation_options.js?v=3c77f071"></script>
       <script src="../_static/doctools.js?v=9bcbadda"></script>
       <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
       <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -120,6 +120,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../builds.html">Build process overview</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../build-customization.html">Build process customization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/build/direct-upload.html">Direct upload</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../reference/git-integration.html">Git integration (GitHub, GitLab, Bitbucket)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../pull-requests.html">Pull request previews</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../build-notifications.html">Build failure notifications</a></li>
@@ -145,7 +146,7 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reading documentation</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../downloadable-documentation.html">Offline formats (PDF, ePub, HTML)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../offline-formats.html">Offline formats (PDF, ePub, HTML)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../visual-diff.html">Visual diff</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../link-previews.html">Link previews</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/embedding-content.html">How to embed content from your documentation</a></li>
@@ -412,9 +413,10 @@ that creates recipes mixing random ingredients.</p>
 <h2>Triggering builds from pull requests<a class="headerlink" href="#triggering-builds-from-pull-requests" title="Link to this heading"></a></h2>
 <p>Read the Docs can <a class="reference internal" href="../pull-requests.html"><span class="doc">trigger builds from GitHub pull requests</span></a>
 and show you a preview of the documentation with those changes.</p>
-<p>To trigger builds from pull requests:</p>
+<p>This is enabled by default on new projects.
+You can check it from your project under <span class="guilabel">Settings</span> → <span class="guilabel">Pull request builds</span>.</p>
+<p>To see it in action:</p>
 <ol class="arabic">
-<li><p>Click the <span class="guilabel">Settings</span> link on the left under the <span class="guilabel">⚙ Admin</span> menu, check the “Build pull requests for this project” checkbox, and click the <span class="guilabel">Save</span> button at the bottom of the page.</p></li>
 <li><p>Make some changes to your documentation:</p>
 <ol class="arabic">
 <li><p>Navigate to your GitHub repository, locating the file <code class="docutils literal notranslate"><span class="pre">docs/source/index.rst</span></code>, and clicking on the ✏️ icon on the top-right with the tooltip “Edit this file” to open a web editor (more information <a class="reference external" href="https://docs.github.com/en/github/managing-files-in-a-repository/managing-files-on-github/editing-files-in-your-repository">on their documentation</a>).</p>
@@ -463,9 +465,9 @@ the build log will be opened. After building this link opens the documentation d
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
 
 <span class="nt">build</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ubuntu-22.04&quot;</span>
+<span class="w">  </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="s">"ubuntu-22.04"</span>
 <span class="w">  </span><span class="nt">tools</span><span class="p">:</span>
-<span class="hll"><span class="w">    </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3.8&quot;</span>
+<span class="hll"><span class="w">    </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="s">"3.8"</span>
 </span>
 <span class="nt">python</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">install</span><span class="p">:</span>
@@ -512,12 +514,12 @@ On the build page you opened before,
 click on the <span class="guilabel">View raw</span> link on the top right,
 which opens the build logs in plain text,
 and you will see several warnings:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>WARNING: [autosummary] failed to import &#39;lumache&#39;: no module named lumache
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>WARNING: [autosummary] failed to import 'lumache': no module named lumache
 ...
-WARNING: autodoc: failed to import function &#39;get_random_ingredients&#39; from module &#39;lumache&#39;; the following exception was raised:
-No module named &#39;lumache&#39;
-WARNING: autodoc: failed to import exception &#39;InvalidKindError&#39; from module &#39;lumache&#39;; the following exception was raised:
-No module named &#39;lumache&#39;
+WARNING: autodoc: failed to import function 'get_random_ingredients' from module 'lumache'; the following exception was raised:
+No module named 'lumache'
+WARNING: autodoc: failed to import exception 'InvalidKindError' from module 'lumache'; the following exception was raised:
+No module named 'lumache'
 </pre></div>
 </div>
 <p>To spot these warnings more easily and help you to address them,
@@ -528,9 +530,9 @@ add the <code class="docutils literal notranslate"><span class="pre">sphinx.fail
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
 
 <span class="nt">build</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ubuntu-22.04&quot;</span>
+<span class="w">  </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="s">"ubuntu-22.04"</span>
 <span class="w">  </span><span class="nt">tools</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3.8&quot;</span>
+<span class="w">    </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="s">"3.8"</span>
 
 <span class="nt">python</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">install</span><span class="p">:</span>
@@ -547,7 +549,7 @@ add the <code class="docutils literal notranslate"><span class="pre">sphinx.fail
 </section>
 <section id="installing-python-dependencies">
 <h3>Installing Python dependencies<a class="headerlink" href="#installing-python-dependencies" title="Link to this heading"></a></h3>
-<p>The reason <a class="reference external" href="https://www.sphinx-doc.org/en/master/usage/extensions/autosummary.html#module-sphinx.ext.autosummary" title="(in Sphinx v9.1.1)"><code class="docutils literal notranslate"><span class="pre">sphinx.ext.autosummary</span></code></a> and <a class="reference external" href="https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html#module-sphinx.ext.autodoc" title="(in Sphinx v9.1.1)"><code class="docutils literal notranslate"><span class="pre">sphinx.ext.autodoc</span></code></a> fail to import the <a class="reference internal" href="#making-build-warnings-more-visible"><span class="std std-ref">Making build warnings more visible</span></a>, is because the <code class="docutils literal notranslate"><span class="pre">lumache</span></code> module is not installed.</p>
+<p>The reason <a class="reference external" href="https://www.sphinx-doc.org/en/master/usage/extensions/autosummary.html#module-sphinx.ext.autosummary" title="(in Sphinx v9.3.0)"><code class="docutils literal notranslate"><span class="pre">sphinx.ext.autosummary</span></code></a> and <a class="reference external" href="https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html#module-sphinx.ext.autodoc" title="(in Sphinx v9.3.0)"><code class="docutils literal notranslate"><span class="pre">sphinx.ext.autodoc</span></code></a> fail to import the <a class="reference internal" href="#making-build-warnings-more-visible"><span class="std std-ref">Making build warnings more visible</span></a>, is because the <code class="docutils literal notranslate"><span class="pre">lumache</span></code> module is not installed.</p>
 <p>You will need to specify those installation requirements in <code class="docutils literal notranslate"><span class="pre">.readthedocs.yaml</span></code>.</p>
 <p>To install your project dependencies and make your code available to Sphinx,
 edit <code class="docutils literal notranslate"><span class="pre">.readthedocs.yaml</span></code>, add the <code class="docutils literal notranslate"><span class="pre">python.install</span></code>  section and commit it:</p>
@@ -737,14 +739,14 @@ by clicking on the <span class="guilabel">Download all data</span> button.</p>
 and Read the Docs:</p>
 <ul class="simple">
 <li><p>Learn more about the platform <a class="reference internal" href="../reference/features.html"><span class="doc">features</span></a>.</p></li>
-<li><p>Learn about other supported documentation generators in the <a class="reference external" href="https://www.sphinx-doc.org/en/master/tutorial/index.html" title="(in Sphinx v9.1.1)"><span class="xref std std-doc">Sphinx tutorial</span></a> or the <a class="reference external" href="https://www.mkdocs.org/user-guide/">MkDocs User Guide</a>.</p></li>
+<li><p>Learn about other supported documentation generators in the <a class="reference external" href="https://www.sphinx-doc.org/en/master/tutorial/index.html" title="(in Sphinx v9.3.0)"><span class="xref std std-doc">Sphinx tutorial</span></a> or the <a class="reference external" href="https://www.mkdocs.org/user-guide/">MkDocs User Guide</a>.</p></li>
 <li><p>See a list of Read the Docs <a class="reference internal" href="../examples.html"><span class="doc">Example projects</span></a>.</p></li>
 <li><p>Learn how to do specific tasks in the <a class="reference internal" href="../guides/index.html"><span class="doc">How-to guides A-Z</span></a>.</p></li>
 <li><p>Learn about private project support and other enterprise features
 in <a class="reference internal" href="../commercial/index.html"><span class="doc">our commercial service guide</span></a>.</p></li>
 <li><p>Join a global community of fellow <code class="xref py py-obj docutils literal notranslate"><span class="pre">documentarians</span></code> in <a class="reference external" href="https://www.writethedocs.org/">Write the Docs</a> and
 <a class="reference external" href="https://www.writethedocs.org/slack/" title="(in Write the Docs v1.0)"><span class="xref std std-doc">its Slack workspace</span></a>.</p></li>
-<li><p>Contribute to Read the Docs in <a class="reference external" href="https://docs.readthedocs.com/dev/latest/contribute.html" title="(in Read the Docs developer documentation v2026.07.28)"><span>Contributing to Read the Docs</span></a>, we appreciate it!</p></li>
+<li><p>Contribute to Read the Docs in <a class="reference external" href="https://docs.readthedocs.com/dev/latest/contribute.html" title="(in Read the Docs developer documentation v2026.10.21)"><span>Contributing to Read the Docs</span></a>, we appreciate it!</p></li>
 </ul>
 <p>Happy documenting!</p>
 </section>
