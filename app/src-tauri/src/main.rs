@@ -1257,6 +1257,52 @@ fn capture_selected_text() -> Option<String> {
 
 /// Get the foreground window's title bar text via GetWindowTextW.
 #[cfg(target_os = "windows")]
+/// Run WinRT OCR on PNG bytes. Tries ko-KR, then en-US, then user-profile
+/// languages. Returns the recognised text or an error string.
+fn ocr_png(png_bytes: &[u8]) -> Result<String, String> {
+    use windows::Graphics::Imaging::BitmapDecoder;
+    use windows::Media::Ocr::OcrEngine;
+    use windows::Globalization::Language;
+    use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
+
+    let stream = InMemoryRandomAccessStream::new().map_err(|e| e.to_string())?;
+    let writer = DataWriter::new().map_err(|e| e.to_string())?;
+    writer.WriteBytes(png_bytes).map_err(|e| e.to_string())?;
+    let buffer = writer.DetachBuffer().map_err(|e| e.to_string())?;
+    stream
+        .WriteAsync(&buffer)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    stream.Seek(0).map_err(|e| e.to_string())?;
+
+    let decoder = BitmapDecoder::CreateAsync(&stream)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    let bitmap = decoder
+        .GetSoftwareBitmapAsync()
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+
+    let engine = Language::CreateLanguage(&"ko-KR".into())
+        .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
+        .or_else(|_| {
+            Language::CreateLanguage(&"en-US".into())
+                .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
+        })
+        .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())
+        .map_err(|e| format!("OCR engine unavailable: {e}"))?;
+
+    let result = engine
+        .RecognizeAsync(&bitmap)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    Ok(result.Text().map_err(|e| e.to_string())?.to_string_lossy())
+}
+
 fn foreground_window_title() -> Option<String> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
 
@@ -1535,11 +1581,7 @@ async fn capture_screenshot(
             BI_RGB, DIB_RGB_COLORS, SRCCOPY,
         };
         use windows_sys::Win32::UI::WindowsAndMessaging::{GetDesktopWindow, GetSystemMetrics};
-        use windows::Media::Ocr::OcrEngine;
-        use windows::Graphics::Imaging::BitmapDecoder;
-        use windows::Storage::Streams::InMemoryRandomAccessStream;
-        use windows::Globalization::Language;
-
+        
         const SM_XVIRTUALSCREEN: i32 = 76;
         const SM_YVIRTUALSCREEN: i32 = 77;
         const SM_CXVIRTUALSCREEN: i32 = 78;
@@ -1664,45 +1706,11 @@ async fn capture_screenshot(
         let filepath = captures_dir.join(&filename);
         std::fs::write(&filepath, &png_bytes).map_err(|e| e.to_string())?;
 
-        // Run WinRT OCR on the captured image.
-        let ocr_text = tokio::task::spawn_blocking(move || -> Result<String, String> {
-            // Write PNG bytes to an InMemoryRandomAccessStream for BitmapDecoder.
-            let stream = InMemoryRandomAccessStream::new().map_err(|e| e.to_string())?;
-            use windows::Storage::Streams::DataWriter;
-            let writer = DataWriter::new().map_err(|e| e.to_string())?;
-            writer.WriteBytes(&png_bytes).map_err(|e| e.to_string())?;
-            let buffer = writer.DetachBuffer().map_err(|e| e.to_string())?;
-            stream.WriteAsync(&buffer).map_err(|e| e.to_string())?
-                .get().map_err(|e| e.to_string())?;
-            stream.Seek(0).map_err(|e| e.to_string())?;
-
-            let decoder = BitmapDecoder::CreateAsync(&stream)
-                .map_err(|e| e.to_string())?
-                .get()
-                .map_err(|e| e.to_string())?;
-            let bitmap = decoder.GetSoftwareBitmapAsync().map_err(|e| e.to_string())?
-                .get().map_err(|e| e.to_string())?;
-
-            // Try Korean first, fall back to English, then user-profile default.
-            let engine = Language::CreateLanguage(&"ko-KR".into())
-                .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
-                .or_else(|_| {
-                    Language::CreateLanguage(&"en-US".into())
-                        .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
-                })
-                .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())
-                .map_err(|e| format!("OCR engine unavailable: {e}"))?;
-
-            let result = engine
-                .RecognizeAsync(&bitmap)
-                .map_err(|e| e.to_string())?
-                .get()
-                .map_err(|e| e.to_string())?;
-            let text = result.Text().map_err(|e| e.to_string())?.to_string_lossy();
-            Ok(text)
-        })
-        .await
-        .map_err(|e| format!("OCR spawn_blocking failed: {e}"))?;
+        // Run WinRT OCR on the captured PNG via shared helper.
+        let png_for_ocr = png_bytes.clone();
+        let ocr_text = tokio::task::spawn_blocking(move || ocr_png(&png_for_ocr))
+            .await
+            .map_err(|e| format!("OCR spawn_blocking failed: {e}"))?;
 
         let ocr_text = match ocr_text {
             Ok(t) => t,
@@ -2412,25 +2420,9 @@ fn run_self_test() {
             failed += 1;
         }
 
-        // Test WinRT OCR by rendering known text into a bitmap and reading it back.
-        let ocr_ok = (|| -> bool {
-            use windows::Media::Ocr::OcrEngine;
-            use windows::Globalization::Language;
-            use windows::Graphics::Imaging::{BitmapEncoder, BitmapPixelFormat, SoftwareBitmap};
-            use windows::Storage::Streams::{InMemoryRandomAccessStream, DataWriter};
-            use windows::Foundation::Collections::IVector;
-
-            // Create an OcrEngine first — fail fast if unavailable.
-            let engine = Language::CreateLanguage(&"en-US".into())
-                .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
-                .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages());
-            let engine = match engine {
-                Ok(e) => e,
-                Err(_) => return false,
-            };
-
-            // Render "iofast 4217" as white text on black background using GDI,
-            // then convert to SoftwareBitmap for OCR.
+        // Test WinRT OCR by rendering known text into a GDI bitmap, encoding
+        // it as PNG (the real capture path uses PNG), and running ocr_png().
+        let ocr_result: Result<String, String> = (|| -> Result<String, String> {
             unsafe {
                 use windows_sys::Win32::Graphics::Gdi::*;
                 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -2438,15 +2430,15 @@ fn run_self_test() {
                 let w = 400i32;
                 let h = 80i32;
                 let hdc_screen = GetDC(GetDesktopWindow());
-                if hdc_screen.is_null() { return false; }
+                if hdc_screen.is_null() { return Err("GetDC failed".into()); }
                 let hdc_mem = CreateCompatibleDC(hdc_screen);
-                if hdc_mem.is_null() { ReleaseDC(GetDesktopWindow(), hdc_screen); return false; }
+                if hdc_mem.is_null() { ReleaseDC(GetDesktopWindow(), hdc_screen); return Err("CreateCompatibleDC failed".into()); }
                 let hbitmap = CreateCompatibleBitmap(hdc_screen, w, h);
-                if hbitmap.is_null() { DeleteDC(hdc_mem); ReleaseDC(GetDesktopWindow(), hdc_screen); return false; }
+                if hbitmap.is_null() { DeleteDC(hdc_mem); ReleaseDC(GetDesktopWindow(), hdc_screen); return Err("CreateCompatibleBitmap failed".into()); }
                 let old_bmp = SelectObject(hdc_mem, hbitmap);
 
                 // Black background
-                let brush = CreateSolidBrush(0x00000000); // RGB(0,0,0)
+                let brush = CreateSolidBrush(0x00000000);
                 let old_brush = SelectObject(hdc_mem, brush);
                 let rect = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: w, bottom: h };
                 FillRect(hdc_mem, &rect, brush);
@@ -2454,7 +2446,7 @@ fn run_self_test() {
                 DeleteObject(brush);
 
                 // White text
-                SetTextColor(hdc_mem, 0x00FFFFFF); // RGB(255,255,255)
+                SetTextColor(hdc_mem, 0x00FFFFFF);
                 SetBkMode(hdc_mem, TRANSPARENT as i32);
                 let text: Vec<u16> = "iofast 4217".encode_utf16().collect();
                 let font_size = 36i32;
@@ -2468,7 +2460,7 @@ fn run_self_test() {
                     DeleteObject(hfont);
                 }
 
-                // Read pixels via GetDIBits
+                // Read BGRA pixels via GetDIBits
                 let mut bmi: BITMAPINFO = std::mem::zeroed();
                 bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
                 bmi.bmiHeader.biWidth = w;
@@ -2485,69 +2477,48 @@ fn run_self_test() {
                 DeleteDC(hdc_mem);
                 ReleaseDC(GetDesktopWindow(), hdc_screen);
 
-                if got == 0 { return false; }
+                if got == 0 { return Err("GetDIBits returned 0".into()); }
 
-                // Convert BGRA pixels to SoftwareBitmap (BGRA8 format).
-                // Create an InMemoryRandomAccessStream, write pixels, then
-                // use BitmapDecoder to get a SoftwareBitmap for OCR.
-                use windows::Storage::Streams::{InMemoryRandomAccessStream, DataWriter};
-                use windows::Graphics::Imaging::BitmapDecoder;
+                // GDI leaves alpha at 0; set all alpha bytes to 255 so PNG is opaque.
+                for a in pixels.chunks_exact_mut(4) {
+                    a[3] = 255;
+                }
 
-                let stream = match InMemoryRandomAccessStream::new() {
-                    Ok(s) => s,
-                    Err(_) => return false,
-                };
-                let writer = match DataWriter::CreateDataWriter(&stream) {
-                    Ok(w) => w,
-                    Err(_) => return false,
-                };
-                if writer.WriteBytes(&pixels).is_err() { return false; }
-                if writer.StoreAsync().map_err(|e| e.to_string()).and_then(|op| op.get().map_err(|e| e.to_string())).is_err() { return false; }
-                if writer.FlushAsync().map_err(|e| e.to_string()).and_then(|op| op.get().map_err(|e| e.to_string())).is_err() { return false; }
-                stream.Seek(0).ok();
+                // Encode BGRA pixels to PNG using the png crate.
+                let mut png_buf: Vec<u8> = Vec::new();
+                {
+                    let mut encoder = png::Encoder::new(&mut png_buf, w as u32, h as u32);
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let mut writer = encoder.write_header().map_err(|e| format!("PNG header: {e}"))?;
+                    // png crate expects RGBA; we have BGRA — swap B and R per pixel.
+                    let mut rgba = pixels.clone();
+                    for px in rgba.chunks_exact_mut(4) {
+                        px.swap(0, 2); // B <-> R
+                    }
+                    writer.write_image_data(&rgba).map_err(|e| format!("PNG write: {e}"))?;
+                }
 
-                let decoder = match BitmapDecoder::CreateAsync(&stream) {
-                    Ok(op) => match op.get() {
-                        Ok(d) => d,
-                        Err(_) => return false,
-                    },
-                    Err(_) => return false,
-                };
-                let sb = match decoder.GetSoftwareBitmapAsync() {
-                    Ok(op) => match op.get() {
-                        Ok(b) => b,
-                        Err(_) => return false,
-                    },
-                    Err(_) => return false,
-                };
-
-                // Run OCR
-                let result = engine.RecognizeAsync(&sb);
-                let result = match result {
-                    Ok(op) => match op.get() {
-                        Ok(r) => r,
-                        Err(_) => return false,
-                    },
-                    Err(_) => return false,
-                };
-
-                let text_result = match result.Text() {
-                    Ok(t) => t,
-                    Err(_) => return false,
-                };
-                let text_str: String = text_result.to_string_lossy();
-                // Must contain both "iofast" and "4217"
-                let lower = text_str.to_lowercase();
-                lower.contains("iofast") && lower.contains("4217")
+                // Run the same OCR path as the real screenshot capture.
+                ocr_png(&png_buf)
             }
         })();
 
-        if ocr_ok {
-            println!("PASS  screenshot-ocr: rendered 'iofast 4217' and OCR read it back");
-            passed += 1;
-        } else {
-            println!("FAIL  screenshot-ocr: OCR did not recover rendered text");
-            failed += 1;
+        match &ocr_result {
+            Ok(text) => {
+                let lower = text.to_lowercase();
+                if lower.contains("iofast") && lower.contains("4217") {
+                    println!("PASS  screenshot-ocr: OCR read '{}'", text.trim());
+                    passed += 1;
+                } else {
+                    println!("FAIL  screenshot-ocr: expected 'iofast' and '4217', got '{}'", text.trim());
+                    failed += 1;
+                }
+            }
+            Err(e) => {
+                println!("FAIL  screenshot-ocr: {}", e);
+                failed += 1;
+            }
         }
     }
 
