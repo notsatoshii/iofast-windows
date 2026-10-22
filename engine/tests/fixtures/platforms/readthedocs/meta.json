@@ -44,7 +44,7 @@
         "alt-svc": "h3=\":443\"; ma=86400"
       },
       "variant": "static",
-      "extracted_chars": 5744,
+      "extracted_chars": 5741,
       "synthetic": false
     },
     {
@@ -90,7 +90,7 @@
         "alt-svc": "h3=\":443\"; ma=86400"
       },
       "variant": "static",
-      "extracted_chars": 20514,
+      "extracted_chars": 20491,
       "synthetic": false
     }
   ],

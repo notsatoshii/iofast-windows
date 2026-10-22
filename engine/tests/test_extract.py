@@ -135,3 +135,33 @@ def test_github_403_rate_limit_message(monkeypatch, tmp_path):
     msg = errors[0]["message"]
     assert "rate limit" in msg.lower(), f"wrong message: {msg}"
     assert "resets" in msg.lower(), f"missing reset info: {msg}"
+
+
+def test_list_item_code_spans_keep_punctuation_tight():
+    from iofast_engine.extract import extract_markdown
+
+    html = (
+        "<html><body><article><ul>"
+        "<li>A single tool to replace <code>pip</code>, <code>pip-tools</code>, and more.</li>"
+        "<li>Fast <code>uv</code>.</li></ul><p>" + "filler text here. " * 30 + "</p>"
+        "<pre><code>x = f(a` ,b)</code></pre></article></body></html>"
+    )
+    text = extract_markdown(html, "https://example.com/")
+    assert "replace `pip`, `pip-tools`, and more." in text
+    assert "Fast `uv`." in text
+
+
+def test_code_span_fix_skips_fenced_blocks():
+    from iofast_engine.extract import _fix_code_span_punct
+
+    text = "- use `a` ,`b` .\n```\nprint(`a` ,`b` .)\n```"
+    assert _fix_code_span_punct(text) == "- use `a`, `b`.\n```\nprint(`a` ,`b` .)\n```"
+
+
+def test_link_punctuation_kept_tight():
+    from iofast_engine.extract import _fix_code_span_punct
+
+    assert _fix_code_span_punct("see [docs](https://x.io/a) , then [b](https://x.io/b) .") == (
+        "see [docs](https://x.io/a), then [b](https://x.io/b)."
+    )
+    assert _fix_code_span_punct("[a](https://x.io/a) ,[b](https://x.io/b)") == "[a](https://x.io/a), [b](https://x.io/b)"
