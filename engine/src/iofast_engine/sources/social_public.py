@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import math
 import re
 import subprocess
 import sys
@@ -224,12 +225,51 @@ async def x_fetch_syndication(status_id: str) -> PublicResult:
 
 
 def _x_compute_token(status_id: str) -> str:
-    """Compute the syndication token. Simple modular hash matching the widget."""
+    """Compute the syndication token the embed widget sends.
+
+    Port of react-tweet's getToken: ((id / 1e15) * PI).toString(36) with zeros
+    and the dot removed. X does not check it today, but may start to.
+    """
     try:
-        num = int(status_id)
-        return str(num % 10) + str((num >> 4) % 10)
+        x = (int(status_id) / 1e15) * math.pi
     except ValueError:
         return "0"
+    return re.sub(r"(0+|\.)", "", _js_float_to_base36(x))
+
+
+def _js_float_to_base36(x: float) -> str:
+    """Number.prototype.toString(36) for a positive float (V8's DoubleToRadixCString)."""
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    integer = int(x)
+    fraction = x - integer
+    out = ""
+    while True:
+        out = digits[integer % 36] + out
+        integer //= 36
+        if integer == 0:
+            break
+    # Emit fraction digits only while they are still meaningful for a double.
+    delta = max(0.5 * (math.nextafter(x, math.inf) - x), math.nextafter(0.0, 1.0))
+    if fraction >= delta:
+        frac = []
+        while True:
+            fraction *= 36
+            delta *= 36
+            digit = int(fraction)
+            frac.append(digit)
+            fraction -= digit
+            if (fraction > 0.5 or (fraction == 0.5 and digit & 1)) and fraction + delta > 1:
+                # Round up, carrying into earlier digits.
+                while frac:
+                    if frac[-1] + 1 < 36:
+                        frac[-1] += 1
+                        break
+                    frac.pop()
+                break
+            if fraction < delta:
+                break
+        out += "." + "".join(digits[d] for d in frac)
+    return out
 
 
 def _parse_x_syndication(body: dict, status_id: str) -> dict:

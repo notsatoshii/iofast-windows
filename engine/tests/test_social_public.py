@@ -309,6 +309,14 @@ class TestUtilities:
         assert isinstance(token, str)
         assert len(token) > 0
 
+    def test_x_compute_token_matches_react_tweet(self):
+        # Reference values from react-tweet's getToken run in Node.
+        assert _x_compute_token("20") == "6dq1a2xwd93"
+        assert _x_compute_token("1683920951807971329") == "42y6zv7ufp"
+        assert _x_compute_token("1047395834013384704") == "2jehoes3gic"
+        assert _x_compute_token("1577855540407197696") == "3toz99oivuy"
+        assert _x_compute_token("1395079556562706435") == "3dqrs3s9rn9"
+
     def test_x_compute_token_bad_id(self):
         token = _x_compute_token("not-a-number")
         assert token == "0"
