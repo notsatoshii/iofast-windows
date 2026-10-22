@@ -680,12 +680,14 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 try {{
     $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
-    $cond = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty,
-        "{}")
-    $wins = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)
-    if ($wins.Count -eq 0) {{ exit }}
-    $root = $wins[0]
+    $allWins = $rootEl.FindAll(
+        [System.Windows.Automation.TreeScope]::Children,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    $root = $null
+    foreach ($w in $allWins) {{
+        if ($w.Current.Name -like '*{}*') {{ $root = $w; break }}
+    }}
+    if (-not $root) {{ exit }}
     $searchCond = New-Object System.Windows.Automation.OrCondition(
         (New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
