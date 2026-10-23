@@ -133,7 +133,7 @@ def _call_llm(prompt: str) -> str:
         cmd = ["claude", "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config"]
         try:
             result = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                                    timeout=120, cwd=str(llm_cwd))
+                                    encoding="utf-8", errors="replace", timeout=120, cwd=str(llm_cwd))
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             raise RuntimeError(f"claude CLI failed: {e}")
         if result.returncode != 0:

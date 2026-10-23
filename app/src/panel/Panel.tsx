@@ -168,7 +168,7 @@ export default function Panel() {
   useEffect(() => {
     invoke<Boot>("config_get")
       .then((boot) => {
-        if (boot.config) setFileToVault(boot.config.file_to_vault ?? false);
+        if (boot.config) setFileToVault(boot.config.file_to_vault ?? true);
       })
       .catch(() => undefined);
   }, []);

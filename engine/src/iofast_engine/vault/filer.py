@@ -5,6 +5,7 @@ classifier, then writes all files deterministically. Returns a summary dict.
 """
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -164,8 +165,21 @@ def _first_heading_title(run_dir: Path) -> str | None:
             continue
         try:
             with md_file.open(encoding="utf-8") as f:
+                fence = None
                 for line in f:
-                    m = _HEADING_RE.match(line.strip())
+                    # A "# ..." line inside a code block is a shell or
+                    # Python comment, not a heading.
+                    stripped = line.strip()
+                    if stripped.startswith(("```", "~~~")):
+                        marker = stripped[:3]
+                        if fence is None:
+                            fence = marker
+                        elif marker == fence:
+                            fence = None
+                        continue
+                    if fence is not None:
+                        continue
+                    m = _HEADING_RE.match(stripped)
                     if m:
                         title = m.group(1).strip()
                         # Strip markdown anchor links: [#](#slug) or [text](url)
@@ -237,6 +251,66 @@ def _get_combined_text(run_dir: Path) -> str:
                 continue
 
     return "\n\n---\n\n".join(pages) if pages else ""
+
+
+def match_topic_hubs(
+    topics_json_path: Path | None,
+    title: str,
+    tags: list[str],
+    content_prefix: str,
+) -> list[dict]:
+    """Match a capture to AgentOS topic hubs by keyword overlap.
+
+    Pure function. Returns at most 3 matches sorted by relevance score.
+    Each match is {"slug": str, "title": str, "path": str}.
+    Returns [] when topics_json_path is None, missing, or unreadable.
+
+    Matching: case-insensitive substring search of each hub's keywords in
+    (a) the capture title, (b) its tag list, (c) first ~2000 chars of content.
+    Score = number of distinct keywords that hit any of those three fields.
+    """
+    if topics_json_path is None:
+        return []
+    try:
+        raw = topics_json_path.read_text(encoding="utf-8")
+        hubs = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(hubs, list):
+        return []
+
+    title_lower = title.lower()
+    tags_lower = [t.lower() for t in tags]
+    prefix_lower = content_prefix[:2000].lower()
+
+    scored: list[tuple[int, dict]] = []
+    for hub in hubs:
+        if not isinstance(hub, dict):
+            continue
+        slug = str(hub.get("slug", "")).strip()
+        h_title = str(hub.get("title", "")).strip()
+        h_path = str(hub.get("path", "")).strip()
+        keywords = hub.get("keywords", [])
+        if not isinstance(keywords, list) or not slug or not h_title:
+            continue
+
+        hits = 0
+        for kw in keywords:
+            if not isinstance(kw, str):
+                continue
+            kw_l = kw.strip().lower()
+            if not kw_l:
+                continue
+            # Whole words only (plural allowed): short keywords like "wp" or
+            # "opin" must not hit "wp-content" or "opinion".
+            pat = re.compile(rf"(?<![a-z0-9-]){re.escape(kw_l)}(?:e?s)?(?![a-z0-9-])")
+            if pat.search(title_lower) or any(pat.search(t) for t in tags_lower) or pat.search(prefix_lower):
+                hits += 1
+        if hits > 0:
+            scored.append((hits, {"slug": slug, "title": h_title, "path": h_path}))
+
+    scored.sort(key=lambda x: -x[0])
+    return [entry for _, entry in scored[:3]]
 
 
 def _find_candidate_notes(vault_scan: dict, title: str, tags: list[str]) -> list[dict]:
@@ -482,6 +556,15 @@ def file_capture(
     # Update source_note.entities to use canonical names for linking
     classification["source_note"]["entities"] = linked_entities
 
+    # Match AgentOS topic hubs (pure function; no-op when topics.json absent)
+    topics_json_path = vault / "AgentOS" / "topics.json"
+    topic_hubs = match_topic_hubs(
+        topics_json_path, title, classification.get("tags", []), combined_text,
+    )
+    if topic_hubs:
+        hub_titles = [h["title"] for h in topic_hubs]
+        _emit(f"topic hubs: {', '.join(hub_titles)}")
+
     # Write source note
     _emit("writing source note")
     source_note_path = write_source_note(
@@ -489,6 +572,7 @@ def file_capture(
         source_url, raw_path, captured_date=today,
         existing_titles=existing_titles,
         new_note_titles=new_note_titles,
+        topic_hubs=topic_hubs,
     )
     _emit(f"source note: {source_note_path.relative_to(vault)}")
 
