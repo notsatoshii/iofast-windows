@@ -42,6 +42,8 @@ def test_claude_cli_argv():
 
     # Verify prompt goes on stdin
     assert call_kwargs.kwargs.get("input") == "test prompt"
+    # UTF-8, not the Windows ANSI code page (cp949 broke on an em dash)
+    assert call_kwargs.kwargs.get("encoding") == "utf-8"
 
 
 def test_claude_cli_argv_no_localappdata(tmp_path, monkeypatch):

@@ -103,7 +103,7 @@ If a note clearly belongs in a new folder, suggest it but mark "new": true.
             llm_cwd.mkdir(parents=True, exist_ok=True)
             cmd = ["claude", "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config"]
             result = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                                    timeout=120, cwd=str(llm_cwd))
+                                    encoding="utf-8", errors="replace", timeout=120, cwd=str(llm_cwd))
             if result.returncode != 0:
                 return []
             try:

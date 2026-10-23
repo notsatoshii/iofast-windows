@@ -264,6 +264,10 @@ def _call_claude_cli(prompt: str) -> str:
             input=prompt,
             capture_output=True,
             text=True,
+            # Explicit: the default is the Windows ANSI code page (cp949 on
+            # Korean Windows), which cannot encode characters like an em dash.
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             cwd=str(llm_cwd),
         )
