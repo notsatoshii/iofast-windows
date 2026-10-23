@@ -288,7 +288,10 @@ def match_topic_hubs(
             kw_l = kw.strip().lower()
             if not kw_l:
                 continue
-            if kw_l in title_lower or any(kw_l in t for t in tags_lower) or kw_l in prefix_lower:
+            # Whole words only (plural allowed): short keywords like "wp" or
+            # "opin" must not hit "wp-content" or "opinion".
+            pat = re.compile(rf"(?<![a-z0-9-]){re.escape(kw_l)}(?:e?s)?(?![a-z0-9-])")
+            if pat.search(title_lower) or any(pat.search(t) for t in tags_lower) or pat.search(prefix_lower):
                 hits += 1
         if hits > 0:
             scored.append((hits, {"slug": slug, "title": h_title, "path": h_path}))

@@ -64,6 +64,15 @@ def test_match_ignores_case_and_partial_words(topics_json: Path):
     assert any(h["slug"] == "obsidian-plugins" for h in hubs)
 
 
+def test_match_short_keywords_need_whole_words(tmp_path: Path):
+    path = tmp_path / "topics.json"
+    hubs = [{"slug": "web3", "title": "Web3", "path": "AgentOS/Topics/Web3.md", "keywords": ["WP", "opin", "KOL"]}]
+    path.write_text(json.dumps(hubs), encoding="utf-8")
+    body = "An opinion piece hosted on /wp-content/ about kolkata."
+    assert match_topic_hubs(path, "Weekly opinions", [], body) == []
+    assert match_topic_hubs(path, "Token WP draft", [], "")[0]["slug"] == "web3"
+
+
 def test_match_returns_empty_on_invalid_json(tmp_path: Path):
     bad = tmp_path / "bad.json"
     bad.write_text("{not valid json", encoding="utf-8")
