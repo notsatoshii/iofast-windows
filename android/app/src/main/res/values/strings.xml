@@ -7,9 +7,21 @@
  <string name="toast_captured">Captured: %1$s</string>
  <string name="toast_no_url">No URL found on screen</string>
  <string name="toast_fallback_share">Couldn\'t find the link; use Share → iofast</string>
- <string name="a11y_disabled_toast">Enable iofast accessibility to capture URLs</string>
+ <string name="a11y_disabled_toast">URL capture is off. Turn it on in iofast.</string>
  <string name="action_copy">Copy</string>
  <string name="action_share">Share</string>
  <string name="action_delete">Delete</string>
  <string name="empty_queue">No captured links yet.\nDouble-press the side key or share a link to iofast.</string>
+ <string name="capture_label">iofast capture</string>
+ <string name="toast_capture_error">iofast hit a problem. Open iofast to see the problem log.</string>
+ <string name="action_clear">Clear</string>
+ <string name="status_on">URL capture is on</string>
+ <string name="status_off">URL capture is off</string>
+ <string name="btn_accessibility">Turn on URL capture</string>
+ <string name="btn_accessibility_on">Accessibility settings</string>
+ <string name="side_key_help">Side key: Settings → Advanced features → Side key → Double press → Open app → iofast capture. Then open a page in Chrome or Samsung Internet, or a post in YouTube, X or Instagram, and double-press the side key.</string>
+ <string name="btn_links">Captured links (%1$d)</string>
+ <string name="problem_log_title">Problem log</string>
+ <string name="problem_log_help">If capture fails or turns itself off, tap Copy or Share and send this to whoever is helping you set up iofast.</string>
+ <string name="toast_log_copied">Problem log copied</string>
 </resources>

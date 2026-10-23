@@ -2,17 +2,32 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
+        android:name=".IofastApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Iofast">
 
-        <!-- Trampoline: side-key double-press lands here, reads last URL, toasts, exits -->
+        <!-- Home screen: capture status, side-key setup, links, problem log -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Trampoline: second launcher entry "iofast capture" for the side key.
+             Reads the last URL, toasts, exits. Own empty task so it never
+             brings the home screen forward over the page being captured. -->
         <activity
             android:name=".CaptureTrampolineActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:label="@string/capture_label"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Iofast.Translucent"
             android:excludeFromRecents="true"
             android:noHistory="true">
             <intent-filter>
@@ -25,7 +40,8 @@
         <activity
             android:name=".ShareReceiverActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Iofast.Translucent"
             android:excludeFromRecents="true"
             android:noHistory="true">
             <intent-filter>
@@ -45,7 +61,8 @@
         <activity
             android:name=".ClipboardReadActivity"
             android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Iofast.Translucent"
             android:excludeFromRecents="true"
             android:noHistory="true" />
 

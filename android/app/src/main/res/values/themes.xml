@@ -7,4 +7,15 @@
         <item name="colorOnSecondary">#FFFFFF</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
+
+    <!-- Invisible screens (side key, share target, clipboard read). AppCompat
+         parent because those activities extend AppCompatActivity. -->
+    <style name="Theme.Iofast.Translucent" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
 </resources>

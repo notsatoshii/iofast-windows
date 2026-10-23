@@ -2,4 +2,6 @@
 <resources>
     <color name="ic_launcher_background">#2E7D32</color>
     <color name="ic_launcher_foreground">#FFFFFF</color>
+    <color name="status_on">#2E7D32</color>
+    <color name="status_off">#C62828</color>
 </resources>

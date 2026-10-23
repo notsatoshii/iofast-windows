@@ -1,49 +1,49 @@
 package com.iofast.android
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.provider.Settings
-import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.iofast.android.data.AppDatabase
 import com.iofast.android.data.CapturedLink
-import com.iofast.android.shareflow.AppShareLabels
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.Dispatchers
+import com.iofast.android.diag.ProblemLog
 import kotlinx.coroutines.launch
 
 /**
- * Side-key double-press lands here. For social apps, signals the
- * accessibility service to run the share-flow and exits immediately
- * so the social app regains focus (required for a11y clicks).
- * For browsers, reads the URL bar from the last snapshot directly.
- * If the a11y service is disabled, opens settings with an explanation.
+ * The "iofast capture" launcher entry; the side-key double press opens it.
+ * For social apps, signals the accessibility service to run the share-flow
+ * and exits immediately so the social app regains focus (required for
+ * a11y clicks). For browsers, reads the URL bar from the last snapshot.
+ * If the a11y service is off, opens the iofast home screen, which shows
+ * the status and the button to turn it on.
  */
 class CaptureTrampolineActivity : AppCompatActivity() {
 
-    companion object {
-        private const val SERVICE_PACKAGE = "com.iofast.android"
-        private const val SERVICE_CLASS = "com.iofast.android.UrlCaptureAccessibilityService"
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        try {
+            capture()
+        } catch (t: Throwable) {
+            ProblemLog.note("capture", "failed: $t")
+            Toast.makeText(this, R.string.toast_capture_error, Toast.LENGTH_LONG).show()
+        }
+        finish()
+    }
 
-        if (!isAccessibilityServiceEnabled()) {
+    private fun capture() {
+        if (!ProblemLog.isServiceEnabled(this)) {
+            ProblemLog.note("capture", "side key pressed but accessibility is off")
             Toast.makeText(this, R.string.a11y_disabled_toast, Toast.LENGTH_LONG).show()
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            finish()
+            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return
         }
 
         val snap = UrlCaptureAccessibilityService.getBestSnapshot()
         if (snap == null) {
+            ProblemLog.note("capture", "no snapshot: no browser or supported app seen in front")
             Toast.makeText(this, R.string.toast_no_url, Toast.LENGTH_SHORT).show()
-            finish()
             return
         }
 
@@ -55,50 +55,32 @@ class CaptureTrampolineActivity : AppCompatActivity() {
                 val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 val previousClip = cm.primaryClip?.getItemAt(0)?.text?.toString()
 
-                // Signal the service and exit immediately so the social app
-                // regains focus and the a11y service can click inside it
+                // Signal the service; finish() in onCreate lets the social
+                // app regain focus so the a11y service can click inside it
+                ProblemLog.note("capture", "asking ${snap.packageName} for its link")
                 UrlCaptureAccessibilityService.startShareFlow(
                     packageName = snap.packageName,
                     previousClipboard = previousClip
                 )
-                finish()
-                return
             }
 
             "com.android.chrome",
             "com.sec.android.app.sbrowser" -> {
                 val url = UrlCaptureAccessibilityService.extractLastUrl()
+                ProblemLog.note("capture", "${snap.packageName}: ${url ?: "no url in address bar"}")
                 if (url != null) {
-                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        AppDatabase.get(this@CaptureTrampolineActivity)
-                            .capturedLinkDao()
+                    val app = applicationContext
+                    IofastApp.appScope.launch {
+                        AppDatabase.get(app).capturedLinkDao()
                             .insert(CapturedLink(url = url, sourcePackage = snap.packageName))
                     }
                     Toast.makeText(this, getString(R.string.toast_captured, url), Toast.LENGTH_LONG).show()
                 } else {
                     Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
                 }
-                finish()
-                return
             }
 
-            else -> {
-                Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
-                finish()
-                return
-            }
-        }
-    }
-
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(
-            AccessibilityServiceInfo.FEEDBACK_ALL_MASK
-        )
-        return enabledServices.any { info ->
-            info.resolveInfo?.serviceInfo?.let {
-                it.packageName == SERVICE_PACKAGE && it.name == SERVICE_CLASS
-            } == true
+            else -> Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
         }
     }
 }
