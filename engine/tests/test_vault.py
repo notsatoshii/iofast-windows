@@ -351,6 +351,25 @@ class TestTitleExtraction:
         )
         assert _extract_title(run) == "My Blog Post Title"
 
+    def test_extract_title_ignores_comments_in_code_blocks(self, tmp_path):
+        from iofast_engine.vault.filer import _extract_title
+
+        run = tmp_path / "docs-test"
+        run.mkdir()
+        manifest = {
+            "schema": 1,
+            "info": {"url": "https://docs.example.com/en/overview"},
+            "counts": {"ok": 1},
+            "pages": [],
+        }
+        (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (run / "overview.md").write_text(
+            "Intro text.\n\n```bash\n# Analyze recent log output\ntail app.log\n```\n\n"
+            "~~~\n# also a comment\n~~~\n",
+            encoding="utf-8",
+        )
+        assert _extract_title(run) == "docs.example.com"
+
     def test_extract_title_falls_back_to_host(self, tmp_path):
         from iofast_engine.vault.filer import _extract_title
 

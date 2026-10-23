@@ -165,8 +165,21 @@ def _first_heading_title(run_dir: Path) -> str | None:
             continue
         try:
             with md_file.open(encoding="utf-8") as f:
+                fence = None
                 for line in f:
-                    m = _HEADING_RE.match(line.strip())
+                    # A "# ..." line inside a code block is a shell or
+                    # Python comment, not a heading.
+                    stripped = line.strip()
+                    if stripped.startswith(("```", "~~~")):
+                        marker = stripped[:3]
+                        if fence is None:
+                            fence = marker
+                        elif marker == fence:
+                            fence = None
+                        continue
+                    if fence is not None:
+                        continue
+                    m = _HEADING_RE.match(stripped)
                     if m:
                         title = m.group(1).strip()
                         # Strip markdown anchor links: [#](#slug) or [text](url)
