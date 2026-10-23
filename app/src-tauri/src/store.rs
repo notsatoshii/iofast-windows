@@ -28,8 +28,8 @@ pub struct Config {
     #[serde(default)]
     pub interactive: bool,
     /// When on, grab files the finished run into the Obsidian vault automatically.
-    /// `default` so pre-existing configs read back as off.
-    #[serde(default)]
+    /// Defaults to true; a user who turns it off keeps it off (config value false wins).
+    #[serde(default = "default_file_to_vault")]
     pub file_to_vault: bool,
     /// Override for the Obsidian vault path; None = auto-detect via vault/detect.py.
     #[serde(default)]
@@ -43,6 +43,10 @@ pub struct Config {
     /// Cron expression for weekly digest generation; None = disabled.
     #[serde(default)]
     pub digest_schedule: Option<String>,
+}
+
+fn default_file_to_vault() -> bool {
+    true
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {

@@ -72,12 +72,16 @@ def write_source_note(
     captured_date: str | None = None,
     existing_titles: set[str] | None = None,
     new_note_titles: set[str] | None = None,
+    topic_hubs: list[dict] | None = None,
 ) -> Path:
     """Write the main source note. Returns path written.
 
     existing_titles: set of note titles that already exist in the vault.
     new_note_titles: set of note titles being created in this filing.
     Entity links are filtered to only these sets; others render as plain text.
+    topic_hubs: matched AgentOS hubs from filer.match_topic_hubs; each dict
+        has slug, title, path. When present, adds ## Map section with wikilinks
+        and topic/<slug> tags to frontmatter.
     """
     filename = f"{_safe_filename(title)}.md"
     path = _resolve_in_vault(vault, folder, filename)
@@ -86,7 +90,11 @@ def write_source_note(
     sn = classification.get("source_note", {})
 
     lines = ["---"]
-    tags = classification.get("tags", [])
+    tags = list(classification.get("tags", []))
+    # Prepend topic/<slug> tags from matched hubs
+    if topic_hubs:
+        topic_tags = [f"topic/{h['slug']}" for h in topic_hubs if h.get("slug")]
+        tags = topic_tags + tags
     if tags:
         lines.append(f"tags: [{', '.join(tags)}]")
     aliases = classification.get("aliases", [])
@@ -132,6 +140,17 @@ def write_source_note(
         linkable = (existing_titles or set()) | (new_note_titles or set())
         for entity in sn["entities"]:
             lines.append(f"- [[{entity}]]" if entity in linkable else f"- {entity}")
+        lines.append("")
+
+    # Topic hub map section
+    if topic_hubs:
+        lines.append("## Map")
+        lines.append("")
+        for hub in topic_hubs:
+            h_title = hub.get("title", "")
+            h_path = hub.get("path", "")
+            if h_title and h_path:
+                lines.append(f"- [[{h_path}|{h_title}]]")
         lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)

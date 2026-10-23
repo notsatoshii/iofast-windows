@@ -55,9 +55,12 @@ def scan_vault(vault_path: str | Path) -> dict:
     all_titles = set()
     all_aliases = set()
 
+    # Generated folders: skip for performance and to avoid filing into them.
+    _SKIP_FOLDERS = {"AgentOS", "Claude Work"}
+
     # Top-level folders only (Eric's vault uses flat topic folders)
     for entry in sorted(vault.iterdir()):
-        if entry.is_dir() and not entry.name.startswith("."):
+        if entry.is_dir() and not entry.name.startswith(".") and entry.name not in _SKIP_FOLDERS:
             folders.append(entry.name)
             # Scan notes in this folder (non-recursive for speed; Eric's vault
             # is mostly flat per topic)

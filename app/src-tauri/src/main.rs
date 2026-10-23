@@ -1376,7 +1376,7 @@ async fn capture_selection(
 
         // Check if vault filing is enabled.
         let file_to_vault = store::config_get(app.clone())
-            .map(|c| c["config"]["file_to_vault"].as_bool().unwrap_or(false))
+            .map(|c| c["config"]["file_to_vault"].as_bool().unwrap_or(true))
             .unwrap_or(false);
 
         if file_to_vault {
@@ -1734,7 +1734,7 @@ async fn capture_screenshot(
 
         // Optionally file into vault.
         let file_to_vault = store::config_get(app.clone())
-            .map(|c| c["config"]["file_to_vault"].as_bool().unwrap_or(false))
+            .map(|c| c["config"]["file_to_vault"].as_bool().unwrap_or(true))
             .unwrap_or(false);
 
         if file_to_vault {
