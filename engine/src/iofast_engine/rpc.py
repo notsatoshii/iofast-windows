@@ -43,6 +43,28 @@ def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _item_folder(url):
+    """Folder name for one grab, unique per URL.
+
+    Sources write into fixed subfolders (youtube/, web/, x/), so without
+    this every grab from the same host shares one folder and vault filing
+    copies all earlier grabs along with the new one.
+    """
+    import hashlib
+    import re
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    key = (query.get("v") or query.get("list") or [""])[0]
+    if not key:
+        segments = [seg for seg in parsed.path.split("/") if seg]
+        key = segments[-1] if segments else "index"
+    key = re.sub(r"[^A-Za-z0-9._-]+", "-", key).strip("-.")[:60] or "item"
+    digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:6]
+    return f"{key}-{digest}"
+
+
 class RpcServer:
     """One scrape + one map at a time; cancel is cooperative (docs/RPC.md)."""
 
@@ -408,6 +430,7 @@ class RpcServer:
             def emit_with_rid(event):
                 self.notify(rid, event)
 
+            out = os.path.join(out, _item_folder(url))
             result = asyncio.run(source.grab(url, Path(out), opts, emit_with_rid))
             written = result.ok + result.thin
             exit_code = 0 if result.ok > 0 and result.failed == 0 else 1
