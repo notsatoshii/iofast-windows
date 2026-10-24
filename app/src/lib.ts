@@ -10,6 +10,8 @@ export type Config = {
   whisper_model?: string;
   vault_check_schedule?: string;
   digest_schedule?: string;
+  /** Phone inbox poller; absent/null = on whenever a key is stored. */
+  inbox_enabled?: boolean | null;
 };
 /** `config_get`: a null config means first run. */
 export type Boot = { config: Config | null; suggested_root: string };

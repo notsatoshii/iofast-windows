@@ -327,6 +327,20 @@ export default function App() {
     };
   }, [refresh]);
 
+  // Phone inbox (inbox.rs): a link shared from the phone was grabbed in the
+  // background. Its run folder is a library row like any other; re-read the
+  // library and say where it came from in the status line.
+  useEffect(() => {
+    const picked = listen<{ ok: boolean; title: string; note: string }>("inbox-grabbed", (e) => {
+      const { ok, title, note: why } = e.payload;
+      setNote(ok ? `From phone: ${title} — saved` : `From phone: ${title} — failed: ${why}`);
+      refresh();
+    });
+    return () => {
+      void picked.then((un) => un());
+    };
+  }, [refresh]);
+
   // Tick the human-solve countdown. The deadline is absolute, so a late or
   // coalesced tick self-corrects rather than accumulating drift — and a window
   // the app was slow to paint never reads as more time than the engine allows.

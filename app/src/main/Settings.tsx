@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { reason, type BrowserStatus, type Config } from "../lib";
+import { plural, reason, when, type BrowserStatus, type Config } from "../lib";
 
 /** docs/RPC.md `scrape.env` allowlist — the secrets the app holds. */
 const RESCUE_KEYS = [
@@ -29,6 +29,22 @@ const NETWORK_KEYS = [
   },
 ] as const;
 
+const INBOX_KEY = {
+  name: "IOFAST_INBOX_KEY",
+  label: "Phone inbox key",
+  hint: "Links you share from your phone are grabbed here while iofast is running, and filed like a pasted link.",
+  secret: true,
+} as const;
+
+type InboxStatus = {
+  enabled: boolean;
+  has_key: boolean;
+  key_from_env: boolean;
+  last_poll_ms: number;
+  last_error: string | null;
+  picked: number;
+};
+
 export default function Settings({
   config,
   onChanged,
@@ -46,12 +62,19 @@ export default function Settings({
   const [installMsg, setInstallMsg] = useState("");
   const [atLogin, setAtLogin] = useState<boolean | null>(null);
   const [atLoginError, setAtLoginError] = useState("");
+  const [inbox, setInbox] = useState<InboxStatus | null>(null);
+
+  const readInbox = () =>
+    invoke<InboxStatus>("inbox_status").then(setInbox).catch(() => undefined);
 
   const readKeys = () =>
     invoke<Record<string, boolean>>("keychain_status").then(setStored).catch(() => undefined);
 
   useEffect(() => {
     void readKeys();
+    void readInbox();
+    // The first poll after a key is saved lands a few seconds later.
+    const inboxTimer = setInterval(() => void readInbox(), 5000);
     void invoke<BrowserStatus>("sidecar_browser_status").then(setBrowsers).catch(() => undefined);
     void invoke<boolean>("autostart_get").then(setAtLogin).catch(() => setAtLogin(false));
     // Install progress rides the shared engine-event stream (docs/RPC.md).
@@ -61,6 +84,7 @@ export default function Settings({
       }
     });
     return () => {
+      clearInterval(inboxTimer);
       void events.then((un) => un());
     };
   }, []);
@@ -321,6 +345,38 @@ export default function Settings({
             onClick={() => void write({ ...config, interactive: !config.interactive })}
           >
             {config.interactive ? "Turn off" : "Turn on"}
+          </button>
+        </div>
+      </div>
+
+      <h2>Phone inbox</h2>
+      {keyRow(INBOX_KEY)}
+      <div className="set">
+        <div className="set-label">
+          Pick up phone links
+          <span className="set-hint">
+            {inbox === null
+              ? "…"
+              : !inbox.has_key
+                ? "Add a key above to turn this on."
+                : inbox.last_error
+                  ? `Last check failed: ${inbox.last_error}`
+                  : inbox.last_poll_ms
+                    ? `Checked ${when(inbox.last_poll_ms)}, every minute. ${plural(inbox.picked, "link")} picked up this session.`
+                    : "Checks every minute while iofast is running."}
+          </span>
+        </div>
+        <div className="set-control">
+          {(config.inbox_enabled ?? true) && inbox?.has_key && <span className="saved">On</span>}
+          <button
+            type="button"
+            className="btn"
+            onClick={async () => {
+              await write({ ...config, inbox_enabled: !(config.inbox_enabled ?? true) });
+              void invoke("inbox_poll_now").catch(() => undefined);
+            }}
+          >
+            {(config.inbox_enabled ?? true) ? "Turn off" : "Turn on"}
           </button>
         </div>
       </div>
