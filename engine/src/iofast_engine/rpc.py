@@ -43,6 +43,16 @@ def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _find_manifest(out):
+    """The grab's manifest: in the item folder, or one level down where a
+    source writes its own subfolder (YouTube writes youtube/manifest.json)."""
+    direct = out / "manifest.json"
+    if direct.exists():
+        return direct
+    nested = sorted(out.glob("*/manifest.json"))
+    return nested[0] if nested else None
+
+
 def _item_folder(url):
     """Folder name for one grab, unique per URL.
 
@@ -63,6 +73,48 @@ def _item_folder(url):
     key = re.sub(r"[^A-Za-z0-9._-]+", "-", key).strip("-.")[:60] or "item"
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:6]
     return f"{key}-{digest}"
+
+
+
+def _lines(stream):
+    """Yields stdin lines. On Windows a pipe is polled with PeekNamedPipe and
+    read only when bytes are waiting: a blocking read left pending on the
+    pipe deadlocks DLL loads in other threads (numpy's OpenBLAS during a
+    grab's transcription import)."""
+    try:
+        fd = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        fd = None
+    if os.name != "nt" or fd is None:
+        yield from stream
+        return
+    import msvcrt
+    import time
+    import _winapi
+    handle = msvcrt.get_osfhandle(fd)
+    try:
+        _winapi.PeekNamedPipe(handle, 0)
+    except OSError:
+        yield from stream  # not a pipe (console or file): plain reads are fine
+        return
+    buf = b""
+    while True:
+        try:
+            avail, _ = _winapi.PeekNamedPipe(handle, 0)
+            if not avail:
+                time.sleep(0.05)
+                continue
+            data, _ = _winapi.ReadFile(handle, avail)
+        except OSError:
+            break  # parent closed the pipe
+        if not data:
+            break
+        buf += data
+        *done, buf = buf.split(b"\n")
+        for raw in done:
+            yield raw.decode("utf-8", "replace")
+    if buf:
+        yield buf.decode("utf-8", "replace")
 
 
 class RpcServer:
@@ -105,7 +157,7 @@ class RpcServer:
     # ---- dispatch ----
 
     def serve(self):
-        for line in self.stdin:
+        for line in _lines(self.stdin):
             line = line.strip()
             if not line:
                 continue
@@ -435,9 +487,9 @@ class RpcServer:
             written = result.ok + result.thin
             exit_code = 0 if result.ok > 0 and result.failed == 0 else 1
             cancelled = cancel_event.is_set()
-            manifest_path = Path(out) / "manifest.json"
+            manifest_path = _find_manifest(Path(out))
             manifest = {}
-            if manifest_path.exists():
+            if manifest_path is not None:
                 try:
                     with open(manifest_path, encoding="utf-8") as fh:
                         manifest = json.load(fh)

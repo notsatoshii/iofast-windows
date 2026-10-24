@@ -24,3 +24,14 @@ def test_raw_note_name_has_no_windows_invalid_chars(tmp_path):
     path = _unique_raw_path(tmp_path, 'Agents: Jev "On-Call" a/b\c?', "2026-10-25")
     assert path.name == "2026-10-25 Agents - Jev -On-Call- a-b-c-.md"
     path.write_text("x", encoding="utf-8")
+
+
+def test_find_manifest_direct_and_nested(tmp_path):
+    from iofast_engine.rpc import _find_manifest
+
+    assert _find_manifest(tmp_path) is None
+    (tmp_path / "youtube").mkdir()
+    (tmp_path / "youtube" / "manifest.json").write_text("{}")
+    assert _find_manifest(tmp_path) == tmp_path / "youtube" / "manifest.json"
+    (tmp_path / "manifest.json").write_text("{}")
+    assert _find_manifest(tmp_path) == tmp_path / "manifest.json"
