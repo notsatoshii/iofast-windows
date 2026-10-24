@@ -178,12 +178,15 @@ pub fn outcome(payload: &Value, url: &str) -> Outcome {
     let note = match result.get("vault_path").and_then(Value::as_str) {
         Some(p) if !p.is_empty() => p.to_string(),
         _ => match result.get("vault_error").and_then(Value::as_str) {
-            Some(e) => format!("{out_dir} (not filed to vault: {e})"),
+            Some(e) => format!("{out_dir} ({NOT_FILED}: {e})"),
             None => out_dir.to_string(),
         },
     };
     Outcome::Done { ok: true, note, title }
 }
+
+/// Marks a note whose grab worked but never reached the vault.
+const NOT_FILED: &str = "not filed to vault";
 
 /// A human name for the toast: the manifest's title if the source wrote one,
 /// else host + path.
@@ -344,6 +347,7 @@ fn poll_once(app: &AppHandle, sc: &SidecarManager, ledger: &mut Ledger) -> Tick 
         let (Some(id), Some(url)) = (link["id"].as_str(), link["url"].as_str()) else {
             continue;
         };
+        let mut title_sent = None;
         let (ok, note) = match ledger.plan(id) {
             Plan::ResendDone(ok, note) => (ok, note),
             Plan::Grab => match grab_one(app, sc, url, "phone") {
@@ -359,6 +363,7 @@ fn poll_once(app: &AppHandle, sc: &SidecarManager, ledger: &mut Ledger) -> Tick 
                         json!({ "id": id, "url": url, "ok": ok, "note": note, "title": title, "origin": "phone" }),
                     );
                     log::info!("phone inbox: link {id} grabbed ok={ok}");
+                    title_sent = Some(title);
                     (ok, note)
                 }
             },
@@ -367,6 +372,11 @@ fn poll_once(app: &AppHandle, sc: &SidecarManager, ledger: &mut Ledger) -> Tick 
         params["id"] = json!(id);
         params["ok"] = json!(ok);
         params["note"] = json!(note);
+        // The phone shows "Saved to vault: <title>" from these.
+        params["filed"] = json!(ok && !note.contains(NOT_FILED));
+        if let Some(t) = &title_sent {
+            params["title"] = json!(t);
+        }
         match tauri::async_runtime::block_on(sc.request(app, "inbox.done", params)) {
             Ok(_) => {
                 ledger.unacked.remove(id);

@@ -16,3 +16,11 @@ def test_each_url_gets_its_own_folder():
 def test_web_page_uses_last_path_segment():
     assert _item_folder("https://example.com/blog/My Post?x=1").startswith("My-Post-")
     assert _item_folder("https://example.com/").startswith("index-")
+
+
+def test_raw_note_name_has_no_windows_invalid_chars(tmp_path):
+    from iofast_engine.vault.raw import _unique_raw_path
+
+    path = _unique_raw_path(tmp_path, 'Agents: Jev "On-Call" a/b\c?', "2026-10-25")
+    assert path.name == "2026-10-25 Agents - Jev -On-Call- a-b-c-.md"
+    path.write_text("x", encoding="utf-8")

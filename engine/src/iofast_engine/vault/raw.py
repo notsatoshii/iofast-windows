@@ -11,6 +11,7 @@ links to this in-vault folder, never to the outside run path.
 """
 
 import json
+import re
 import shutil
 from datetime import date
 from pathlib import Path
@@ -25,6 +26,8 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # skip binaries over 20 MB
 SKIP_NAMES = {"README-UNTRUSTED.md", "index.md"}
 # Files that are not real content pages (metadata, combined outputs).
 NON_CONTENT_NAMES = {"report.md", "index.md"}
+# Characters Windows refuses in file and folder names.
+_UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def _raw_dir(vault: Path) -> Path:
@@ -33,7 +36,8 @@ def _raw_dir(vault: Path) -> Path:
 
 def _unique_raw_path(raw_dir: Path, title: str, today: str) -> Path:
     """Find a non-colliding filename. Appends -2, -3, … on conflict."""
-    safe_title = title.replace("/", "-").replace("\\", "-").strip()
+    safe_title = _UNSAFE_CHARS.sub("-", title.replace(": ", " - "))
+    safe_title = re.sub(r"\s+", " ", safe_title).strip(" .") or "Untitled"
     base = f"{today} {safe_title}.md"
     candidate = raw_dir / base
     if not candidate.exists():
