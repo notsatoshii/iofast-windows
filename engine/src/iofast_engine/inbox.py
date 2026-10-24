@@ -101,16 +101,24 @@ def short_note(note):
     return note if len(note) <= NOTE_MAX else note[: NOTE_MAX - 1] + "…"
 
 
-def mark_done(key, link_id, ok, note, base=None, timeout=TIMEOUT):
-    """Tell the server this link is handled (saved or failed for good)."""
+def mark_done(key, link_id, ok, note, base=None, timeout=TIMEOUT, title=None, filed=None):
+    """Tell the server this link is handled (saved or failed for good).
+
+    title and filed (did it reach the vault) let the phone say what was saved.
+    """
     if not isinstance(key, str) or not key.strip():
         raise InboxAuthError("no phone inbox key")
     quoted = urllib.parse.quote(str(link_id), safe="")
+    body = {"ok": bool(ok), "note": short_note(note)}
+    if isinstance(title, str) and title.strip():
+        body["title"] = title.strip()[:200]
+    if isinstance(filed, bool):
+        body["filed"] = filed
     _call(
         "POST",
         f"{_base(base)}/links/{quoted}/done",
         key.strip(),
-        body={"ok": bool(ok), "note": short_note(note)},
+        body=body,
         timeout=timeout,
     )
     return {"ok": True}

@@ -758,8 +758,13 @@ class RpcServer:
             return self.fail(rid, INVALID_PARAMS, "ok must be a boolean")
         if not isinstance(note, str):
             return self.fail(rid, INVALID_PARAMS, "note must be a string")
+        title = params.get("title")
+        filed = params.get("filed")
         return self._inbox_thread(
-            rid, lambda inbox: inbox.mark_done(key, link_id, ok, note, base=base)
+            rid,
+            lambda inbox: inbox.mark_done(
+                key, link_id, ok, note, base=base, title=title, filed=filed
+            ),
         )
 
     def handle_cancel(self, rid, params):
