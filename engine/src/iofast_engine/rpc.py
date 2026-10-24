@@ -17,6 +17,7 @@ from .manifest import SCHEMA
 from .push import run_push
 from .runner import run_map, run_scrape, validate
 from .sources import GrabOptions, detect as detect_source
+from .stderr_pump import install as install_stderr_pump
 
 PROTOCOL = 1
 JOIN_TIMEOUT = 10  # seconds granted to run threads on EOF before hard exit
@@ -732,10 +733,18 @@ class RpcServer:
 def serve_stdio():
     """Entry point for `iofast rpc`: harden stdout, then serve until EOF."""
     default_storage_env()
+    # A parent that is slow to read stderr must never stall a scrape thread
+    # mid-log (stderr_pump.py); the pump gets a short flush on exit.
+    pump = install_stderr_pump()
+
+    def exit_fn(code):
+        pump.flush(timeout=2)
+        os._exit(code)
+
     # Dup the real stdout for protocol lines, then point fd 1 at stderr so a
     # dependency that print()s can never corrupt the protocol stream.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8")
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     sys.stdout = sys.stderr
-    RpcServer(stdout=protocol).serve()
+    RpcServer(stdout=protocol, exit_fn=exit_fn).serve()
     return 0  # unreachable: serve() ends in os._exit(0)
