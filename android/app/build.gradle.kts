@@ -12,14 +12,37 @@ android {
         applicationId = "com.iofast.android"
         minSdk = 30
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing: a real key when IOFAST_STORE_FILE etc. are set (gradle
+    // property or env var); otherwise the machine's debug keystore, which is
+    // the key 0.1.x was signed with, so 0.2.0 installs over it in place.
+    signingConfigs {
+        create("release") {
+            fun setting(name: String): String? =
+                (project.findProperty(name) as String?) ?: System.getenv(name)
+            val store = setting("IOFAST_STORE_FILE")
+            if (store != null) {
+                storeFile = file(store)
+                storePassword = setting("IOFAST_STORE_PASSWORD")
+                keyAlias = setting("IOFAST_KEY_ALIAS")
+                keyPassword = setting("IOFAST_KEY_PASSWORD")
+            } else {
+                storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
