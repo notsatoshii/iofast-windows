@@ -18,11 +18,15 @@ import com.iofast.android.send.Captures
  * If the a11y service is off, opens the iofast home screen, which shows
  * the status and the button to turn it on.
  */
-class CaptureTrampolineActivity : AppCompatActivity() {
+open class CaptureTrampolineActivity : AppCompatActivity() {
+
+    /** Which shortcut opened this screen, for the problem log. */
+    protected open val trigger = "side key"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
+            ProblemLog.note("capture", "triggered by $trigger")
             capture()
         } catch (t: Throwable) {
             ProblemLog.note("capture", "failed: $t")

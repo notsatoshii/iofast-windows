@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Makes AccessibilityShortcutCaptureActivity a target for the accessibility
+     shortcuts (One UI "Side and Volume up keys", volume-key hold, a11y button). -->
+<accessibility-shortcut-target xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/a11y_shortcut_description"
+    android:summary="@string/a11y_shortcut_summary"
+    android:intro="@string/a11y_shortcut_intro"
+    android:settingsActivity="com.iofast.android.MainActivity" />
