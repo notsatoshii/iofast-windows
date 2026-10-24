@@ -268,6 +268,10 @@ impl SidecarManager {
     }
 }
 
+/// PyInstaller names the frozen engine `iofast.exe` on Windows; without the
+/// suffix the installed app never finds it and every grab fails.
+const SIDECAR_EXE: &str = if cfg!(windows) { "iofast.exe" } else { "iofast" };
+
 fn resolve_binary(app: &AppHandle) -> Result<PathBuf, String> {
     // IOFAST_BIN is a dev-only override: honoring it in release would let any
     // process that can set an env var point the app at an arbitrary executable.
@@ -281,14 +285,16 @@ fn resolve_binary(app: &AppHandle) -> Result<PathBuf, String> {
         // Resources land under engine/ (not iofast/): Tauri also copies them
         // next to the cargo binary, and a dir named `iofast` would collide
         // with the binary itself and break the build.
-        let bundled = dir.join("engine").join("iofast");
+        let bundled = dir.join("engine").join(SIDECAR_EXE);
         if bundled.is_file() {
             return Ok(bundled);
         }
     }
     // Dev fallback. Anchored to the crate dir, not cwd: `pnpm tauri dev` runs the
     // binary from src-tauri, `cargo run` from wherever you invoked it.
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../engine/dist/iofast/iofast");
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../engine/dist/iofast")
+        .join(SIDECAR_EXE);
     if dev.is_file() {
         return Ok(dev);
     }
