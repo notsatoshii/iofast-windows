@@ -25,22 +25,18 @@
             </intent-filter>
         </activity>
 
-        <!-- Trampoline: second launcher entry "iofast capture" for the side key.
-             Reads the last URL, notifies, exits. Own empty task so it never
-             brings the home screen forward over the page being captured. -->
+        <!-- Capture trampoline (base of the shortcut target below). Not a
+             launcher entry: the app icon must open the home screen, never
+             capture. Reads the last URL, notifies, exits. Own empty task so it
+             never brings the home screen forward over the page being captured. -->
         <activity
             android:name=".CaptureTrampolineActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/capture_label"
             android:taskAffinity=""
             android:theme="@style/Theme.Iofast.Translucent"
             android:excludeFromRecents="true"
-            android:noHistory="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:noHistory="true" />
 
         <!-- Accessibility shortcut target (Android 11+): listed under One UI's
              "Side and Volume up keys" and the other accessibility shortcuts.

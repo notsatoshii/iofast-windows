@@ -11,7 +11,8 @@ import com.iofast.android.send.CaptureNotifier
 import com.iofast.android.send.Captures
 
 /**
- * The "iofast capture" launcher entry; the side-key double press opens it.
+ * Capture screen behind the Side + Volume up shortcut (see
+ * AccessibilityShortcutCaptureActivity); not a launcher entry.
  * For social apps, signals the accessibility service to run the share-flow
  * and exits immediately so the social app regains focus (required for
  * a11y clicks). For browsers, reads the URL bar from the last snapshot.
