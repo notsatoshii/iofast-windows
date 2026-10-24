@@ -93,10 +93,12 @@ hiddenimports = [
     "iofast_engine.sources.instagram",
     "iofast_engine.sources.x",
     "iofast_engine.sources.web",
-    # Local speech-to-text: faster-whisper + ctranslate2 (CPU). CUDA wheels are
-    # an optional [gpu] extra and are NOT bundled. onnxruntime is needed for the
-    # Silero VAD model that ships inside faster_whisper/assets/. tokenizers and
-    # huggingface_hub are used at model-load time. av (PyAV) decodes audio.
+    # Local speech-to-text: faster-whisper + ctranslate2. The NVIDIA DLLs for
+    # GPU runs are NOT bundled; cuda_libs.py fetches them on first use.
+    # onnxruntime is needed for the Silero VAD model that ships inside
+    # faster_whisper/assets/. tokenizers and huggingface_hub are used at
+    # model-load time. av (PyAV) decodes audio.
+    "iofast_engine.cuda_libs",
     "faster_whisper",
     "ctranslate2",
     "av",

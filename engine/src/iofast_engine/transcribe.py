@@ -98,32 +98,27 @@ def ytdlp_js_runtimes() -> dict:
     return {}
 
 
-def pick_device_and_model() -> tuple[str, str, str]:
+def pick_device_and_model(emit: Callable[[dict], None] | None = None) -> tuple[str, str, str]:
     """Choose (device, compute_type, model_name) based on hardware + env.
 
     Env IOFAST_WHISPER_MODEL overrides the model name. Returns one of:
-      ("cuda", "float16", "large-v3-turbo")   — GPU present + CUDA libs OK
+      ("cuda", "float16", "large-v3-turbo")   — NVIDIA GPU + CUDA libs OK
       ("cpu",  "int8",    "small")             — fallback
+
+    With `emit`, missing GPU libraries are fetched once (cuda_libs); without
+    it only libraries already on disk count, so probes never download.
     """
+    from . import cuda_libs
+
     env_model = os.environ.get("IOFAST_WHISPER_MODEL", "").strip()
-
-    # Probe CUDA availability without importing torch (faster-whisper uses
-    # ctranslate2 which has its own CUDA probe). We try a tiny import-time
-    # check; if it fails we fall back to CPU.
-    device = "cpu"
-    compute = "int8"
-    default_model = "small"
-
-    try:
-        import ctranslate2  # noqa: F401  — probe only
-        # ctranslate2 exposes cuda_is_available() on builds that ship CUDA.
-        if hasattr(ctranslate2, "cuda_is_available") and ctranslate2.cuda_is_available():
-            device = "cuda"
-            compute = "float16"
-            default_model = "large-v3-turbo"
-    except Exception:
-        pass
-
+    device, compute, default_model = "cpu", "int8", "small"
+    on_disk = all((cuda_libs.libs_dir() / n).is_file() for n in cuda_libs.REQUIRED)
+    if emit is None and not on_disk:
+        gpu = False
+    else:
+        gpu = cuda_libs.ensure(emit or (lambda _e: None))
+    if gpu:
+        device, compute, default_model = "cuda", "float16", "large-v3-turbo"
     model = env_model or default_model
     return device, compute, model
 
@@ -260,7 +255,7 @@ def transcribe_audio(
     On failure returns a TranscriptResult with empty text and a warning.
     """
     warnings: list[str] = []
-    device, compute, model_name = pick_device_and_model()
+    device, compute, model_name = pick_device_and_model(emit)
     if model_override:
         model_name = model_override
 
@@ -331,13 +326,33 @@ def transcribe_audio(
         pass  # If probe fails, let whisper handle it
 
     try:
-        segments_iter, info = model.transcribe(
-            str(audio_path),
-            beam_size=5,
-            vad_filter=True,
-        )
-        # Materialise segments (generator is lazy).
-        segments = list(segments_iter)
+        try:
+            segments_iter, info = model.transcribe(
+                str(audio_path),
+                beam_size=5,
+                vad_filter=True,
+            )
+            # Materialise segments (generator is lazy).
+            segments = list(segments_iter)
+        except Exception as exc:
+            # CUDA libraries load lazily, so a broken GPU setup can surface
+            # only here: redo the whole file on CPU rather than fail.
+            if device != "cuda":
+                raise
+            warnings.append(f"GPU transcription failed ({exc}); retried on CPU")
+            emit({"type": "warning", "message": warnings[-1]})
+            device, compute = "cpu", "int8"
+            model_name = model_override or "small"
+            model = WhisperModel(
+                model_name, device=device, compute_type=compute,
+                download_root=str(models_dir),
+            )
+            segments_iter, info = model.transcribe(
+                str(audio_path),
+                beam_size=5,
+                vad_filter=True,
+            )
+            segments = list(segments_iter)
     except Exception as exc:
         return TranscriptResult(
             text="", language="", model=model_name, device=device,
