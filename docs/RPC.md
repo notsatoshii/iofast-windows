@@ -276,6 +276,21 @@ completes (opt-in; default false). `vault` overrides the auto-detected
 vault path; omitted uses the vault `vault/detect.py` finds. When filing
 runs, the result adds `vault_filed: true` and `vault_path`.
 
+### `inbox.fetch`
+Params: `{"key": str, "base": str|null}`. Phone inbox (engine/inbox.py):
+`GET <base>/links` with `Authorization: Bearer <key>`; replies
+`{"links": [{"id": str, "url", "source", "captured_at"}]}`, pending only,
+oldest first. `base` defaults to `https://agentos.rest/iofast-inbox`; it must
+be https (plain http only for localhost, for tests). `-32002` when the key is
+missing or rejected (401); `-32603` when the server is unreachable or broken
+(links stay pending). Runs on a short worker thread; the key is never echoed.
+
+### `inbox.done`
+Params: `{"key": str, "base": str|null, "id": str, "ok": bool, "note": str}`.
+`POST <base>/links/{id}/done` with `{"ok", "note"}` (note squeezed to one line,
+300 chars max). Replies `{"ok": true}`. Same error codes as `inbox.fetch`. The
+desktop shell owns the poll loop and runs the grab itself (`grab`, unchanged).
+
 ### `social.signin`
 Params: `{"site": "instagram"|"x"}`.
 Opens a visible browser on the dedicated profile for the user to sign in.
@@ -387,6 +402,7 @@ Events from a `map` carry that map request's rid.
 | -32602 | invalid params (bad URL, scope not a prefix, missing `out`, wrong types — validation shared with the CLI via `runner.validate`) |
 | -32000 | method already running (one scrape, one map, one browser install) |
 | -32001 | no scrape running / rid mismatch (cancel) |
+| -32002 | phone inbox key missing or rejected (`inbox.*`) |
 | -32603 | internal error during a run (message carries the exception) |
 
 Engine-level failures (pages that 403, thin content) are NOT errors — they

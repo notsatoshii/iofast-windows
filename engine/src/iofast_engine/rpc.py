@@ -36,6 +36,7 @@ INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 BUSY = -32000
 NO_SCRAPE = -32001
+INBOX_AUTH = -32002  # phone inbox key missing or rejected (401)
 
 
 def _is_int(value):
@@ -677,6 +678,66 @@ class RpcServer:
             self.respond(rid, result)
         except Exception as error:
             self.fail(rid, INTERNAL_ERROR, f"{type(error).__name__}: {error}")
+
+    # ---- phone inbox (inbox.py) ----
+    # HTTP only: the shell owns the poll loop, the grab, and the toast. Each call
+    # runs on its own short daemon thread so a slow server never blocks dispatch.
+    # The key rides in the body per call, like scrape.env, and is never echoed.
+
+    def _inbox_args(self, rid, params):
+        key = params.get("key")
+        base = params.get("base")
+        if not isinstance(key, str) or not key.strip():
+            self.fail(rid, INBOX_AUTH, "no phone inbox key")
+            return None
+        if not (base is None or isinstance(base, str)):
+            self.fail(rid, INVALID_PARAMS, "base must be a string or null")
+            return None
+        return key, base
+
+    def _inbox_thread(self, rid, work):
+        from . import inbox
+
+        def run():
+            try:
+                self.respond(rid, work(inbox))
+            except inbox.InboxAuthError as error:
+                self.fail(rid, INBOX_AUTH, str(error))
+            except ValueError as error:
+                self.fail(rid, INVALID_PARAMS, str(error))
+            except inbox.InboxNetError as error:
+                self.fail(rid, INTERNAL_ERROR, str(error))
+            except Exception as error:  # never let a thread die silently
+                self.fail(rid, INTERNAL_ERROR, f"inbox: {type(error).__name__}")
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread
+
+    def handle_inbox_fetch(self, rid, params):
+        args = self._inbox_args(rid, params)
+        if args is None:
+            return None
+        key, base = args
+        return self._inbox_thread(rid, lambda inbox: {"links": inbox.fetch_links(key, base=base)})
+
+    def handle_inbox_done(self, rid, params):
+        args = self._inbox_args(rid, params)
+        if args is None:
+            return None
+        key, base = args
+        link_id = params.get("id")
+        ok = params.get("ok")
+        note = params.get("note", "")
+        if not isinstance(link_id, str) or not link_id:
+            return self.fail(rid, INVALID_PARAMS, "id must be a non-empty string")
+        if not isinstance(ok, bool):
+            return self.fail(rid, INVALID_PARAMS, "ok must be a boolean")
+        if not isinstance(note, str):
+            return self.fail(rid, INVALID_PARAMS, "note must be a string")
+        return self._inbox_thread(
+            rid, lambda inbox: inbox.mark_done(key, link_id, ok, note, base=base)
+        )
 
     def handle_cancel(self, rid, params):
         want = params.get("rid")
