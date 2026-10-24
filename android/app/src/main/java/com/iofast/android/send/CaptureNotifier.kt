@@ -72,6 +72,15 @@ object CaptureNotifier {
     fun failed(context: Context, linkId: Long, url: String) =
         post(context, linkId, context.getString(R.string.notif_send_failed), url)
 
+    fun savedToVault(context: Context, linkId: Long, title: String) =
+        post(context, linkId, context.getString(R.string.notif_vault_saved), title)
+
+    fun notFiled(context: Context, linkId: Long, title: String) =
+        post(context, linkId, context.getString(R.string.notif_vault_not_filed), title)
+
+    fun pcFailed(context: Context, linkId: Long, title: String) =
+        post(context, linkId, context.getString(R.string.notif_pc_failed), title)
+
     /** The share flow could not get a link out of the app on screen. */
     fun couldNotRead(context: Context) {
         if (!canNotify(context)) {

@@ -54,6 +54,9 @@
  <string name="notif_not_paired">Not paired — open iofast to connect</string>
  <string name="notif_key_rejected">PC did not accept this phone — open iofast to connect again</string>
  <string name="notif_send_failed">Could not send to PC — saved on phone</string>
+ <string name="notif_vault_saved">Saved to vault</string>
+ <string name="notif_vault_not_filed">PC grabbed it, but it is not in the vault</string>
+ <string name="notif_pc_failed">PC could not grab this link</string>
  <string name="notif_could_not_read">Couldn\'t read the link</string>
  <string name="notif_use_share">Use the app\'s Share button → iofast instead.</string>
  <string name="notif_denied">Notifications are off, so capture results show as short pop-ups instead.</string>

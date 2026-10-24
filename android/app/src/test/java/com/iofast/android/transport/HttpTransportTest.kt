@@ -98,4 +98,24 @@ class HttpTransportTest {
         assertEquals("""q\"r""", HttpTransport.jsonField("""{"id":"q\"r"}""", "id"))
         assertNull(HttpTransport.jsonField("""{"other":"1"}""", "id"))
     }
+
+    @Test
+    fun `status reads the PC verdict and title`() = runBlocking {
+        server.status = 200
+        server.reply = """{"id":"abc","done":true,"ok":true,"filed":true,"title":"Agents: \"How\" — 안녕"}"""
+        val st = transport().status("abc")!!
+        assertTrue(st.done && st.ok && st.filed)
+        assertEquals("Agents: \"How\" — 안녕", st.title)
+        val r = server.requests.single()
+        assertEquals("GET", r.method)
+        assertEquals("/iofast-inbox/links/abc", r.path)
+        assertEquals("Bearer $testKey", r.header("Authorization"))
+    }
+
+    @Test
+    fun `status is null when the server cannot say`() = runBlocking {
+        server.status = 404
+        server.reply = """{"error":"not found"}"""
+        assertNull(transport().status("abc"))
+    }
 }

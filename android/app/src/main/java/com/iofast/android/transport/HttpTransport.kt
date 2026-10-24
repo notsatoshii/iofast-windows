@@ -11,6 +11,7 @@ import java.time.Instant
  * Talks to the PC inbox on the droplet:
  *   POST {base}/links  Authorization: Bearer <key>  {"url","source","captured_at"}
  *   GET  {base}/health
+ *   GET  {base}/links/{id}  -> {"done","ok","filed","title"} (how the PC handled it)
  * Plain HttpURLConnection so the app needs no HTTP library.
  * Error strings never include the key or the Authorization header.
  */
@@ -73,6 +74,28 @@ class HttpTransport(
         }
     }
 
+    /** How the PC handled a sent link; null when the server could not say. */
+    suspend fun status(remoteId: String): LinkStatus? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
+        try {
+            conn = open("$base/links/" + java.net.URLEncoder.encode(remoteId, "UTF-8"), "GET")
+            conn.setRequestProperty("Authorization", "Bearer $key")
+            val code = conn.responseCode
+            val reply = readBody(conn, code)
+            if (code != 200) null
+            else LinkStatus(
+                done = jsonBool(reply, "done"),
+                ok = jsonBool(reply, "ok"),
+                filed = jsonBool(reply, "filed"),
+                title = jsonField(reply, "title")?.let(::unescape).orEmpty()
+            )
+        } catch (_: IOException) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
     private fun open(url: String, method: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
@@ -109,6 +132,19 @@ class HttpTransport(
                 else -> append(c)
             }
             append('"')
+        }
+
+        fun jsonBool(json: String, name: String): Boolean =
+            Regex("\"" + Regex.escape(name) + "\"" + """\s*:\s*true""").containsMatchIn(json)
+
+        /** Undoes the escapes JSON.stringify writes in a title. */
+        fun unescape(s: String): String = Regex("""\\(u[0-9a-fA-F]{4}|.)""").replace(s) { m ->
+            val e = m.groupValues[1]
+            when {
+                e.length == 5 -> e.substring(1).toInt(16).toChar().toString()
+                e == "n" || e == "t" || e == "r" -> " "
+                else -> e
+            }
         }
 
         /** Reads a top-level string field from a small flat JSON reply (escapes left as sent). */
