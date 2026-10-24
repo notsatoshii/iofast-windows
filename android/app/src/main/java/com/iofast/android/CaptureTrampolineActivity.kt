@@ -8,8 +8,8 @@ import androidx.appcompat.app.AppCompatActivity
 import com.iofast.android.diag.ProblemLog
 
 /**
- * Capture screen behind the Side + Volume up shortcut (see
- * AccessibilityShortcutCaptureActivity); not a launcher entry.
+ * Fallback capture screen (the shortcut now goes to the service's
+ * accessibility button callback); not a launcher entry.
  * For social apps, signals the accessibility service to run the share-flow
  * and exits immediately so the social app regains focus (required for
  * a11y clicks). For browsers, reads the URL bar from the last snapshot.

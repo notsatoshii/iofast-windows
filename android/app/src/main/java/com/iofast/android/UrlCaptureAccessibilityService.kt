@@ -314,17 +314,19 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
             clicker = clicker,
             backAction = { performGlobalAction(GLOBAL_ACTION_BACK) },
             onSuccess = {
-                // Launch ClipboardReadActivity which can read clipboard (it's focused).
-                // NO_USER_ACTION: the app behind gets no onUserLeaveHint and the
-                // system does not treat it as leaving, so YouTube does not go
-                // picture-in-picture (ActivityStarter: mUserLeaving).
-                val intent = Intent(this, ClipboardReadActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-                    putExtra(ClipboardReadActivity.EXTRA_PACKAGE, packageName)
-                    putExtra(ClipboardReadActivity.EXTRA_PREVIOUS_CLIP, shareFlowPreviousClipboard)
-                }
+                // Read the clipboard through a focused overlay window: an
+                // activity launch pauses YouTube, which then goes
+                // picture-in-picture. The activity is only the fallback.
+                val previousClip = shareFlowPreviousClipboard
                 ProblemLog.note("share", "copy-link clicked in $packageName")
-                startActivity(intent)
+                ClipboardOverlayReader.read(this, packageName, previousClip) {
+                    val intent = Intent(this, ClipboardReadActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+                        putExtra(ClipboardReadActivity.EXTRA_PACKAGE, packageName)
+                        putExtra(ClipboardReadActivity.EXTRA_PREVIOUS_CLIP, previousClip)
+                    }
+                    startActivity(intent)
+                }
                 endShareFlow()
             },
             onFail = {
