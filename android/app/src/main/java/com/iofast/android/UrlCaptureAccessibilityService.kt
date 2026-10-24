@@ -1,5 +1,6 @@
 package com.iofast.android
 
+import android.accessibilityservice.AccessibilityButtonController
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.os.Handler
@@ -18,7 +19,8 @@ import com.iofast.android.shareflow.ShareFlowStateMachine
 
 /**
  * Tracks foreground app snapshots and drives the Share->Copy-link flow
- * for social apps when the side key fires.
+ * for social apps when the side key fires (via the accessibility button
+ * callback here, or the shortcut activity as a fallback).
  *
  * Snapshot selection ignores our own package, SystemUI and keyboards so
  * the trampoline always reads the app that was in front just before the
@@ -143,9 +145,47 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
     private var lastLoggedUrl: String? = null
     private val snapshotRunnable = Runnable { takeSnapshotSafely() }
 
+    /**
+     * Side + Volume up with this service as the shortcut target. The config
+     * requests the accessibility button, so with targetSdk > Q the system
+     * calls this instead of switching the service off (AOSP
+     * AccessibilityManagerService.performAccessibilityShortcutTargetService).
+     * No window opens, so the app in front never leaves: YouTube keeps
+     * playing full size instead of going picture-in-picture.
+     */
+    private val buttonCallback = object : AccessibilityButtonController.AccessibilityButtonCallback() {
+        override fun onClicked(controller: AccessibilityButtonController) {
+            try {
+                captureFromButton()
+            } catch (t: Throwable) {
+                ProblemLog.note("capture", "service shortcut failed: $t")
+            }
+        }
+
+        override fun onAvailabilityChanged(controller: AccessibilityButtonController, available: Boolean) {
+            ProblemLog.note("service", "shortcut button available: $available")
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         ProblemLog.note("service", "connected")
+        try {
+            accessibilityButtonController.registerAccessibilityButtonCallback(buttonCallback, handler)
+        } catch (t: Throwable) {
+            ProblemLog.note("service", "shortcut callback not registered: $t")
+        }
+    }
+
+    private fun captureFromButton() {
+        // The service cannot read the clipboard, so nothing to restore.
+        CaptureRouter.capture(this, "service shortcut (no window)", previousClip = null, serviceRunning = true)
+        // No trampoline closes here, so no event will start the share flow; start it now.
+        val pkg = shareFlowPackage
+        if (shareFlowActive && pkg != null && activeStateMachine == null) {
+            ProblemLog.note("share", "starting share flow in $pkg")
+            launchShareFlowStateMachine(pkg)
+        }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -155,6 +195,7 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(snapshotRunnable)
+        try { accessibilityButtonController.unregisterAccessibilityButtonCallback(buttonCallback) } catch (_: Throwable) {}
         ProblemLog.note("service", "destroyed")
         super.onDestroy()
     }
@@ -273,9 +314,12 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
             clicker = clicker,
             backAction = { performGlobalAction(GLOBAL_ACTION_BACK) },
             onSuccess = {
-                // Launch ClipboardReadActivity which can read clipboard (it's focused)
+                // Launch ClipboardReadActivity which can read clipboard (it's focused).
+                // NO_USER_ACTION: the app behind gets no onUserLeaveHint and the
+                // system does not treat it as leaving, so YouTube does not go
+                // picture-in-picture (ActivityStarter: mUserLeaving).
                 val intent = Intent(this, ClipboardReadActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
                     putExtra(ClipboardReadActivity.EXTRA_PACKAGE, packageName)
                     putExtra(ClipboardReadActivity.EXTRA_PREVIOUS_CLIP, shareFlowPreviousClipboard)
                 }
