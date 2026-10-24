@@ -65,6 +65,48 @@ def _item_folder(url):
     return f"{key}-{digest}"
 
 
+
+def _lines(stream):
+    """Yields stdin lines. On Windows a pipe is polled with PeekNamedPipe and
+    read only when bytes are waiting: a blocking read left pending on the
+    pipe deadlocks DLL loads in other threads (numpy's OpenBLAS during a
+    grab's transcription import)."""
+    try:
+        fd = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        fd = None
+    if os.name != "nt" or fd is None:
+        yield from stream
+        return
+    import msvcrt
+    import time
+    import _winapi
+    handle = msvcrt.get_osfhandle(fd)
+    try:
+        _winapi.PeekNamedPipe(handle, 0)
+    except OSError:
+        yield from stream  # not a pipe (console or file): plain reads are fine
+        return
+    buf = b""
+    while True:
+        try:
+            avail, _ = _winapi.PeekNamedPipe(handle, 0)
+            if not avail:
+                time.sleep(0.05)
+                continue
+            data, _ = _winapi.ReadFile(handle, avail)
+        except OSError:
+            break  # parent closed the pipe
+        if not data:
+            break
+        buf += data
+        *done, buf = buf.split(b"\n")
+        for raw in done:
+            yield raw.decode("utf-8", "replace")
+    if buf:
+        yield buf.decode("utf-8", "replace")
+
+
 class RpcServer:
     """One scrape + one map at a time; cancel is cooperative (docs/RPC.md)."""
 
@@ -105,7 +147,7 @@ class RpcServer:
     # ---- dispatch ----
 
     def serve(self):
-        for line in self.stdin:
+        for line in _lines(self.stdin):
             line = line.strip()
             if not line:
                 continue
