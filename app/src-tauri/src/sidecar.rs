@@ -220,6 +220,9 @@ impl SidecarManager {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
         cmd.arg("rpc");
+        // Started at login or by Task Scheduler, the app's working dir is
+        // System32; yt-dlp writes temp files to the cwd and fails there.
+        cmd.current_dir(std::env::temp_dir());
         // No secrets here by design: OPENROUTER_API_KEY / IOFAST_RESCUE_MODEL
         // ride in the `scrape` request body, read from the keychain per run
         // (store::scrape_env), so they never sit in a long-lived child's
