@@ -116,6 +116,21 @@ const server = http.createServer(async (req, res) => {
       return fs.createReadStream(file).pipe(res);
     }
 
+    // Phone asks how its capture went: {done, ok, filed, title}.
+    const st = /^\/links\/([0-9a-f-]{36})$/.exec(p);
+    if (req.method === 'GET' && st) {
+      if (!keyOk(req, PHONE_KEY)) return send(res, 401, { error: 'bad key' });
+      const link = links.find(l => l.id === st[1]);
+      if (!link) return send(res, 404, { error: 'not found' });
+      return send(res, 200, {
+        id: link.id,
+        done: Boolean(link.done_at),
+        ok: link.ok === true,
+        filed: link.filed === true,
+        title: link.title || '',
+      });
+    }
+
     const m = /^\/links\/([0-9a-f-]{36})\/done$/.exec(p);
     if (req.method === 'POST' && m) {
       if (!keyOk(req, PC_KEY)) return send(res, 401, { error: 'bad key' });
@@ -125,6 +140,9 @@ const server = http.createServer(async (req, res) => {
       link.done_at = new Date().toISOString();
       link.ok = body.ok === true;
       link.note = String(body.note || '').slice(0, 500);
+      if (typeof body.title === 'string') link.title = body.title.slice(0, 200);
+      // Older PC apps send no "filed": a successful grab was filed then.
+      link.filed = typeof body.filed === 'boolean' ? body.filed : link.ok;
       save();
       return send(res, 200, { ok: true });
     }

@@ -73,6 +73,7 @@ class SendWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 dao.markSent(id, System.currentTimeMillis(), r.remoteId)
                 store.recordSend(true, if (r.duplicate) "already in inbox" else null)
                 CaptureNotifier.sent(ctx, id, link.url)
+                r.remoteId?.let { VaultStatusWorker.enqueue(ctx, id, it, link.url) }
                 ProblemLog.note("send", "#$id sent" + if (r.duplicate) " (inbox already had it)" else "")
                 Result.success()
             }
