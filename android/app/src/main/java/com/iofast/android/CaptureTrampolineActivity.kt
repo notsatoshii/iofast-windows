@@ -6,10 +6,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import com.iofast.android.data.AppDatabase
-import com.iofast.android.data.CapturedLink
 import com.iofast.android.diag.ProblemLog
-import kotlinx.coroutines.launch
+import com.iofast.android.send.CaptureNotifier
+import com.iofast.android.send.Captures
 
 /**
  * The "iofast capture" launcher entry; the side-key double press opens it.
@@ -69,18 +68,13 @@ class CaptureTrampolineActivity : AppCompatActivity() {
                 val url = UrlCaptureAccessibilityService.extractLastUrl()
                 ProblemLog.note("capture", "${snap.packageName}: ${url ?: "no url in address bar"}")
                 if (url != null) {
-                    val app = applicationContext
-                    IofastApp.appScope.launch {
-                        AppDatabase.get(app).capturedLinkDao()
-                            .insert(CapturedLink(url = url, sourcePackage = snap.packageName))
-                    }
-                    Toast.makeText(this, getString(R.string.toast_captured, url), Toast.LENGTH_LONG).show()
+                    Captures.record(this, url, snap.packageName)
                 } else {
-                    Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
+                    CaptureNotifier.couldNotRead(this)
                 }
             }
 
-            else -> Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
+            else -> CaptureNotifier.couldNotRead(this)
         }
     }
 }

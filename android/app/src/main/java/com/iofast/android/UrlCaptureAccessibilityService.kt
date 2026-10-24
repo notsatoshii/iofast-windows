@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.iofast.android.diag.ProblemLog
+import com.iofast.android.send.CaptureNotifier
 import com.iofast.android.extractor.*
 import com.iofast.android.tree.TreeAccess
 import com.iofast.android.tree.TreeText
@@ -284,6 +285,7 @@ class UrlCaptureAccessibilityService : AccessibilityService() {
             },
             onFail = {
                 ProblemLog.note("share", "share flow failed in $packageName (no Share or Copy link found in time)")
+                CaptureNotifier.couldNotRead(this)
                 endShareFlow()
             }
         )

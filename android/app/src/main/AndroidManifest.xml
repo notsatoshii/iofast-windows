@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".IofastApp"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -20,7 +26,7 @@
         </activity>
 
         <!-- Trampoline: second launcher entry "iofast capture" for the side key.
-             Reads the last URL, toasts, exits. Own empty task so it never
+             Reads the last URL, notifies, exits. Own empty task so it never
              brings the home screen forward over the page being captured. -->
         <activity
             android:name=".CaptureTrampolineActivity"
@@ -65,6 +71,21 @@
             android:theme="@style/Theme.Iofast.Translucent"
             android:excludeFromRecents="true"
             android:noHistory="true" />
+
+        <!-- Pairing link from the PC: iofast://pair?key=<phone key>.
+             Saves the key and checks the inbox answers. -->
+        <activity
+            android:name=".PairActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:label="@string/pair_title">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="iofast" android:host="pair" />
+            </intent-filter>
+        </activity>
 
         <!-- Queue screen: list captured links with copy/share/delete -->
         <activity

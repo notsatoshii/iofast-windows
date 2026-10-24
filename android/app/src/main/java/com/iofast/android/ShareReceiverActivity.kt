@@ -4,14 +4,12 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import com.iofast.android.data.AppDatabase
-import com.iofast.android.data.CapturedLink
 import com.iofast.android.diag.ProblemLog
-import kotlinx.coroutines.launch
+import com.iofast.android.send.Captures
 
 /**
  * Receives ACTION_SEND text/plain or text/uri-list from any app's share sheet.
- * Extracts the first URL found in the shared text, queues it, toasts, exits.
+ * Extracts the first URL found in the shared text, queues it, notifies, exits.
  */
 class ShareReceiverActivity : AppCompatActivity() {
 
@@ -29,13 +27,7 @@ class ShareReceiverActivity : AppCompatActivity() {
         ProblemLog.note("share-in", "from ${callingPackage ?: "?"}: ${url ?: "no link in shared text"}")
 
         if (url != null) {
-            val app = applicationContext
-            val source = callingPackage
-            IofastApp.appScope.launch {
-                AppDatabase.get(app).capturedLinkDao()
-                    .insert(CapturedLink(url = url, sourcePackage = source))
-            }
-            Toast.makeText(this, getString(R.string.toast_captured, url), Toast.LENGTH_LONG).show()
+            Captures.record(this, url, callingPackage)
         } else {
             Toast.makeText(this, R.string.toast_no_url, Toast.LENGTH_SHORT).show()
         }

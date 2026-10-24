@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: the phone key stays on this phone (no cloud backup, no device transfer). -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="iofast_pairing.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="iofast_pairing.xml" />
+    </device-transfer>
+</data-extraction-rules>

@@ -5,6 +5,10 @@ import com.iofast.android.diag.ProblemLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import com.iofast.android.pairing.PairingStore
+import com.iofast.android.send.CaptureNotifier
+import com.iofast.android.send.SendWorker
 
 class IofastApp : Application() {
 
@@ -26,5 +30,15 @@ class IofastApp : Application() {
             previous?.uncaughtException(thread, error)
         }
         ProblemLog.note("app", "process started")
+        CaptureNotifier.ensureChannel(this)
+        // Links captured while unpaired or before an update still go out.
+        val app = this
+        appScope.launch {
+            try {
+                if (PairingStore(app).isPaired) SendWorker.enqueueAllPending(app)
+            } catch (t: Throwable) {
+                ProblemLog.note("send", "could not queue waiting links: $t")
+            }
+        }
     }
 }

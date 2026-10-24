@@ -6,19 +6,17 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import com.iofast.android.data.AppDatabase
-import com.iofast.android.data.CapturedLink
 import com.iofast.android.diag.ProblemLog
 import com.iofast.android.extractor.ClipboardCleaner
-import kotlinx.coroutines.launch
+import com.iofast.android.send.CaptureNotifier
+import com.iofast.android.send.Captures
 
 /**
  * Transparent activity launched after the share-flow clicks Copy-link.
  * Android 10+ only lets the focused app read the clipboard, and focus
  * arrives after onCreate, so the read happens in onWindowFocusChanged.
- * Saves the cleaned URL, toasts, restores the previous clipboard, finishes.
+ * Saves the cleaned URL, notifies, restores the previous clipboard, finishes.
  */
 class ClipboardReadActivity : AppCompatActivity() {
 
@@ -34,7 +32,7 @@ class ClipboardReadActivity : AppCompatActivity() {
         if (!done) {
             done = true
             ProblemLog.note("clipboard", "never got focus; clipboard not read")
-            Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
+            CaptureNotifier.couldNotRead(this)
             finish()
         }
     }
@@ -72,14 +70,9 @@ class ClipboardReadActivity : AppCompatActivity() {
         ProblemLog.note("clipboard", "$packageName: ${url ?: "clipboard had no link"}")
 
         if (url != null) {
-            val app = applicationContext
-            IofastApp.appScope.launch {
-                AppDatabase.get(app).capturedLinkDao()
-                    .insert(CapturedLink(url = url, sourcePackage = packageName))
-            }
-            Toast.makeText(this, getString(R.string.toast_captured, url), Toast.LENGTH_LONG).show()
+            Captures.record(this, url, packageName)
         } else {
-            Toast.makeText(this, R.string.toast_fallback_share, Toast.LENGTH_LONG).show()
+            CaptureNotifier.couldNotRead(this)
         }
 
         // Restore previous clipboard content
