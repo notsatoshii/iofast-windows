@@ -2,6 +2,7 @@
 
 mod about;
 mod autostart;
+mod inbox;
 mod schedule;
 mod sidecar;
 mod store;
@@ -428,6 +429,27 @@ pub(crate) fn fire_grab(
     file: bool,
     vault: Option<&str>,
 ) -> Result<u64, String> {
+    fire_grab_tracked(app, sc, url, out, mode, limit, lang, file, vault, None).map(|(rid, _)| rid)
+}
+
+/// `fire_grab` plus a receiver for the same payload `grab-done` carries, for a
+/// caller that must act on the result (the phone inbox reports it back).
+/// `origin` tags both events (`"phone"`) and replaces the generic toast — the
+/// caller shows its own.
+pub(crate) fn fire_grab_tracked(
+    app: &AppHandle,
+    sc: &SidecarManager,
+    url: &str,
+    out: &str,
+    mode: Option<&str>,
+    limit: Option<i64>,
+    lang: Option<&str>,
+    file: bool,
+    vault: Option<&str>,
+    origin: Option<&str>,
+) -> Result<(u64, tokio::sync::oneshot::Receiver<Value>), String> {
+    let origin = origin.map(str::to_string);
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<Value>();
     let mut params = json!({ "url": url, "out": out, "file": file });
     if let Some(m) = mode {
         params["mode"] = json!(m);
@@ -448,18 +470,25 @@ pub(crate) fn fire_grab(
     }
     let (rid, rx) = sc.start_request(app, "grab", params)?;
     GRAB_IN_FLIGHT.store(true, Ordering::SeqCst);
-    let _ = app.emit("grab-started", json!({ "rid": rid, "url": url, "out": out }));
+    let _ = app.emit(
+        "grab-started",
+        json!({ "rid": rid, "url": url, "out": out, "origin": origin.as_deref() }),
+    );
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let payload = match rx.await {
+        let mut payload = match rx.await {
             Ok(Ok(result)) => json!({ "rid": rid, "result": result }),
             Ok(Err(message)) => json!({ "rid": rid, "error": message }),
             Err(_) => json!({ "rid": rid, "error": "sidecar exited before replying" }),
         };
+        if let Some(o) = &origin {
+            payload["origin"] = json!(o);
+        }
         GRAB_IN_FLIGHT.store(false, Ordering::SeqCst);
         let _ = tauri::Emitter::emit(&app, "grab-done", payload.clone());
+        let _ = done_tx.send(payload.clone());
         #[cfg(target_os = "windows")]
-        {
+        if origin.is_none() {
             let (title, body) = if payload.get("error").is_some() {
                 ("iofast", "Grab failed — check the library for details.")
             } else {
@@ -487,7 +516,7 @@ pub(crate) fn fire_grab(
             }
         }
         #[cfg(target_os = "macos")]
-        {
+        if origin.is_none() {
             let (title, body) = if payload.get("error").is_some() {
                 ("iofast", "Grab failed — check the library for details.")
             } else {
@@ -505,7 +534,7 @@ pub(crate) fn fire_grab(
                 .spawn();
         }
     });
-    Ok(rid)
+    Ok((rid, done_rx))
 }
 
 /// Returns the request id immediately; the run's result arrives later as a
@@ -3014,6 +3043,8 @@ fn main() {
             store::keychain_status,
             store::keychain_set,
             store::keychain_clear,
+            inbox::inbox_status,
+            inbox::inbox_poll_now,
             schedule::schedule_get,
             schedule::schedule_set,
             autostart::autostart_get,
@@ -3038,6 +3069,11 @@ fn main() {
             setup_hotkey(app.handle())?;
             // Resident background loop: fires due auto re-scrapes while the app runs.
             schedule::spawn_scheduler(
+                app.handle().clone(),
+                app.state::<SidecarManager>().inner().clone(),
+            );
+            // Phone inbox: picks up links shared from the phone while the app runs.
+            inbox::spawn_poller(
                 app.handle().clone(),
                 app.state::<SidecarManager>().inner().clone(),
             );

@@ -17,6 +17,18 @@ use tauri::{AppHandle, Manager};
 const KEYCHAIN_SERVICE: &str = "iofast";
 /// docs/RPC.md: the `env` allowlist the sidecar accepts, verbatim.
 pub const KEY_NAMES: [&str; 3] = ["OPENROUTER_API_KEY", "IOFAST_RESCUE_MODEL", "IOFAST_PROXY"];
+/// Phone inbox bearer key (inbox.rs). Stored like the keys above but NOT in
+/// KEY_NAMES: it must never ride in a scrape/grab `env` to the engine.
+pub const INBOX_KEY: &str = "IOFAST_INBOX_KEY";
+
+fn settable(name: &str) -> bool {
+    KEY_NAMES.contains(&name) || name == INBOX_KEY
+}
+
+/// The phone inbox key: env IOFAST_INBOX_KEY (testing) first, then the store.
+pub fn inbox_key() -> Option<String> {
+    crate::inbox::pick_key(std::env::var(INBOX_KEY).ok(), keychain_get(INBOX_KEY))
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -43,6 +55,9 @@ pub struct Config {
     /// Cron expression for weekly digest generation; None = disabled.
     #[serde(default)]
     pub digest_schedule: Option<String>,
+    /// Phone inbox poller on/off; None = on whenever a key is stored.
+    #[serde(default)]
+    pub inbox_enabled: Option<bool>,
 }
 
 fn default_file_to_vault() -> bool {
@@ -88,6 +103,11 @@ pub fn config_set(app: AppHandle, config: Config) -> Result<(), String> {
     }
     let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+/// Ok once the first-run library folder exists in config.
+pub(crate) fn library_ready(app: &AppHandle) -> Result<PathBuf, String> {
+    library_root(app)
 }
 
 fn library_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -386,6 +406,7 @@ fn keychain_get(name: &str) -> Option<String> {
 pub fn keychain_status() -> Map<String, Value> {
     KEY_NAMES
         .iter()
+        .chain(std::iter::once(&INBOX_KEY))
         .map(|name| ((*name).to_string(), Value::Bool(keychain_get(name).is_some())))
         .collect()
 }
@@ -395,7 +416,17 @@ pub fn keychain_status() -> Map<String, Value> {
 /// directly — no command line, no PowerShell, no argv leakage.
 #[tauri::command]
 pub fn keychain_set(name: String, value: String) -> Result<(), String> {
-    if !KEY_NAMES.contains(&name.as_str()) {
+    let is_inbox = name == INBOX_KEY;
+    keychain_write(name, value)?;
+    if is_inbox {
+        // Poll right away so the user sees the key work (or get rejected).
+        crate::inbox::kick();
+    }
+    Ok(())
+}
+
+fn keychain_write(name: String, value: String) -> Result<(), String> {
+    if !settable(&name) {
         return Err(format!("unknown key {name}"));
     }
     if value.is_empty() {
@@ -478,7 +509,7 @@ pub fn keychain_set(name: String, value: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn keychain_clear(name: String) -> Result<(), String> {
-    if !KEY_NAMES.contains(&name.as_str()) {
+    if !settable(&name) {
         return Err(format!("unknown key {name}"));
     }
     #[cfg(target_os = "macos")]
