@@ -346,7 +346,7 @@ fn poll_once(app: &AppHandle, sc: &SidecarManager, ledger: &mut Ledger) -> Tick 
         };
         let (ok, note) = match ledger.plan(id) {
             Plan::ResendDone(ok, note) => (ok, note),
-            Plan::Grab => match grab_one(app, sc, url) {
+            Plan::Grab => match grab_one(app, sc, url, "phone") {
                 None => return Tick::Ok, // engine busy with a manual grab: next poll
                 Some(Outcome::Busy) => return Tick::Ok,
                 Some(Outcome::Done { ok, note, title }) => {
@@ -384,7 +384,7 @@ fn poll_once(app: &AppHandle, sc: &SidecarManager, ledger: &mut Ledger) -> Tick 
 
 /// Run one grab through the panel's path and wait for its `grab-done`.
 /// None = a manual grab is still running after BUSY_WAIT (leave it pending).
-fn grab_one(app: &AppHandle, sc: &SidecarManager, url: &str) -> Option<Outcome> {
+fn grab_one(app: &AppHandle, sc: &SidecarManager, url: &str, origin: &str) -> Option<Outcome> {
     let Some((href, host, scope)) = parse_target(url) else {
         return Some(Outcome::Done {
             ok: false,
@@ -407,13 +407,28 @@ fn grab_one(app: &AppHandle, sc: &SidecarManager, url: &str) -> Option<Outcome> 
         .ok()
         .and_then(|c| c["config"]["file_to_vault"].as_bool())
         .unwrap_or(true);
-    let rx = match crate::fire_grab_tracked(app, sc, &href, &out, Some("page"), None, None, file, None, Some("phone")) {
+    let rx = match crate::fire_grab_tracked(app, sc, &href, &out, Some("page"), None, None, file, None, Some(origin)) {
         Ok((_, rx)) => rx,
         Err(e) => return Some(Outcome::Done { ok: false, note: e, title: clip(&href, 80) }),
     };
     let payload = tauri::async_runtime::block_on(rx)
         .unwrap_or_else(|_| json!({ "error": "sidecar exited before replying" }));
     Some(outcome(&payload, &href))
+}
+
+/// Hotkey grab: file the page the user is looking at, no panel. Same path as
+/// a phone link, so it lands in the library and the vault the same way.
+pub fn grab_now(app: AppHandle, sc: SidecarManager, url: String) {
+    std::thread::spawn(move || {
+        toast("Grabbing", &clip(&url, 120));
+        let body = match grab_one(&app, &sc, &url, "hotkey") {
+            None | Some(Outcome::Busy) => "Another grab is still running. Try again in a moment.".to_string(),
+            Some(Outcome::Done { ok: true, title, .. }) => format!("Saved: {title}"),
+            Some(Outcome::Done { ok: false, note, .. }) => format!("Failed: {}", clip(&note, 120)),
+        };
+        toast("iofast", &body);
+        log::info!("hotkey grab {url}: {body}");
+    });
 }
 
 pub fn spawn_poller(app: AppHandle, sc: SidecarManager) {

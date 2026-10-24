@@ -1090,7 +1090,16 @@ fn setup_hotkey(app: &AppHandle) -> tauri::Result<()> {
                     return;
                 }
                 if pressed == &hotkey {
-                    toggle_panel(app);
+                    // Grab the front browser tab straight away (queued behind
+                    // a running grab); with no browser tab in front, open the
+                    // panel as before.
+                    match active_browser_url().filter(|u| u.starts_with("http")) {
+                        Some(url) => {
+                            let sc = app.state::<SidecarManager>().inner().clone();
+                            inbox::grab_now(app.clone(), sc, url);
+                        }
+                        _ => toggle_panel(app),
+                    }
                 } else if pressed == &capture_hotkey {
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
