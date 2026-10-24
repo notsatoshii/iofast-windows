@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.iofast.android.data.AppDatabase
 import com.iofast.android.data.CapturedLink
+import com.iofast.android.data.SendState
 import com.iofast.android.databinding.ActivityQueueBinding
 import kotlinx.coroutines.launch
 
@@ -109,7 +110,14 @@ class LinkAdapter(
  override fun onBindViewHolder(holder: VH, position: Int) {
  val link = items[position]
  holder.urlText.text = link.url
- holder.sourceText.text = link.sourcePackage ?: "unknown"
+ val ctx = holder.itemView.context
+ val state = when (link.status) {
+ SendState.SENT -> ctx.getString(R.string.state_sent)
+ SendState.FAILED -> ctx.getString(R.string.state_failed, link.lastError ?: "?")
+ else -> link.lastError?.let { ctx.getString(R.string.state_waiting_why, it) }
+ ?: ctx.getString(R.string.state_waiting)
+ }
+ holder.sourceText.text = "${link.sourcePackage ?: "unknown"} · $state"
  holder.btnCopy.setOnClickListener { onCopy(link) }
  holder.btnShare.setOnClickListener { onShare(link) }
  holder.btnDelete.setOnClickListener { onDelete(link) }

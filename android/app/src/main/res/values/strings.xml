@@ -7,9 +7,67 @@
  <string name="toast_captured">Captured: %1$s</string>
  <string name="toast_no_url">No URL found on screen</string>
  <string name="toast_fallback_share">Couldn\'t find the link; use Share → iofast</string>
- <string name="a11y_disabled_toast">Enable iofast accessibility to capture URLs</string>
+ <string name="a11y_disabled_toast">URL capture is off. Turn it on in iofast.</string>
  <string name="action_copy">Copy</string>
  <string name="action_share">Share</string>
  <string name="action_delete">Delete</string>
- <string name="empty_queue">No captured links yet.\nDouble-press the side key or share a link to iofast.</string>
+ <string name="empty_queue">No captured links yet.\nPress Side + Volume up on a post, or share a link to iofast.</string>
+ <string name="capture_label">iofast capture</string>
+ <string name="toast_capture_error">iofast hit a problem. Open iofast to see the problem log.</string>
+ <string name="action_clear">Clear</string>
+ <string name="status_on">URL capture is on</string>
+ <string name="status_off">URL capture is off</string>
+ <string name="btn_accessibility">Turn on URL capture</string>
+ <string name="btn_accessibility_on">Accessibility settings</string>
+ <string name="btn_links">Captured links (%1$d)</string>
+ <string name="problem_log_title">Problem log</string>
+ <string name="problem_log_help">If capture fails or turns itself off, tap Copy or Share and send this to whoever is helping you set up iofast.</string>
+ <string name="toast_log_copied">Problem log copied</string>
+ <!-- PC inbox: pairing and sending -->
+ <string name="pc_title">Send to PC</string>
+ <string name="pc_not_paired">Not connected to a PC yet</string>
+ <string name="pc_paired">Connected to your PC inbox</string>
+ <string name="pc_last_none">Nothing sent yet</string>
+ <string name="pc_last_ok">Last send worked (%1$s)</string>
+ <string name="pc_last_failed">Last send failed (%1$s): %2$s</string>
+ <string name="pc_pending">%1$d link(s) waiting to send</string>
+ <string name="pc_help">On the PC, open iofast and scan or open its pairing link on this phone. Or paste the phone key here.</string>
+ <string name="pc_key_hint">Phone key or pairing link</string>
+ <string name="pc_connect">Connect</string>
+ <string name="pc_disconnect">Disconnect</string>
+ <string name="pc_key_invalid">That does not look like a phone key.</string>
+ <string name="pc_disconnected">Disconnected from the PC</string>
+ <string name="pair_title">Connect to PC</string>
+ <string name="pair_connected">Connected to your PC</string>
+ <string name="pair_checking">Checking the PC inbox…</string>
+ <string name="pair_health_ok">The PC inbox answered. Captures will go there from now on.</string>
+ <string name="pair_health_failed">The key is saved, but the PC inbox did not answer right now. Captures are kept on the phone and sent when it does.</string>
+ <string name="pair_invalid">This pairing link is not valid. Open a fresh one from iofast on the PC.</string>
+ <string name="pair_open_app">Open iofast</string>
+
+ <!-- Notifications -->
+ <string name="channel_captures">Captures</string>
+ <string name="channel_captures_desc">What happened to each link you capture</string>
+ <string name="notif_captured">Captured: %1$s</string>
+ <string name="notif_sent">Sent to PC inbox</string>
+ <string name="notif_saved_offline">Saved on phone, will send when online</string>
+ <string name="notif_not_paired">Not paired — open iofast to connect</string>
+ <string name="notif_key_rejected">PC did not accept this phone — open iofast to connect again</string>
+ <string name="notif_send_failed">Could not send to PC — saved on phone</string>
+ <string name="notif_could_not_read">Couldn\'t read the link</string>
+ <string name="notif_use_share">Use the app\'s Share button → iofast instead.</string>
+ <string name="notif_denied">Notifications are off, so capture results show as short pop-ups instead.</string>
+ <string name="notif_allow">Allow notifications</string>
+
+ <!-- Queue states -->
+ <string name="state_sent">Sent to PC</string>
+ <string name="state_waiting">Waiting to send</string>
+ <string name="state_waiting_why">Waiting to send: %1$s</string>
+ <string name="state_failed">Not sent: %1$s</string>
+ <string name="a11y_shortcut_summary">Capture the link of what is on screen</string>
+ <string name="a11y_shortcut_description">Saves the link of the page or post on screen (Chrome, Samsung Internet, YouTube, X, Instagram) and sends it to your PC. Needs iofast URL capture turned on.</string>
+ <string name="a11y_shortcut_intro">Press your accessibility shortcut to capture the link on screen.</string>
+ <string name="side_volume_help">Side + Volume up keys: Settings → Accessibility → Advanced settings → Side and Volume up keys → tick iofast, then press Side + Volume up together on a page or post. The app in front stays as it is.</string>
+    <string name="notif_update_ready">iofast update ready</string>
+    <string name="notif_update_tap">Tap to install. Later updates install on their own.</string>
 </resources>

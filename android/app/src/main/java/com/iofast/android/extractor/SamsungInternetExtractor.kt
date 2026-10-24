@@ -7,12 +7,5 @@ package com.iofast.android.extractor
 class SamsungInternetExtractor : UrlExtractor {
     override val packages = setOf("com.sec.android.app.sbrowser")
 
-    private val urlPattern = Regex(
-        """https?://[^\s"'<>]+""",
-        RegexOption.IGNORE_CASE
-    )
-
-    override fun extract(viewTreeText: String): String? {
-        return urlPattern.find(viewTreeText)?.value?.trimEnd('/', ',', '.', ')')
-    }
+    override fun extract(viewTreeText: String): String? = BrowserUrl.extract(viewTreeText)
 }

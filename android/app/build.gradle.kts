@@ -12,14 +12,37 @@ android {
         applicationId = "com.iofast.android"
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 8
+        versionName = "0.2.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing: a real key when IOFAST_STORE_FILE etc. are set (gradle
+    // property or env var); otherwise the machine's debug keystore, which is
+    // the key 0.1.x was signed with, so 0.2.0 installs over it in place.
+    signingConfigs {
+        create("release") {
+            fun setting(name: String): String? =
+                (project.findProperty(name) as String?) ?: System.getenv(name)
+            val store = setting("IOFAST_STORE_FILE")
+            if (store != null) {
+                storeFile = file(store)
+                storePassword = setting("IOFAST_STORE_PASSWORD")
+                keyAlias = setting("IOFAST_KEY_ALIAS")
+                keyPassword = setting("IOFAST_KEY_PASSWORD")
+            } else {
+                storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -51,6 +74,9 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+
+    // Background sends to the PC inbox
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     // Room
     implementation("androidx.room:room-runtime:2.6.1")

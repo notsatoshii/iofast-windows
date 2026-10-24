@@ -1,0 +1,21 @@
+services:
+  iofast-inbox:
+    image: node:22-alpine
+    container_name: agentos-iofast-inbox
+    restart: unless-stopped
+    command: ["node", "/app/server.js"]
+    working_dir: /app
+    env_file: /opt/agentos/secrets/iofast-inbox.env
+    environment:
+      PORT: "4795"
+      DATA_DIR: /data
+    volumes:
+      - ./server.js:/app/server.js:ro
+      - ./data:/data
+      - ./app:/app-dl:ro
+    ports:
+      - "127.0.0.1:4795:4795"
+    mem_limit: 64m
+    cpus: 0.25
+    read_only: true
+    user: "1000:1000"
