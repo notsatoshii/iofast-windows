@@ -43,6 +43,16 @@ def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _find_manifest(out):
+    """The grab's manifest: in the item folder, or one level down where a
+    source writes its own subfolder (YouTube writes youtube/manifest.json)."""
+    direct = out / "manifest.json"
+    if direct.exists():
+        return direct
+    nested = sorted(out.glob("*/manifest.json"))
+    return nested[0] if nested else None
+
+
 def _item_folder(url):
     """Folder name for one grab, unique per URL.
 
@@ -477,9 +487,9 @@ class RpcServer:
             written = result.ok + result.thin
             exit_code = 0 if result.ok > 0 and result.failed == 0 else 1
             cancelled = cancel_event.is_set()
-            manifest_path = Path(out) / "manifest.json"
+            manifest_path = _find_manifest(Path(out))
             manifest = {}
-            if manifest_path.exists():
+            if manifest_path is not None:
                 try:
                     with open(manifest_path, encoding="utf-8") as fh:
                         manifest = json.load(fh)
