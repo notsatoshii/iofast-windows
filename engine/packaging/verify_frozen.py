@@ -24,12 +24,15 @@ Drives the REAL frozen binary over stdio:
    trim. The guard must refuse the first (old file kept byte-identical,
    outcome suspect_shrink, exit 1) and write the second.
 10. browser components -> with a fresh (empty) support dir, browser_status
-   reports nothing installed and the scrape above warned "static tier only":
-   the frozen fast-path answers False without spawning any driver.
+   reports nothing installed. On macOS the scrape above warned "static tier
+   only": the frozen fast-path answers False without spawning any driver. On
+   Windows it must NOT warn: the bundled driver launches system Edge/Chrome.
 11. CLI entry point -> a frozen `iofast scrape --json` run (the second frozen
    entry point, one gate assertion per entry point) roots its browser lookup
-   in app support: the static-tier warning names <support>/browsers, proving
-   default_storage_env() ran for the scrape command, not just `browsers`.
+   in app support. On macOS the static-tier warning names <support>/browsers,
+   proving default_storage_env() ran for the scrape command, not just
+   `browsers`. On Windows the scrape finds system Edge/Chrome (no warning) and
+   the frozen `browsers status` reports the same support dir.
 Every stdout line must parse as JSON: any dependency print() that leaked onto
 fd 1 fails the run (the RPC server redirects fd 1 to stderr — proven here).
 """
@@ -82,6 +85,11 @@ DOCS = {
 
 CHAIN_LEN = 8  # /chain/ index + p1..p7
 CHAIN_LAST_MODIFIED = "Wed, 01 Jan 2025 00:00:00 GMT"
+
+
+# Windows always has Edge, which the frozen patchright driver launches without
+# any managed components; macOS has no such system channel.
+SYSTEM_BROWSER = sys.platform == "win32"
 
 
 def chain_paths():
@@ -569,16 +577,22 @@ def main(binary, *, dev=False):
         components.get("path") == support,
         "browser_status: components rooted in IOFAST_SUPPORT_DIR",
     )
-    expect(
-        any(
-            m.get("method") == "event"
-            and m["params"].get("rid") == 4
-            and m["params"].get("type") == "warning"
-            and "static tier only" in (m["params"].get("message") or "")
-            for m in messages
-        ),
-        "frozen scrape warned 'static tier only' (fast-path stayed False)",
+    static_only = any(
+        m.get("method") == "event"
+        and m["params"].get("rid") == 4
+        and m["params"].get("type") == "warning"
+        and "static tier only" in (m["params"].get("message") or "")
+        for m in messages
     )
+    if SYSTEM_BROWSER:
+        # Windows ships Edge: the bundled driver launches it with no managed
+        # components, so the browser tiers stay on.
+        expect(
+            not static_only,
+            "frozen scrape found system Edge/Chrome with nothing installed (no static-tier warning)",
+        )
+    else:
+        expect(static_only, "frozen scrape warned 'static tier only' (fast-path stayed False)")
 
     # --- 11: the CLI entry point sets storage env before scraping. ---
     cli_out = tempfile.mkdtemp(prefix="iofast-frozen-cli-")
@@ -605,10 +619,31 @@ def main(binary, *, dev=False):
         ),
         "",
     )
-    expect(
-        os.path.join(cli_support, "browsers") in warning,
-        f"CLI scrape looked for chromium under app support (warning: {warning!r})",
-    )
+    if SYSTEM_BROWSER:
+        # No static-tier warning names the path when Edge launches, so prove
+        # the CLI prelude (default_storage_env, run before every command)
+        # rooted the same support dir through the frozen `browsers status`.
+        expect(not warning, f"CLI scrape found system Edge/Chrome (warning: {warning!r})")
+        cli_status = subprocess.run(
+            [binary, "browsers", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "IOFAST_SUPPORT_DIR": cli_support},
+        )
+        try:
+            cli_components = json.loads(cli_status.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            cli_components = {}
+        expect(
+            cli_components.get("path") == cli_support,
+            f"CLI looked for browser components under app support (got {cli_components})",
+        )
+    else:
+        expect(
+            os.path.join(cli_support, "browsers") in warning,
+            f"CLI scrape looked for chromium under app support (warning: {warning!r})",
+        )
 
     proc.stdin.close()  # EOF -> clean shutdown
     proc.wait(timeout=30)
