@@ -68,4 +68,6 @@
  <string name="a11y_shortcut_description">Saves the link of the page or post on screen (Chrome, Samsung Internet, YouTube, X, Instagram) and sends it to your PC. Needs iofast URL capture turned on.</string>
  <string name="a11y_shortcut_intro">Press your accessibility shortcut to capture the link on screen.</string>
  <string name="side_volume_help">Side + Volume up keys: Settings → Accessibility → Advanced settings → Side and Volume up keys → tick iofast, then press Side + Volume up together on a page or post. The app in front stays as it is.</string>
+    <string name="notif_update_ready">iofast update ready</string>
+    <string name="notif_update_tap">Tap to install. Later updates install on their own.</string>
 </resources>

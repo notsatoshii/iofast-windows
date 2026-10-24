@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import com.iofast.android.pairing.PairingStore
 import com.iofast.android.send.CaptureNotifier
 import com.iofast.android.send.SendWorker
+import com.iofast.android.update.UpdateWorker
 
 class IofastApp : Application() {
 
@@ -31,6 +32,11 @@ class IofastApp : Application() {
         }
         ProblemLog.note("app", "process started")
         CaptureNotifier.ensureChannel(this)
+        try {
+            UpdateWorker.schedule(this)
+        } catch (t: Throwable) {
+            ProblemLog.note("update", "could not schedule: $t")
+        }
         // Links captured while unpaired or before an update still go out.
         val app = this
         appScope.launch {
