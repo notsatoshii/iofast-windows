@@ -325,7 +325,7 @@ def main(binary, *, dev=False):
     if dev:
         # --dev mode: skip git provenance (dirty tree during active development).
         # All functional tests still run; only the build-stamp ancestry check
-        # is waived so freeze.ps1 can validate a just-built sidecar in-place.
+        # is waived, for validating a just-built sidecar by hand mid-change.
         print(f"[--dev] skipping git-clean provenance check (build={build[:12] or 'unknown'})")
     else:
         expect(
