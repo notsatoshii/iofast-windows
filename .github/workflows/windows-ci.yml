@@ -1,0 +1,78 @@
+name: windows-ci
+
+# The Windows build the product actually ships: freeze the Python sidecar with
+# scripts/windows/freeze.ps1 (PyInstaller + verify_frozen.py against the real
+# frozen exe over stdio), build the frontend, and run cargo test in the Tauri
+# crate. Same steps as scripts/windows/gate.ps1 minus pytest, which runs on
+# Linux in engine-ci.yml.
+#
+# COST. Windows minutes bill at 2x Linux on a private repo. So: pull requests
+# only (main already passed this as a PR), superseded runs cancelled, a hard
+# timeout. Run it by hand from the Actions tab (workflow_dispatch) if needed.
+on:
+  pull_request:
+    paths:
+      - "engine/**"
+      - "app/**"
+      - "scripts/windows/**"
+      - "VERSION"
+      - ".github/workflows/windows-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frozen-sidecar-and-app:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # iofast.spec + build.rs stamp `git log -1 -- engine/...`; a shallow clone breaks it
+
+      # 1. Freeze + verify the sidecar. cargo's tauri build script needs engine/dist.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: engine/pyproject.toml
+      - run: python -m pip install -e "engine[dev,build]"
+      - run: ./scripts/windows/freeze.ps1 -Python (Get-Command python).Source -NoSync
+
+      # 2. Frontend build. Runs before cargo: tauri embeds app/dist at compile time.
+      #    pnpm version comes from app/package.json's packageManager field.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      - run: pnpm build
+        working-directory: app
+
+      # 3. cargo test. Toolchain matches app/src-tauri/rust-toolchain.toml (1.97.1).
+      #    Without the sidecar dir cargo can run ZERO tests and still exit 0, so
+      #    require a nonzero pass count as well as a zero exit code.
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - name: cargo test
+        working-directory: app/src-tauri
+        run: |
+          $ErrorActionPreference = 'Continue'  # cargo writes progress to stderr
+          cargo test 2>&1 | Tee-Object -FilePath cargo-test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-Content cargo-test.log -Raw) -notmatch 'test result: ok\. [1-9][0-9]* passed') {
+            Write-Error "cargo test reported no passing tests"
+            exit 1
+          }
