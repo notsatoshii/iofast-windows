@@ -1,4 +1,9 @@
-# iofast
+# iofast: the macOS original
+
+> Archived README of the upstream macOS app (inputoutput9/iofast) this repo forked from.
+> Kept for the crawler design and the untrusted-content rules, which still apply. The
+> platform, install and status sections describe macOS and are not true for this fork.
+> Current README: [../README.md](../README.md).
 
 A macOS desktop app that copies a documentation site into a folder of clean
 markdown on your own disk, so coding agents and search tools can read it
@@ -23,12 +28,12 @@ tray icon + hotkey panel  ->  Tauri shell (Rust/React)
 
 | Document | What it is for |
 |---|---|
-| [PLAN.md](PLAN.md) | The build plan: phases, what shipped, and the decision log behind each choice. Start here. |
-| [docs/RPC.md](docs/RPC.md) | The exact contract between the app and the engine — every method, parameter, event, and error code. |
-| [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) | How builds are packaged today (unsigned) and what it would take to turn on signing, notarization, and auto-update. |
-| [ANALYSIS.md](ANALYSIS.md) | Line-by-line read of the original hotkey scripts and of upstream Scrapling — the findings this project was written to fix. |
-| [2-REPO-ANALYSIS.md](2-REPO-ANALYSIS.md) | Prior-art review of docs-mcp-server and Scrapegraph-ai, and the reasoning for reusing the first and rejecting the second. |
-| [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) | Licenses of every package bundled in the frozen engine, generated from installed package metadata. |
+| [PLAN.md](../PLAN.md) | The build plan: phases, what shipped, and the decision log behind each choice. Start here. |
+| [docs/RPC.md](RPC.md) | The exact contract between the app and the engine — every method, parameter, event, and error code. |
+| [docs/DISTRIBUTION.md](DISTRIBUTION.md) | How builds are packaged today (unsigned) and what it would take to turn on signing, notarization, and auto-update. |
+| [ANALYSIS.md](../ANALYSIS.md) | Line-by-line read of the original hotkey scripts and of upstream Scrapling — the findings this project was written to fix. |
+| [2-REPO-ANALYSIS.md](../2-REPO-ANALYSIS.md) | Prior-art review of docs-mcp-server and Scrapegraph-ai, and the reasoning for reusing the first and rejecting the second. |
+| [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md) | Licenses of every package bundled in the frozen engine, generated from installed package metadata. |
 
 ## How it works
 
@@ -162,7 +167,7 @@ scraped.
   produces an unsigned `.app` and `.dmg`; the release workflow builds the same
   thing on a tag with no secrets. It runs locally, but Gatekeeper will warn
   anyone else who downloads it. Signing and notarization are wired as
-  structure only — see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+  structure only — see [docs/DISTRIBUTION.md](DISTRIBUTION.md).
   Auto-update is deliberately not added yet, because the plugin crate risks
   raising the toolchain floor.
 - **The frozen engine fetches statically only.** Browsers are never bundled
