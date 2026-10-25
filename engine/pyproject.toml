@@ -4,7 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "iofast-engine"
-version = "0.1.0"
+# Must equal the repo-root VERSION file (iofast.spec refuses to freeze otherwise,
+# tests/test_version_sync.py fails). Bump list: docs/RELEASING.md.
+version = "0.2.8"
 description = "Crawl a documentation site into hyphen-named markdown files."
 # 3.14 is untested by scrapling/playwright upstream — do not admit it.
 requires-python = ">=3.13,<3.14"

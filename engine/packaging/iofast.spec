@@ -11,6 +11,7 @@ stdio JSON-RPC including a real scrape against a local fixture server.
 
 import os
 import subprocess
+import tomllib
 
 from PyInstaller.utils.hooks import (
     collect_all,
@@ -59,8 +60,20 @@ if _dirty:
         "iofast.spec: refusing to freeze from a dirty tree — commit (or delete/ignore untracked) first:\n"
         + _dirty
     )
+# Version: the repo-root VERSION file is the single source. pyproject carries a
+# copy (hatchling cannot read a file outside engine/ cleanly); refuse to freeze
+# when they differ, so a half-done bump never ships.
+with open(os.path.join(SPECPATH, "..", "..", "VERSION"), encoding="utf-8") as fh:
+    _version = fh.read().strip()
+with open(os.path.join(SPECPATH, "..", "pyproject.toml"), "rb") as fh:
+    _py_version = tomllib.load(fh)["project"]["version"]
+if _py_version != _version:
+    raise SystemExit(
+        f"iofast.spec: VERSION says {_version!r} but engine/pyproject.toml says "
+        f"{_py_version!r}; bump both (docs/RELEASING.md)"
+    )
 with open(os.path.join(SPECPATH, "..", "src", "iofast_engine", "_build.py"), "w") as fh:
-    fh.write(f'BUILD_SHA = "{_sha}"\n')
+    fh.write(f'BUILD_SHA = "{_sha}"\nVERSION = "{_version}"\n')
 
 hiddenimports = [
     "iofast_engine._build",
