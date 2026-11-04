@@ -42,6 +42,10 @@ def _detect_source_type(run_dir: Path) -> str:
     """Infer source type from manifest start URL or platform field."""
     manifest = _load_manifest(run_dir)
     if manifest is None:
+        # Social sources write no manifest: their subfolder names the source.
+        for name in ("instagram", "x"):
+            if (run_dir / name).is_dir():
+                return name
         return "web"
     info = manifest.get("info", {})
     # Sources use different keys: docs scrapes store 'start_url', multi-source

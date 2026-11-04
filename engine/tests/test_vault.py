@@ -990,3 +990,11 @@ class TestSocialSubfolder:
         text = _get_combined_text(run)
         assert "Caption" in text
         assert _source_url_from_text(text) == "https://www.instagram.com/reel/abc/"
+
+    def test_social_subfolder_sets_source_type(self, tmp_path):
+        from iofast_engine.vault.filer import _detect_source_type
+
+        for name in ("instagram", "x"):
+            run = tmp_path / name
+            (run / name).mkdir(parents=True)
+            assert _detect_source_type(run) == name
