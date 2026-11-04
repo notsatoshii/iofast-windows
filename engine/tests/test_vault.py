@@ -974,3 +974,19 @@ class TestFullScrapeArchival:
             assert str(f.resolve()).startswith(str(vault.resolve()))
 
         
+
+class TestSocialSubfolder:
+    """Instagram/X write pages into their own subfolder with no manifest."""
+
+    def test_reads_subfolder_pages_and_source_url(self, tmp_path):
+        from iofast_engine.vault.filer import _get_combined_text, _source_url_from_text
+
+        run = tmp_path / "run"
+        (run / "instagram").mkdir(parents=True)
+        (run / "instagram" / "abc.md").write_text(
+            "--- SOURCE: https://www.instagram.com/reel/abc/ ---\n\n# Instagram post by @x\n\n## Caption\n\nhello\n",
+            encoding="utf-8",
+        )
+        text = _get_combined_text(run)
+        assert "Caption" in text
+        assert _source_url_from_text(text) == "https://www.instagram.com/reel/abc/"

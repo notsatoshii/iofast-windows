@@ -250,7 +250,30 @@ def _get_combined_text(run_dir: Path) -> str:
             except OSError:
                 continue
 
+    # Social sources (instagram/, x/) write pages into their own subfolder with
+    # no manifest.json: read those .md files too, or the note files empty.
+    if not pages:
+        for section in sorted(run_dir.iterdir()):
+            if not section.is_dir():
+                continue
+            for md_file in sorted(section.glob("*.md")):
+                if md_file.name in ("report.md", "README-UNTRUSTED.md"):
+                    continue
+                try:
+                    pages.append(md_file.read_text(encoding="utf-8"))
+                except OSError:
+                    continue
+
     return "\n\n---\n\n".join(pages) if pages else ""
+
+
+_SOURCE_LINE = re.compile(r"^--- SOURCE: (\S+) ---\s*$", re.MULTILINE)
+
+
+def _source_url_from_text(text: str) -> str:
+    """First '--- SOURCE: <url> ---' header in captured text, or ''."""
+    m = _SOURCE_LINE.search(text or "")
+    return m.group(1) if m else ""
 
 
 def match_topic_hubs(
@@ -395,6 +418,8 @@ def file_capture(
             source_url = str(info.get("url", "") or info.get("start url", "") or info.get("start_url", "") or "")
         except (json.JSONDecodeError, OSError):
             pass
+    if not source_url:
+        source_url = _source_url_from_text(combined_text)
 
     today = date.today().isoformat()
 
