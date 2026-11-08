@@ -6,8 +6,14 @@ appends a date suffix on collision.
 
 Full scrape archival: the entire run directory is copied into the vault
 at Research (RAW)/iofast/<raw note stem>/, preserving folder structure.
-An index.md is written listing every page as a [[wikilink]]. The raw note
+An index note is written listing every page as a [[wikilink]]. The raw note
 links to this in-vault folder, never to the outside run path.
+
+Names are unique vault-wide from the start (Obsidian resolves links by name,
+and hundreds of captures used to share `index` and `report`): the index is
+"<capture title> (capture index).md" and each source's report.md is copied as
+"<capture title> (<source> report).md". Older captures keep their index.md /
+report.md; the librarian rename pass handles those.
 """
 
 import json
@@ -26,6 +32,15 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # skip binaries over 20 MB
 SKIP_NAMES = {"README-UNTRUSTED.md", "index.md"}
 # Files that are not real content pages (metadata, combined outputs).
 NON_CONTENT_NAMES = {"report.md", "index.md"}
+# Longest note name (without .md) for the index and report copies. The archive
+# folder already carries the title once, so this keeps full paths well under
+# Windows' 260-char limit. Matches the librarian rename pass's cap.
+MAX_NOTE_NAME = 110
+# Windows refuses paths over 260 chars unless long paths are switched on. Names
+# shrink further when the folder they sit in is deep (long vault path + title).
+MAX_PATH = 250
+MIN_NOTE_NAME = 40
+_DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2} ")
 # Characters Windows refuses in file and folder names.
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -50,17 +65,51 @@ def _unique_raw_path(raw_dir: Path, title: str, today: str) -> Path:
         suffix += 1
 
 
-def _copy_run_to_vault(run_dir: Path, archive_dir: Path) -> list[Path]:
+def _capture_title(raw_note_stem: str) -> str:
+    """The raw note's name without its date: '2026-10-26 Foo-2' -> 'Foo-2'."""
+    return _DATE_PREFIX.sub("", raw_note_stem).strip() or raw_note_stem
+
+
+def _note_name(title: str, label: str, folder: Path | None = None) -> str:
+    """'<title> (<label>)', shortening the title at a word break to fit MAX_NOTE_NAME
+    and, given the folder it goes in, to keep the full path under MAX_PATH."""
+    limit = MAX_NOTE_NAME
+    if folder is not None:
+        limit = max(MIN_NOTE_NAME, min(limit, MAX_PATH - len(str(folder)) - len("/.md")))
+    room = max(1, limit - len(label) - 3)
+    if len(title) > room:
+        cut = title[:room]
+        title = cut.rsplit(" ", 1)[0] if " " in cut else cut
+    return f"{title.rstrip(' .-')} ({label})"
+
+
+def index_name(raw_note_stem: str, folder: Path | None = None) -> str:
+    """File stem of a capture's index note."""
+    return _note_name(_capture_title(raw_note_stem), "capture index", folder)
+
+
+def report_name(raw_note_stem: str, source: str, folder: Path | None = None) -> str:
+    """File stem of a source's report copy; source '' for a report at the run root."""
+    label = f"{source} report" if source else "report"
+    return _note_name(_capture_title(raw_note_stem), label, folder)
+
+
+def _copy_run_to_vault(
+    run_dir: Path, archive_dir: Path, raw_note_stem: str | None = None,
+) -> tuple[list[Path], set[Path]]:
     """Copy the full run into the vault, preserving structure.
 
     Skips README-UNTRUSTED.md, dotfiles (Obsidian hides them), the root
     combined file (named after the run dir — raw note already has that text),
     binaries over 20 MB, and anything outside run_dir (symlink escape).
-    Returns list of copied .md files (relative to archive_dir) for index.
+    With raw_note_stem, each report.md is saved under report_name() so it
+    has a unique name. Returns (copied .md files, the report copies among
+    them), both relative to archive_dir.
     """
     run_dir = run_dir.resolve()
     archive_dir.mkdir(parents=True, exist_ok=True)
     copied_md: list[Path] = []
+    reports: set[Path] = set()
     # Root combined file is named <run_dir_name>.md — skip it
     combined_root_name = f"{run_dir.name}.md"
 
@@ -87,22 +136,28 @@ def _copy_run_to_vault(run_dir: Path, archive_dir: Path) -> list[Path]:
                 continue
         except OSError:
             continue
+        is_report = src.name == "report.md"
+        if is_report and raw_note_stem:
+            name = report_name(raw_note_stem, rel.parent.name, (archive_dir / rel).parent)
+            rel = rel.with_name(name + ".md")
         dst = archive_dir / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         if src.suffix == ".md":
             copied_md.append(rel)
-    return copied_md
+            if is_report:
+                reports.add(rel)
+    return copied_md, reports
 
 
 def _write_index(
     archive_dir: Path, pages: list[Path], title: str,
-    raw_note_stem: str, archive_rel: str,
+    raw_note_stem: str, archive_rel: str, reports: set[Path] = frozenset(),
 ) -> Path:
-    """Write index.md listing every page as a vault-relative [[wikilink|alias]].
+    """Write the index note listing every page as a vault-relative [[wikilink|alias]].
 
     Uses full vault-relative paths so Obsidian resolves unambiguously
-    (every capture has a report.md). Links back to the raw note.
+    (older captures share index/report names). Links back to the raw note.
     """
     lines = [
         "---",
@@ -118,9 +173,11 @@ def _write_index(
         # Vault-relative path with alias for clean display
         vault_path = f"{archive_rel}/{rel.as_posix()}"
         alias = rel.stem
+        if rel in reports:  # short label, not the long title
+            alias = f"{rel.parent.name} report" if rel.parent != Path(".") else "report"
         lines.append(f"- [[{vault_path}|{alias}]]")
     lines.append("")
-    index_path = archive_dir / "index.md"
+    index_path = archive_dir / f"{index_name(raw_note_stem, archive_dir)}.md"
     index_path.write_text("\n".join(lines), encoding="utf-8")
     return index_path
 
@@ -148,18 +205,21 @@ def write_raw_copy(
     # Archive the full run into the vault
     run_path = Path(run_dir).resolve()
     archive_dir = raw_dir / target.stem
-    copied_pages = _copy_run_to_vault(run_path, archive_dir)
+    copied_pages, reports = _copy_run_to_vault(run_path, archive_dir, target.stem)
     archive_rel = archive_dir.relative_to(vault)
     archive_rel_str = str(archive_rel).replace("\\", "/")
 
     # Count real content pages only (exclude report.md, index.md)
     content_page_count = sum(
         1 for p in copied_pages
-        if p.name not in NON_CONTENT_NAMES and not p.name.startswith(".")
+        if p.name not in NON_CONTENT_NAMES and p not in reports
+        and not p.name.startswith(".")
     )
 
     # Write index with back-link to raw note
-    _write_index(archive_dir, copied_pages, title, target.stem, archive_rel_str)
+    index_path = _write_index(
+        archive_dir, copied_pages, title, target.stem, archive_rel_str, reports,
+    )
 
     # Cap size: link to in-vault folder, not outside run path
     truncated = len(combined_text) > MAX_RAW_CHARS
@@ -179,7 +239,7 @@ def write_raw_copy(
         "",
         UNTRUSTED_BANNER,
         "",
-        f"> Full capture: [[{archive_rel_str}/index|{title} archive]] ({content_page_count} {page_word}, {len(combined_text):,} chars)",
+        f"> Full capture: [[{archive_rel_str}/{index_path.stem}|{title} archive]] ({content_page_count} {page_word}, {len(combined_text):,} chars)",
         "",
     ]
     if truncated:
@@ -196,6 +256,7 @@ def write_raw_copy(
         "page_count": content_page_count,
         "char_count": len(combined_text),
         "archive_rel": str(archive_rel).replace("\\", "/"),
+        "index_rel": f"{archive_rel_str}/{index_path.stem}",
         "truncated": truncated,
     }
     return target, archive_info
@@ -220,7 +281,9 @@ def append_log(
     pages = archive_info.get("page_count", "?") if archive_info else "?"
     chars = archive_info.get("char_count", "?") if archive_info else "?"
     archive_rel = archive_info.get("archive_rel", "") if archive_info else ""
-    folder_link = f" · [[{archive_rel}/index]]" if archive_rel else ""
+    # index_rel names the index note; older callers only pass archive_rel.
+    index_rel = (archive_info or {}).get("index_rel") or (f"{archive_rel}/index" if archive_rel else "")
+    folder_link = f" · [[{index_rel}]]" if index_rel else ""
 
     line = (
         f"- {today} · [[{raw_rel.stem}]] · {source_type} · "

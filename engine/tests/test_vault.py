@@ -890,13 +890,74 @@ class TestFullScrapeArchival:
         web_dir = archive_dir / "web"
         archived_pages = list(web_dir.glob("page*.md"))
         assert len(archived_pages) == 5
-        assert (archive_dir / "index.md").exists()
-        index_text = (archive_dir / "index.md").read_text(encoding="utf-8")
+        assert not (archive_dir / "index.md").exists()
+        index_files = list(archive_dir.glob("* (capture index).md"))
+        assert len(index_files) == 1
+        index_text = index_files[0].read_text(encoding="utf-8")
         # Links are vault-relative with aliases: [[path|alias]]
         for i in range(5):
             assert f"|page{i}]]" in index_text
         # Back-link to raw note present
         assert "Raw note:" in index_text
+
+    def test_index_and_reports_get_unique_names(self, tmp_path):
+        from iofast_engine.vault.raw import write_raw_copy, append_log
+        vault = tmp_path / "vault"
+        (vault / "Research (RAW)" / "iofast").mkdir(parents=True)
+        run_dir = tmp_path / "run"
+        (run_dir / "youtube").mkdir(parents=True)
+        (run_dir / "youtube" / "report.md").write_text("# report", encoding="utf-8")
+        (run_dir / "youtube" / "video.md").write_text("# Video", encoding="utf-8")
+        (run_dir / "report.md").write_text("# root report", encoding="utf-8")
+        path, info = write_raw_copy(
+            vault, "# Video", "https://youtube.com/watch?v=1", "youtube",
+            str(run_dir), "My Video: Part 1", captured_date="2026-11-09",
+        )
+        archive = vault / "Research (RAW)" / "iofast" / path.stem
+        assert path.stem == "2026-11-09 My Video - Part 1"
+        assert (archive / "My Video - Part 1 (capture index).md").exists()
+        assert (archive / "youtube" / "My Video - Part 1 (youtube report).md").exists()
+        assert (archive / "My Video - Part 1 (report).md").exists()
+        assert not list(archive.rglob("index.md")) and not list(archive.rglob("report.md"))
+        assert info["page_count"] == 1  # reports are not content pages
+        raw = path.read_text(encoding="utf-8")
+        assert f"[[{info['archive_rel']}/My Video - Part 1 (capture index)|" in raw
+        index = (archive / "My Video - Part 1 (capture index).md").read_text(encoding="utf-8")
+        assert "youtube/My Video - Part 1 (youtube report).md|youtube report]]" in index
+        log = append_log(vault, "My Video", "https://youtube.com/watch?v=1", "youtube",
+                         path, "AI", captured_date="2026-11-09", archive_info=info)
+        assert "(capture index)]]" in log.read_text(encoding="utf-8")
+        # A second capture with the same title gets its own names.
+        p2, _ = write_raw_copy(
+            vault, "# Video", "https://youtube.com/watch?v=2", "youtube",
+            str(run_dir), "My Video: Part 1", captured_date="2026-11-09",
+        )
+        assert (vault / "Research (RAW)" / "iofast" / p2.stem / "My Video - Part 1-2 (capture index).md").exists()
+
+    def test_long_titles_are_capped(self, tmp_path):
+        from iofast_engine.vault.raw import index_name, report_name, MAX_NOTE_NAME
+        stem = "2026-11-09 " + " ".join(["word"] * 60)
+        assert len(index_name(stem)) <= MAX_NOTE_NAME
+        assert report_name(stem, "youtube").endswith("word (youtube report)")
+        assert len(report_name(stem, "youtube")) <= MAX_NOTE_NAME
+        # A deep folder shrinks the name so the full path stays under MAX_PATH.
+        from pathlib import Path
+        from iofast_engine.vault.raw import MAX_PATH
+        deep = Path("C:/" + "d" * 150)
+        name = report_name(stem, "youtube", deep)
+        assert len(str(deep / (name + ".md"))) <= MAX_PATH
+        assert name.endswith("(youtube report)")
+
+    def test_old_archive_info_still_links_index(self, tmp_path):
+        from iofast_engine.vault.raw import append_log
+        vault = tmp_path / "vault"
+        raw = vault / "Research (RAW)" / "iofast" / "2026-01-01 Old.md"
+        raw.parent.mkdir(parents=True)
+        raw.touch()
+        log = append_log(vault, "Old", "https://e.com", "web", raw, "AI",
+                         captured_date="2026-01-01",
+                         archive_info={"archive_rel": "Research (RAW)/iofast/2026-01-01 Old"})
+        assert "[[Research (RAW)/iofast/2026-01-01 Old/index]]" in log.read_text(encoding="utf-8")
 
     def test_over_cap_run_links_in_vault_index(self, tmp_path):
         from iofast_engine.vault.raw import write_raw_copy, MAX_RAW_CHARS
